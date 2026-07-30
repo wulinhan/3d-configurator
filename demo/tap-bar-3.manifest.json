@@ -1,0 +1,276 @@
+{
+  "schema": 1,
+  "id": "northsend-tap-bar-3",
+  "name": "Northsend Connect Bar (3 tile)",
+  "version": "1.0.0",
+  "units": "mm",
+  "brand": {
+    "accent": "#1A1A1A",
+    "surface": "#F8F6F1",
+    "ink": "#333333",
+    "radius": 8,
+    "fontFamily": "'Inter', system-ui, sans-serif"
+  },
+  "models": [
+    {
+      "id": "bar",
+      "url": "models/tap-bar-3.glb"
+    }
+  ],
+  "parts": [
+    {
+      "id": "body",
+      "label": "Body",
+      "mesh": "bar#body"
+    },
+    {
+      "id": "sleeves",
+      "label": "Sleeves",
+      "mesh": "bar#sleeves"
+    },
+    {
+      "id": "tiles",
+      "label": "Tiles",
+      "mesh": "bar#tiles"
+    },
+    {
+      "id": "icons",
+      "label": "Icons",
+      "mesh": "bar#icons"
+    },
+    {
+      "id": "text",
+      "label": "Text",
+      "mesh": "bar#taptoconnect",
+      "placement": {
+        "x": {
+          "align": "center",
+          "to": "body:center",
+          "offset": 0
+        },
+        "y": {
+          "align": "min",
+          "to": "body:min",
+          "offset": 2
+        },
+        "z": {
+          "align": "max",
+          "to": "body:max",
+          "offset": 1
+        }
+      }
+    }
+  ],
+  "palettes": [
+    {
+      "id": "filament",
+      "label": "Finish Colour",
+      "swatches": [
+        {
+          "id": "jade-white",
+          "name": "Jade White",
+          "hex": "#FEFEFE"
+        },
+        {
+          "id": "beige",
+          "name": "Beige",
+          "hex": "#FFEBE0"
+        },
+        {
+          "id": "black",
+          "name": "Black",
+          "hex": "#1A1A1A"
+        },
+        {
+          "id": "rosewood",
+          "name": "Rosewood",
+          "hex": "#4F2727"
+        },
+        {
+          "id": "orange",
+          "name": "Orange",
+          "hex": "#F9912F"
+        },
+        {
+          "id": "silk-yellow",
+          "name": "Silk Yellow",
+          "hex": "#FDD35D"
+        },
+        {
+          "id": "army-blue",
+          "name": "Army Blue",
+          "hex": "#193B71"
+        },
+        {
+          "id": "sky-blue",
+          "name": "Sky Blue",
+          "hex": "#3C78D7"
+        },
+        {
+          "id": "sunflower-yellow",
+          "name": "Sunflower Yellow",
+          "hex": "#E6B70F"
+        },
+        {
+          "id": "iris",
+          "name": "Iris",
+          "hex": "#5645D9"
+        },
+        {
+          "id": "dark-green",
+          "name": "Dark Green",
+          "hex": "#4A5820"
+        },
+        {
+          "id": "red",
+          "name": "Red",
+          "hex": "#C82020"
+        },
+        {
+          "id": "forest-green",
+          "name": "Forest Green",
+          "hex": "#246B2C"
+        },
+        {
+          "id": "maroon",
+          "name": "Maroon",
+          "hex": "#901820"
+        },
+        {
+          "id": "morendi-green",
+          "name": "Morendi Green",
+          "hex": "#1E4843"
+        },
+        {
+          "id": "pink",
+          "name": "Pink",
+          "hex": "#E898A0"
+        },
+        {
+          "id": "teal",
+          "name": "Teal",
+          "hex": "#4FCEEE"
+        }
+      ]
+    }
+  ],
+  "options": [
+    {
+      "id": "body-colour",
+      "type": "colour",
+      "label": "Body",
+      "parts": [
+        "body"
+      ],
+      "palette": "filament",
+      "default": "jade-white",
+      "custom": {
+        "allowed": true,
+        "priceDelta": 35,
+        "priceLabel": "+S$35 per custom colour"
+      }
+    },
+    {
+      "id": "sleeve-colour",
+      "type": "colour",
+      "label": "Sleeves",
+      "parts": [
+        "sleeves"
+      ],
+      "palette": "filament",
+      "default": "black",
+      "custom": {
+        "allowed": true,
+        "priceDelta": 35,
+        "priceLabel": "+S$35 per custom colour"
+      }
+    },
+    {
+      "id": "tile-colour",
+      "type": "colour",
+      "label": "Tiles",
+      "parts": [
+        "tiles"
+      ],
+      "palette": "filament",
+      "default": "jade-white",
+      "custom": {
+        "allowed": true,
+        "priceDelta": 35,
+        "priceLabel": "+S$35 per custom colour"
+      }
+    },
+    {
+      "id": "icon-colour",
+      "type": "colour",
+      "label": "Icons",
+      "parts": [
+        "icons"
+      ],
+      "palette": "filament",
+      "default": "black",
+      "custom": {
+        "allowed": true,
+        "priceDelta": 35,
+        "priceLabel": "+S$35 per custom colour"
+      }
+    },
+    {
+      "id": "text-colour",
+      "type": "colour",
+      "label": "Text",
+      "parts": [
+        "text"
+      ],
+      "source": "used",
+      "default": "@sleeve-colour",
+      "linkedTo": "sleeve-colour",
+      "custom": {
+        "allowed": false
+      }
+    },
+    {
+      "id": "stand",
+      "type": "choice",
+      "label": "Desk stand",
+      "choices": [
+        {
+          "id": "none",
+          "label": "No stand"
+        },
+        {
+          "id": "oak",
+          "label": "Oak stand",
+          "priceDelta": 24
+        },
+        {
+          "id": "steel",
+          "label": "Steel stand",
+          "priceDelta": 32
+        }
+      ],
+      "default": "none"
+    }
+  ],
+  "camera": {
+    "fov": 38,
+    "position": [
+      0,
+      87.5,
+      281
+    ],
+    "target": [
+      0,
+      57.5,
+      0
+    ],
+    "minDistance": 50,
+    "maxDistance": 800,
+    "maxPolarAngle": 162,
+    "background": "#F8F6F1"
+  },
+  "pricing": {
+    "currency": "SGD",
+    "basePrice": 129
+  }
+}
