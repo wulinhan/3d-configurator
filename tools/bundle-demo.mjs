@@ -2,10 +2,18 @@
 // HTML file with no external requests.
 //
 // Useful for sending someone a configurator to click without standing up a
-// server, and for embedding in environments that block third-party fetches.
-// Models become data: URIs, which GLTFLoader handles like any other URL.
+// server, and for embedding somewhere with a restrictive Content-Security-
+// Policy. That second case drives two decisions here:
 //
-//   node configurator/tools/bundle-demo.mjs out.html [--fragment]
+//  - Models are inlined as data: URIs and decoded in-page rather than fetched,
+//    because `connect-src` policies don't list `data:` and a data-URI fetch is
+//    still a fetch.
+//  - Meshopt compression is stripped by default. Its decoder is WebAssembly,
+//    which a policy without `wasm-unsafe-eval` refuses to compile. Dropping it
+//    costs ~300 KB of base64 and buys a file that opens anywhere. Pass
+//    `--keep-compression` to keep the small version when you control the CSP.
+//
+//   node configurator/tools/bundle-demo.mjs out.html [--fragment] [--keep-compression]
 //
 // `--fragment` emits only the body content (styles, markup, script) for hosts
 // that supply their own document shell.
@@ -14,6 +22,11 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { NodeIO } from '@gltf-transform/core';
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
+import { quantize, weld } from '@gltf-transform/functions';
+import { MeshoptDecoder } from 'meshoptimizer';
+import { QUANTIZE_POSITION } from './compress.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG = join(HERE, '..');
@@ -21,8 +34,30 @@ const DEMO = join(PKG, 'demo');
 
 const argv = process.argv.slice(2);
 const fragment = argv.includes('--fragment');
+const keepCompression = argv.includes('--keep-compression');
 const [out] = argv.filter((a) => !a.startsWith('--'));
-if (!out) { console.error('usage: bundle-demo.mjs <out.html> [--fragment]'); process.exit(1); }
+if (!out) { console.error('usage: bundle-demo.mjs <out.html> [--fragment] [--keep-compression]'); process.exit(1); }
+
+/**
+ * Re-encode a meshopt GLB as plain quantised buffers. Decoding happens here,
+ * at build time, so the page never needs the WASM decoder. Quantisation is
+ * kept — it's just integers in buffers, no decoder involved — which holds the
+ * size to ~334 KB instead of the raw 601 KB.
+ */
+async function stripMeshopt(buf) {
+  await MeshoptDecoder.ready;
+  const io = new NodeIO().registerExtensions(ALL_EXTENSIONS)
+    .registerDependencies({ 'meshopt.decoder': MeshoptDecoder });
+  const doc = await io.readBinary(new Uint8Array(buf));
+  // Reading through the decoder already inflated the buffers. Drop the
+  // extension marker — otherwise the writer re-encodes on the way out — then
+  // re-weld and re-quantise so the file stays integer-packed.
+  for (const ext of doc.getRoot().listExtensionsUsed()) {
+    if (ext.extensionName === 'EXT_meshopt_compression') ext.dispose();
+  }
+  await doc.transform(weld(), quantize({ quantizePosition: QUANTIZE_POSITION }));
+  return Buffer.from(await io.writeBinary(doc));
+}
 
 // IIFE rather than ESM: an inline module script can't be imported, and a
 // global is the simplest way for the page's own script to reach mount().
@@ -37,7 +72,8 @@ const manifest = JSON.parse(readFileSync(join(DEMO, 'tap-bar-3.manifest.json'), 
 
 let modelBytes = 0;
 for (const source of manifest.models) {
-  const buf = readFileSync(resolve(DEMO, source.url));
+  let buf = readFileSync(resolve(DEMO, source.url));
+  if (!keepCompression) buf = await stripMeshopt(buf);
   modelBytes += buf.length;
   source.url = `data:model/gltf-binary;base64,${buf.toString('base64')}`;
 }

@@ -8,7 +8,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 
 import type { Manifest } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
@@ -23,6 +22,55 @@ import { partColours, visibleParts, type Selections } from './state.ts';
  * customers are looking at the brighter one today.
  */
 const LIGHT_SCALE = Math.PI;
+
+/**
+ * Meshopt decoder, loaded only if a model actually uses the extension.
+ *
+ * three's decoder module compiles its WASM at import time, and a strict
+ * Content-Security-Policy (no `wasm-unsafe-eval`) rejects that compile the
+ * moment the bundle loads — even for pages whose models are uncompressed.
+ * GLTFLoader only needs `{ supported, decodeGltfBufferAsync }`, so this shim
+ * defers the import until the first compressed buffer view shows up; the
+ * bundler wraps dynamically-imported modules in a lazy initialiser, so
+ * nothing WASM-shaped runs before then. The real decoder awaits its own
+ * `ready` inside decodeGltfBufferAsync, so no separate ready handshake here.
+ */
+const LazyMeshoptDecoder = {
+  supported: true,
+  decodeGltfBufferAsync: (count: number, stride: number, source: Uint8Array, mode: string, filter?: string) =>
+    import('three/examples/jsm/libs/meshopt_decoder.module.js')
+      .then(({ MeshoptDecoder }) => MeshoptDecoder.decodeGltfBufferAsync(count, stride, source, mode, filter)),
+};
+
+/**
+ * Load a GLB, whether it lives at a URL or is inlined as a data: URI.
+ *
+ * GLTFLoader's normal path goes through `fetch()`, and a `data:` URL counts as
+ * a fetch — which a strict `connect-src` blocks, since no realistic policy
+ * lists `data:` as a connect source. Inlined models are therefore decoded
+ * here and handed straight to `parse()`, so a self-contained page makes no
+ * network requests at all rather than making one that looks local and isn't.
+ */
+async function loadGltf(loader: GLTFLoader, url: string) {
+  if (!url.startsWith('data:')) return loader.loadAsync(url);
+
+  const comma = url.indexOf(',');
+  const meta = url.slice(5, comma);
+  const payload = url.slice(comma + 1);
+  let bytes: Uint8Array;
+  if (meta.endsWith(';base64')) {
+    const binary = atob(payload);
+    bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  } else {
+    bytes = new TextEncoder().encode(decodeURIComponent(payload));
+  }
+
+  return new Promise<Awaited<ReturnType<GLTFLoader['loadAsync']>>>((resolve, reject) => {
+    // Empty path: a self-contained GLB has no sibling resources to resolve.
+    loader.parse(bytes.buffer as ArrayBuffer, '', resolve, reject);
+  });
+}
 
 /**
  * Flatten a loaded mesh into plain float32 world-space positions.
@@ -135,11 +183,11 @@ export class Viewer {
 
   /** Fetch every model source and build one mesh per manifest part. */
   async load(): Promise<void> {
-    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    const loader = new GLTFLoader().setMeshoptDecoder(LazyMeshoptDecoder);
     const geometries = new Map<string, THREE.BufferGeometry>();
 
     for (const source of this.manifest.models) {
-      const gltf = await loader.loadAsync(this.resolveUrl(source.url));
+      const gltf = await loadGltf(loader, this.resolveUrl(source.url));
       gltf.scene.updateMatrixWorld(true);
       gltf.scene.traverse((obj) => {
         const mesh = obj as THREE.Mesh;
