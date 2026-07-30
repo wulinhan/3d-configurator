@@ -74,9 +74,10 @@ export function PublishPanel(props: { project: Project; onChange: (m: Manifest) 
         <button
           data-testid="download-manifest" disabled={!report.ok}
           onClick={() => {
-            // Refit the camera to the model as finally laid out — the init
-            // camera was framed before any resizing or anchoring happened.
-            const framed = frameCamera(manifest, props.project.raw);
+            // A view the merchant saved is kept verbatim; otherwise refit the
+            // camera to the model as finally laid out, since the init camera
+            // was framed before any resizing or anchoring happened.
+            const framed = manifest.camera?.userSet ? manifest : frameCamera(manifest, props.project.raw);
             download(`${framed.id}.manifest.json`,
               new Blob([JSON.stringify(framed, null, 2)], { type: 'application/json' }));
           }}

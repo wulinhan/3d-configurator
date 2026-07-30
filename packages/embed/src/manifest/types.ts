@@ -190,6 +190,11 @@ export interface CameraSetup {
   maxPolarAngle?: number;
   autoRotate?: boolean;
   background?: Hex;
+  /**
+   * Set when the merchant explicitly saved this view in the Studio. Publish
+   * then keeps it verbatim instead of auto-framing from the model bounds.
+   */
+  userSet?: boolean;
 }
 
 export interface Branding {

@@ -14,15 +14,14 @@ import { useEffect, useRef, useState } from 'react';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer } from '../../../embed/src/runtime/viewer.ts';
-import { applyGizmoPose, type GizmoPose } from '../lib/manifest-edit.ts';
+import { applyGizmoPose, setCameraView, type GizmoPose } from '../lib/manifest-edit.ts';
 import { Gizmo, type GizmoMode } from './gizmo.ts';
+import { ViewCube } from './view-cube.ts';
 import type { Project } from '../App.tsx';
 
 const MODES: Array<{ id: GizmoMode; label: string }> = [
   { id: 'off', label: 'Orbit' },
-  { id: 'translate', label: 'Move' },
-  { id: 'rotate', label: 'Rotate' },
-  { id: 'scale', label: 'Scale' },
+  { id: 'transform', label: 'Transform' },
 ];
 
 export function ViewerPane(props: {
@@ -34,6 +33,8 @@ export function ViewerPane(props: {
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cubeRef = useRef<HTMLCanvasElement>(null);
+  const [viewSaved, setViewSaved] = useState(false);
   const viewerRef = useRef<Viewer | null>(null);
   const gizmoRef = useRef<Gizmo | null>(null);
   const [mode, setMode] = useState<GizmoMode>('off');
@@ -56,7 +57,13 @@ export function ViewerPane(props: {
     const stage = stageRef.current!;
     const viewer = new Viewer({
       canvas,
-      manifest: props.project.manifest,
+      // Authoring wants the full orbit sphere — a merchant checking the
+      // underside shouldn't fight the storefront's polar clamp. Only the
+      // construction-time camera reads this; the real manifest is untouched.
+      manifest: {
+        ...props.project.manifest,
+        camera: { ...props.project.manifest.camera, maxPolarAngle: 180 },
+      },
       resolveUrl: () => props.project.modelUrl,
       onSelectPart: (id) => { if (id) onSelectRef.current(id); },
     });
@@ -78,6 +85,9 @@ export function ViewerPane(props: {
     });
     gizmoRef.current = gizmo;
 
+    const viewCube = new ViewCube(viewer, cubeRef.current!);
+    (window as any).__studioViewCube = viewCube; // test hook
+
     const fit = () => viewer.resize(stage.clientWidth, stage.clientHeight);
     const observer = new ResizeObserver(fit);
     observer.observe(stage);
@@ -98,6 +108,8 @@ export function ViewerPane(props: {
       disposed = true;
       (window as any).__studioViewerReady = false;
       observer.disconnect();
+      viewCube.dispose();
+      (window as any).__studioViewCube = null;
       gizmo.dispose();
       gizmoRef.current = null;
       viewer.dispose();
@@ -136,9 +148,19 @@ export function ViewerPane(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  const saveView = () => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const view = viewer.cameraView();
+    props.onChange(setCameraView(props.project.manifest, view));
+    setViewSaved(true);
+    setTimeout(() => setViewSaved(false), 1600);
+  };
+
   return (
     <div className="stage" ref={stageRef}>
       <canvas ref={canvasRef} />
+      <canvas ref={cubeRef} className="viewcube" width={92} height={92} data-testid="view-cube" />
       <div className="gizmo-bar" role="toolbar" aria-label="Transform mode">
         {MODES.map((m) => (
           <button
@@ -147,6 +169,10 @@ export function ViewerPane(props: {
             onClick={() => setMode(m.id)}
           >{m.label}</button>
         ))}
+        <span className="gizmo-sep" />
+        <button data-testid="save-view" onClick={saveView} title="Customers will open the configurator from this angle">
+          {viewSaved ? 'Saved ✓' : 'Save view'}
+        </button>
       </div>
     </div>
   );

@@ -1,73 +1,127 @@
-// TransformControls wrapper: attach to a part's mesh, and on drag end hand
-// the resulting pose back as plain numbers. All interpretation — offsets vs
-// anchors, degrees, multipliers — happens in applyGizmoPose (tested); this
-// class only ferries three.js events.
+// Combined transform gizmo: translate arrows, rotation rings and per-axis
+// scale cubes shown together, like the classic DCC gizmo. three.js only
+// ships single-mode TransformControls, so three instances share the mesh,
+// sized so the handles nest — arrows outermost, rings between, scale cubes
+// inner. Per-axis cubes are what makes non-uniform scaling draggable; the
+// centre handle scales uniformly.
+//
+// The instances share one canvas, so a capture-phase pointerdown arbitrates:
+// whichever control is hovering a handle wins, priority scale → rotate →
+// translate (the scale cubes sit on the translate shafts and would otherwise
+// be unreachable). All interpretation of the resulting pose happens in
+// applyGizmoPose, which is tested; this class only ferries three.js events.
 
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { Viewer } from '../../../embed/src/runtime/viewer.ts';
 import type { GizmoPose } from '../lib/manifest-edit.ts';
 
-export type GizmoMode = 'translate' | 'rotate' | 'scale' | 'off';
+export type GizmoMode = 'transform' | 'off';
 
 export class Gizmo {
-  private readonly controls: TransformControls;
-  private readonly helper: THREE.Object3D;
+  private readonly all: TransformControls[];
+  private readonly helpers: THREE.Object3D[];
   private readonly viewer: Viewer;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly arbitrate: (e: PointerEvent) => void;
+  private readonly release: () => void;
   private mode: GizmoMode = 'off';
 
   constructor(viewer: Viewer, canvas: HTMLCanvasElement, onCommit: (pose: GizmoPose) => void) {
     this.viewer = viewer;
-    this.controls = new TransformControls(viewer.camera, canvas);
-    // Snaps keep hand-dragged values presentable: half-millimetres and 15°.
-    this.controls.setTranslationSnap(0.5);
-    this.controls.setRotationSnap(THREE.MathUtils.degToRad(15));
-    this.helper = this.controls.getHelper();
-    this.helper.visible = false;
-    viewer.scene.add(this.helper);
-    (window as unknown as Record<string, unknown>).__studioGizmo = this.controls; // test hook
+    this.canvas = canvas;
 
-    this.controls.addEventListener('dragging-changed', (e: { value?: unknown }) => {
-      const dragging = !!e.value;
-      // The gizmo and OrbitControls share the canvas; only one may own a drag.
-      viewer.setOrbitEnabled(!dragging);
-      const target = this.controls.object;
-      if (!dragging && target) {
-        onCommit({
-          position: [target.position.x, target.position.y, target.position.z],
-          rotationDeg: [target.rotation.x, target.rotation.y, target.rotation.z]
-            .map(THREE.MathUtils.radToDeg) as [number, number, number],
-          scale: [target.scale.x, target.scale.y, target.scale.z],
-        });
-      }
+    const make = (mode: 'translate' | 'rotate' | 'scale', size: number) => {
+      const controls = new TransformControls(viewer.camera, canvas);
+      controls.setMode(mode);
+      controls.setSize(size);
+      return controls;
+    };
+    const translate = make('translate', 1.15);
+    const rotate = make('rotate', 0.9);
+    const scale = make('scale', 0.62);
+    translate.setTranslationSnap(0.5);
+    rotate.setRotationSnap(THREE.MathUtils.degToRad(15));
+    this.all = [translate, rotate, scale];
+
+    // Drop the rotate gizmo's screen-space free-rotate handles ('E' outer
+    // ring, 'XYZE' trackball). Their pick radius overlaps the translate
+    // arrow tips, and the reference gizmo is three rings only — per-axis
+    // rotation stays. Pickers are invisible but raycastable, so they must be
+    // removed, not hidden.
+    const doomed: THREE.Object3D[] = [];
+    rotate.getHelper().traverse((o) => {
+      if (o.name === 'E' || o.name === 'XYZE') doomed.push(o);
     });
+    for (const o of doomed) o.removeFromParent();
+
+    this.helpers = this.all.map((c) => c.getHelper());
+    for (const helper of this.helpers) {
+      helper.visible = false;
+      viewer.scene.add(helper);
+    }
+    (window as unknown as Record<string, unknown>).__studioGizmo = { translate, rotate, scale }; // test hook
+
+    for (const controls of this.all) {
+      controls.addEventListener('dragging-changed', (e: { value?: unknown }) => {
+        const dragging = !!e.value;
+        viewer.setOrbitEnabled(!dragging);
+        const target = controls.object;
+        if (!dragging && target) {
+          onCommit({
+            position: [target.position.x, target.position.y, target.position.z],
+            rotationDeg: [target.rotation.x, target.rotation.y, target.rotation.z]
+              .map(THREE.MathUtils.radToDeg) as [number, number, number],
+            scale: [target.scale.x, target.scale.y, target.scale.z],
+          });
+        }
+      });
+    }
+
+    // Arbitration. Each control tracks the handle under the pointer in its
+    // `axis` field; on pointerdown exactly one hovering control keeps its
+    // pointer events, capture-phase so it runs before the controls' own
+    // listeners. Everything re-enables on release. Scale first (its cubes
+    // sit on the translate shafts), then translate (arrow tips graze ring
+    // pick zones at some view angles), rings last.
+    const priority = [scale, translate, rotate];
+    this.arbitrate = () => {
+      if (this.mode === 'off') return;
+      const winner = priority.find((c) => (c as unknown as { axis: string | null }).axis);
+      if (!winner) return;
+      for (const c of this.all) c.enabled = c === winner;
+    };
+    this.release = () => {
+      if (this.all.some((c) => (c as unknown as { dragging: boolean }).dragging)) return;
+      for (const c of this.all) c.enabled = true;
+    };
+    canvas.addEventListener('pointerdown', this.arbitrate, true);
+    canvas.addEventListener('pointerup', this.release);
   }
 
   setMode(mode: GizmoMode): void {
     this.mode = mode;
     if (mode === 'off') {
-      this.controls.detach();
-      this.helper.visible = false;
-      return;
+      for (const c of this.all) c.detach();
+      for (const h of this.helpers) h.visible = false;
     }
-    this.controls.setMode(mode);
-    this.helper.visible = !!this.controls.object;
   }
 
   attach(partId: string | null): void {
     const mesh = partId ? this.viewer.meshOf(partId) : undefined;
     if (!mesh || this.mode === 'off') {
-      this.controls.detach();
-      this.helper.visible = false;
+      for (const c of this.all) c.detach();
+      for (const h of this.helpers) h.visible = false;
       return;
     }
-    this.controls.attach(mesh);
-    this.helper.visible = true;
+    for (const c of this.all) c.attach(mesh);
+    for (const h of this.helpers) h.visible = true;
   }
 
   dispose(): void {
-    this.controls.detach();
-    this.helper.removeFromParent();
-    this.controls.dispose();
+    this.canvas.removeEventListener('pointerdown', this.arbitrate, true);
+    this.canvas.removeEventListener('pointerup', this.release);
+    for (const c of this.all) { c.detach(); c.dispose(); }
+    for (const h of this.helpers) h.removeFromParent();
   }
 }

@@ -346,6 +346,30 @@ export function frameCamera(manifest: Manifest, raw: Map<string, PartBounds>): M
   });
 }
 
+/**
+ * Persist the camera pose the merchant is looking at right now as the view
+ * customers open to. Marks the camera userSet so publish keeps it verbatim
+ * instead of auto-framing.
+ */
+export function setCameraView(
+  manifest: Manifest,
+  view: { position: [number, number, number]; target: [number, number, number]; fov?: number },
+): Manifest {
+  const nums = [...view.position, ...view.target, ...(view.fov != null ? [view.fov] : [])];
+  if (nums.some((n) => !Number.isFinite(n))) throw new EditError('camera view must be finite numbers');
+  if (view.fov != null && (view.fov <= 0 || view.fov >= 180)) throw new EditError('fov must be between 0 and 180');
+  const round = (v: number) => Math.round(v * 100) / 100;
+  return edit(manifest, (draft) => {
+    draft.camera = {
+      ...draft.camera,
+      position: view.position.map(round) as [number, number, number],
+      target: view.target.map(round) as [number, number, number],
+      ...(view.fov != null ? { fov: view.fov } : {}),
+      userSet: true,
+    };
+  });
+}
+
 // ── misc ────────────────────────────────────────────────────────────────────
 
 export function withProductName(manifest: Manifest, name: string): Manifest {

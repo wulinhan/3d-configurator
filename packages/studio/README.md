@@ -57,13 +57,32 @@ a 25% band, the camera refits while keeping the merchant's orbit angle.
 
 ## Gizmos
 
-Move / Rotate / Scale in the viewport (toolbar top-left), attached to the
-selected part, snapping to 0.5 mm and 15°. During a drag only the mesh moves;
-on release the pose is committed through `applyGizmoPose`, which turns it
-back into manifest placement: a translate on an anchored axis slides the
-offset and keeps the anchor, rotation lands as degrees, scale as multipliers.
-The committed manifest lays the mesh out exactly where it was dropped, so the
+One combined gizmo (toolbar: Orbit / Transform): translate arrows outermost,
+rotation rings between, per-axis scale cubes on the shafts — the cubes are
+what makes non-uniform scaling draggable; the centre handle scales uniformly.
+three.js only ships single-mode TransformControls, so three instances share
+the mesh with a capture-phase pointerdown arbitrating who owns the drag
+(scale → translate → rotate, since the handles nest). The rotate gizmo's
+screen-space free-rotate handles are removed — their pick radius overlaps
+the translate arrow tips.
+
+Snapping is 0.5 mm and 15°. During a drag only the mesh moves; on release
+the pose is committed through `applyGizmoPose`, which turns it back into
+manifest placement: a translate on an anchored axis slides the offset and
+keeps the anchor, rotation lands as degrees, scale as multipliers. The
+committed manifest lays the mesh out exactly where it was dropped, so the
 hand-off from dragging to authored state is invisible.
+
+## View cube & saved views
+
+A view cube (top-right) mirrors the camera; its six named faces and eight
+corner dots are quick views — the camera swings there over ~320 ms, keeping
+its distance and orbit feel. The Studio orbits the full sphere (the
+storefront's polar clamp only applies to customers).
+
+**Save view** persists the current camera into `manifest.camera` and marks it
+`userSet`; publish then keeps that view verbatim instead of auto-framing, so
+customers open the configurator from exactly the angle the merchant chose.
 
 This is also why mesh transforms pivot on the part's centre (geometry is
 re-centred at load): the layout engine scales and rotates about part centres,
@@ -103,10 +122,13 @@ test/gizmo.test.ts    11 — pose→manifest commits: anchored drags slide their
                       against, round-trips land exactly
 test/compress.test.ts  3 — meshopt output is tagged, smaller, and within
                       0.05 mm of the input
-test/studio.smoke.mjs 29 browser assertions — the full merchant journey
+test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
+                      quick views are unit-length and cover every octant
+test/studio.smoke.mjs 35 browser assertions — the full merchant journey
                       against the production build, including a real pointer
-                      drag on the move gizmo, a mesh-vs-layout divergence
-                      check, and the compressed download
+                      drag on the combined gizmo, view-cube navigation, the
+                      saved view surviving publish, a mesh-vs-layout
+                      divergence check, and the compressed download
 ```
 
 The browser test exists because two real defects passed every unit test: the

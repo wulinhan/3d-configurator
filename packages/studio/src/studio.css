@@ -75,6 +75,13 @@ input, select { font: inherit; }
 }
 .gizmo-bar button:hover { background: var(--surface); }
 .gizmo-bar button.is-active { background: var(--accent); color: #fff; font-weight: 600; }
+.gizmo-sep { width: 1px; align-self: stretch; margin: 4px 3px; background: var(--line); }
+/* Must out-rank `.stage canvas`'s 100% sizing or the overlay swallows the
+ * whole stage — and with it, every pointer event the gizmo needs. */
+.stage canvas.viewcube {
+  position: absolute; top: 12px; right: 12px;
+  width: 92px; height: 92px; cursor: default;
+}
 
 /* ── panel ── */
 .panel { border-left: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; }

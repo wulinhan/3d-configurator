@@ -216,10 +216,16 @@ await shoot('2-anchored.png');
     worst < 0.01, `worst divergence ${worst.toFixed(3)} mm`);
 }
 
-// ── 6c. move gizmo: a real pointer drag lands in the manifest ──────────────
+// ── 6c. combined gizmo: a real pointer drag lands in the manifest ──────────
 {
-  await page.click('[data-testid="gizmo-translate"]');
+  await page.click('[data-testid="gizmo-transform"]');
   await page.waitForTimeout(300);
+  const attached = await page.evaluate(() => {
+    const g = window.__studioGizmo;
+    return !!(g?.translate?.object && g?.rotate?.object && g?.scale?.object
+      && g.translate.object === g.rotate.object && g.rotate.object === g.scale.object);
+  });
+  check('all three gizmo layers attach to the selected part', attached, '');
   const before = await manifest();
   const xOffsetBefore = before.parts[1].placement?.x?.offset ?? 0;
 
@@ -242,15 +248,17 @@ await shoot('2-anchored.png');
   const len = Math.hypot(...geometry2d.xDir);
   const dir = [geometry2d.xDir[0] / len, geometry2d.xDir[1] / len];
 
-  // Walk out along the +X arrow until the gizmo takes the pointer.
+  // Walk in from the arrow tip until the TRANSLATE layer takes the pointer —
+  // the combined gizmo nests scale cubes and rings on the same shaft, so the
+  // arbitration must hand the outer arrow to translate.
   let grabbed = false;
-  for (const dist of [30, 40, 50, 60, 70, 80, 95, 110]) {
+  for (const dist of [120, 108, 96, 84, 72, 60]) {
     const px = geometry2d.centre[0] + dir[0] * dist;
     const py = geometry2d.centre[1] + dir[1] * dist;
     await page.mouse.move(px, py);
     await page.mouse.down();
     await page.waitForTimeout(60);
-    grabbed = await page.evaluate(() => window.__studioGizmo?.dragging === true);
+    grabbed = await page.evaluate(() => window.__studioGizmo?.translate?.dragging === true);
     if (grabbed) {
       for (let step = 1; step <= 8; step++) {
         await page.mouse.move(px + dir[0] * 8 * step, py + dir[1] * 8 * step);
@@ -260,9 +268,10 @@ await shoot('2-anchored.png');
       break;
     }
     await page.mouse.up();
+    await page.waitForTimeout(60);
   }
   await page.waitForTimeout(300);
-  check('move gizmo: the pointer actually grabbed the X handle', grabbed, '');
+  check('combined gizmo: the pointer grabbed the translate arrow', grabbed, '');
 
   m = await manifest();
   const xOffsetAfter = m.parts[1].placement?.x?.offset ?? 0;
@@ -274,6 +283,47 @@ await shoot('2-anchored.png');
   check('manifest still valid after the drag', verdictAfterDrag.ok, verdictAfterDrag.errors);
   await shoot('2b-gizmo.png');
   await page.click('[data-testid="gizmo-off"]');
+}
+
+// ── 6d. view cube: quick views by face and corner ──────────────────────────
+{
+  const dirNow = () => page.evaluate(() => {
+    const v = window.__studioViewer.cameraView();
+    const d = [0, 1, 2].map((a) => v.position[a] - v.target[a]);
+    const len = Math.hypot(...d);
+    return d.map((x) => x / len);
+  });
+
+  // A real click in the middle of the cube canvas: the camera starts on the
+  // front-upper quadrant, so the centre of the cube is the Front face.
+  await page.click('[data-testid="view-cube"]');
+  await page.waitForTimeout(500);
+  let d = await dirNow();
+  check('clicking the cube face swings the camera to Front',
+    d[2] > 0.99 && Math.abs(d[0]) < 0.05 && Math.abs(d[1]) < 0.05,
+    d.map((x) => x.toFixed(3)));
+
+  const went = await page.evaluate(() => window.__studioViewCube.go('corner+x+y+z'));
+  await page.waitForTimeout(500);
+  d = await dirNow();
+  const k = 1 / Math.sqrt(3);
+  check('a corner quick view lands on the isometric diagonal',
+    went && Math.abs(d[0] - k) < 0.03 && Math.abs(d[1] - k) < 0.03 && Math.abs(d[2] - k) < 0.03,
+    d.map((x) => x.toFixed(3)));
+  await shoot('2c-viewcube.png');
+}
+
+// ── 6e. save the default camera view ───────────────────────────────────────
+{
+  await page.click('[data-testid="save-view"]');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  const live = await page.evaluate(() => window.__studioViewer.cameraView());
+  const closeEnough = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+  check('Save view marks the camera as merchant-set', m.camera?.userSet === true, m.camera);
+  check('…and stores the live camera pose',
+    closeEnough(m.camera.position, live.position) && closeEnough(m.camera.target, live.target),
+    { saved: m.camera.position, live: live.position });
 }
 
 // ── 7. palette: add a colour, price a swatch ────────────────────────────────
@@ -336,6 +386,10 @@ check('downloaded manifest carries the session edits',
   && downloaded.options.find((o) => o.id === 'base-colour')?.custom?.priceDelta === 35
   && !!downloaded.palettes[0].swatches.find((s) => s.id === 'brand-teal'),
   '');
+check('downloaded manifest keeps the saved camera view, not an auto-frame',
+  downloaded.camera?.userSet === true
+  && m.camera.position.every((v, i) => Math.abs(v - downloaded.camera.position[i]) < 0.01),
+  downloaded.camera);
 
 const [modelDl] = await Promise.all([
   page.waitForEvent('download'),

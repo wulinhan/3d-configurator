@@ -126,6 +126,7 @@ export class Viewer {
   private readonly resolveUrl: (url: string) => string;
   private highlighted: string | null = null;
   private rafId = 0;
+  private viewTween = 0;
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
   private rawBoxes = new Map<string, Box>();
   /** Each part's untransformed centre — the pivot every transform is about. */
@@ -319,6 +320,46 @@ export class Viewer {
     this.camera.far = distance * 20;
     this.camera.updateProjectionMatrix();
     this.controls.update();
+  }
+
+  /** The current camera pose — what "save this view" persists. */
+  cameraView(): { position: [number, number, number]; target: [number, number, number]; fov: number } {
+    const p = this.camera.position, t = this.controls.target;
+    return { position: [p.x, p.y, p.z], target: [t.x, t.y, t.z], fov: this.camera.fov };
+  }
+
+  /**
+   * Swing the camera to look at the target from a direction, keeping the
+   * current distance. What a view-cube click calls. Animated by default —
+   * an instant snap loses the viewer's sense of which way the model turned.
+   */
+  lookFrom(direction: [number, number, number], opts: { animate?: boolean } = {}): void {
+    const dir = new THREE.Vector3(...direction);
+    if (!dir.lengthSq()) return;
+    dir.normalize();
+    const target = this.controls.target.clone();
+    const distance = Math.max(this.camera.position.distanceTo(target), this.controls.minDistance);
+    cancelAnimationFrame(this.viewTween);
+
+    const from = this.camera.position.clone().sub(target).normalize();
+    // Antipodal directions have no unique arc — jump rather than divide by ~0.
+    if (opts.animate === false || from.dot(dir) < -0.999) {
+      this.camera.position.copy(target).addScaledVector(dir, distance);
+      this.controls.update();
+      return;
+    }
+
+    const DURATION = 320;
+    const start = performance.now();
+    const step = () => {
+      const t = Math.min((performance.now() - start) / DURATION, 1);
+      const eased = t * (2 - t);
+      const v = from.clone().lerp(dir, eased).normalize();
+      this.camera.position.copy(target).addScaledVector(v, distance);
+      this.controls.update();
+      if (t < 1) this.viewTween = requestAnimationFrame(step);
+    };
+    step();
   }
 
   /** The mesh rendering a part — the object a Studio gizmo attaches to. */
