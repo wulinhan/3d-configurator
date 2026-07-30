@@ -24,6 +24,10 @@ The replacement splits that into three pieces:
 ```
 src/manifest/types.ts      the contract — every field, and why it exists
 src/manifest/validate.ts   resolves every reference; errors block, warnings don't
+src/runtime/layout.ts      anchored placement → concrete transforms (pure)
+src/runtime/state.ts       selections, colour links, surcharges, payload (pure)
+src/runtime/viewer.ts      three.js glue — the only part that needs eyes on it
+src/embed.ts               mounts the panel, posts changes to the host page
 tools/glb.mjs              minimal glTF 2.0 / GLB writer and reader
 tools/extract-geo.mjs      pulls the baked GEO literal out of a shipped configurator
 tools/orient.mjs           normalises to canonical space (mm, Y-up, ground-centred)
@@ -31,8 +35,9 @@ tools/compress.mjs         weld + quantise + meshopt
 tools/verify.mjs           order-independent geometry diff, mm-accurate
 tools/build-model.mjs      extract → orient → compress → verify, in one command
 tools/check-manifest.ts    validate a manifest and cross-check it against its GLB
-demo/                      a hand-authored manifest and its model
-test/                      validator tests
+tools/bundle-demo.mjs      inline everything into one self-contained HTML file
+demo/                      a hand-authored manifest, its model, and a mock storefront
+test/                      unit tests, plus a browser smoke test of the demo
 ```
 
 ## Canonical space
@@ -109,13 +114,49 @@ stretching new geometry onto old numbers.
 the host's cart own base price, currency, tax and discounts. A merchant's store
 is the authority on money; a second copy here would go stale.
 
+## Trying it
+
+```
+cd configurator
+npm install
+npm run build      # bundle the runtime into demo/
+npm run serve      # http://localhost:4321
+```
+
+Drag to orbit, click a part on the model to jump to it, and open *What the
+configurator posted to this page* to watch the payload the cart is pricing
+from. The cart is the mock merchant's, not the configurator's.
+
+`npm run build:standalone` inlines the runtime, styles, manifest and models
+into `demo/standalone.html` — one file, no external requests, opens from
+`file://`. That's the version to send someone.
+
 ## Checks
 
 ```
-npm test                                        # validator
+npm test                # unit + browser
+npm run test:unit       # validator, layout, pricing — 55 tests
+npm run test:browser    # drives the demo in Chromium — 14 assertions
 npm run check:manifest demo/tap-bar-3.manifest.json
 ```
 
 `check:manifest` goes past the schema and confirms every `mesh` a part names is
 actually present in the GLB — a manifest can be internally consistent and still
 reference a mesh that doesn't exist.
+
+`test:browser` needs a Chromium binary; it looks at `CHROMIUM_PATH` and falls
+back to `/opt/pw-browsers/chromium`. It exists because two real defects passed
+every unit test:
+
+- **Quantised geometry.** Compressed models keep their de-quantisation scale on
+  the GLB *node*. Reading the geometry alone rendered a 140 mm bar about 2 mm
+  wide — correct colours, correct prices, invisible product. Hence the
+  `coverage` assertion, which fails if the model stops filling a sane share of
+  the frame.
+- **Lighting.** three.js r155 moved to physical light units; carrying the
+  shipped r128 intensities across left a Jade White body rendering at 150/255.
+  The fix was measured against the live page rather than eyeballed — same model,
+  same camera, r128 gives 255/240 and the corrected r185 gives 255/249.
+
+Both were only visible on screen, which is the argument for the browser test
+existing at all.
