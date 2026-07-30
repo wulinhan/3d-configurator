@@ -11,11 +11,11 @@ set one up without us writing anything.
 ```
 packages/embed/   the runtime — manifest schema, layout, pricing, renderer —
                   and the model pipeline tools. See its README for the details.
+packages/studio/  the merchant-facing authoring app — upload a 3MF/STL/GLB,
+                  position parts in real millimetres, set palettes, custom-colour
+                  rules and price deltas, publish a manifest the embed renders.
 apps/demo/        a mock merchant storefront hosting the embed: the reference
                   for what an integration looks like, and the browser-test target.
-packages/studio/  (planned) the merchant-facing authoring app — upload a model,
-                  position parts in mm, set palettes and price deltas, publish
-                  a manifest the embed renders.
 ```
 
 The manifest is the contract between all three: the Studio writes it, the embed
@@ -27,8 +27,9 @@ authority on money.
 
 ```
 npm install
-npm run build       # bundle the embed into apps/demo/
-npm run serve       # http://localhost:4321
+npm run build       # embed bundle into apps/demo/ + Studio production build
+npm run serve       # the demo storefront — http://localhost:4321
+npm run dev:studio  # the Studio — http://localhost:5173
 ```
 
 ## Checks

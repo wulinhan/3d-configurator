@@ -121,11 +121,14 @@ export class Viewer {
   private readonly group = new THREE.Group();
   private readonly meshes = new Map<string, THREE.Mesh>();
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
-  private readonly manifest: Manifest;
+  private manifest: Manifest;
   private readonly onSelectPart?: (partId: string | null) => void;
   private readonly resolveUrl: (url: string) => string;
   private highlighted: string | null = null;
-  private frame = 0;
+  private rafId = 0;
+  /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
+  private rawBoxes = new Map<string, Box>();
+  private layout: ReturnType<typeof resolveLayout> = new Map();
 
   constructor(opts: ViewerOptions) {
     this.manifest = opts.manifest;
@@ -209,8 +212,10 @@ export class Viewer {
       const bb = geo.boundingBox!;
       boxes.set(part.id, { min: [bb.min.x, bb.min.y, bb.min.z], max: [bb.max.x, bb.max.y, bb.max.z] });
     }
+    this.rawBoxes = boxes;
 
     const layout = resolveLayout(this.manifest, boxes);
+    this.layout = layout;
 
     for (const part of this.manifest.parts) {
       const geo = geometries.get(part.mesh);
@@ -243,6 +248,71 @@ export class Viewer {
       this.controls.target.copy(centre);
       this.controls.update();
     }
+  }
+
+  /**
+   * Swap in an edited manifest and re-run layout on the already-loaded meshes.
+   *
+   * Placement, scale and rotation are mesh transforms — the geometry never
+   * changed — so the Studio can drag a slider without tearing down the WebGL
+   * context (browsers cap live contexts at ~16, so rebuild-per-edit dies
+   * within a minute of real use). Parts must be unchanged: geometry is bound
+   * at load, so adding or removing parts still needs a fresh load().
+   */
+  setManifest(manifest: Manifest): void {
+    this.manifest = manifest;
+    const layout = resolveLayout(manifest, this.rawBoxes);
+    this.layout = layout;
+    for (const part of manifest.parts) {
+      const mesh = this.meshes.get(part.id);
+      const t = layout.get(part.id);
+      if (!mesh || !t) continue;
+      mesh.scale.set(...t.scale);
+      mesh.rotation.set(...(t.rotation.map((d) => d * Math.PI / 180) as [number, number, number]));
+      mesh.position.set(...t.translate);
+      const material = this.materials.get(part.id);
+      if (material) {
+        material.roughness = part.material?.roughness ?? 0.9;
+        material.metalness = part.material?.metalness ?? 0;
+      }
+    }
+  }
+
+  /** Where the laid-out model currently sits, in mm. */
+  layoutBounds(): Box {
+    return modelBounds(this.layout);
+  }
+
+  /**
+   * Refit the camera to the current layout, keeping the user's orbit angle.
+   *
+   * The Studio resizes parts by orders of magnitude; a camera framed for the
+   * original model ends up inside the resized one. Only the distance and
+   * target move — the direction the merchant chose is theirs.
+   */
+  frame(): void {
+    const b = this.layoutBounds();
+    if (!Number.isFinite(b.min[0])) return;
+    const centre = new THREE.Vector3(...[0, 1, 2].map((a) => (b.min[a] + b.max[a]) / 2) as [number, number, number]);
+    const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2], 1);
+    const direction = this.camera.position.clone().sub(this.controls.target).normalize();
+    if (!direction.lengthSq()) direction.set(0, 0.35, 1).normalize();
+    const distance = span * 2.1;
+    this.controls.target.copy(centre);
+    this.camera.position.copy(centre).addScaledVector(direction, distance);
+    this.controls.minDistance = span * 0.4;
+    this.controls.maxDistance = span * 8;
+    this.camera.near = Math.max(distance / 100, 0.1);
+    this.camera.far = distance * 20;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+  }
+
+  /** Release the WebGL context. The instance is dead after this. */
+  dispose(): void {
+    this.stop();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
   }
 
   /** Repaint and re-hide parts for a new set of selections. */
@@ -301,7 +371,7 @@ export class Viewer {
 
   start(): void {
     const tick = () => {
-      this.frame = requestAnimationFrame(tick);
+      this.rafId = requestAnimationFrame(tick);
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
     };
@@ -309,6 +379,6 @@ export class Viewer {
   }
 
   stop(): void {
-    cancelAnimationFrame(this.frame);
+    cancelAnimationFrame(this.rafId);
   }
 }

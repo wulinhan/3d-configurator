@@ -1,0 +1,26 @@
+{
+  "name": "@allin/studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Merchant-facing authoring app — import a model, position parts in mm, set palettes and pricing, publish a manifest",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "node --test --experimental-strip-types \"test/*.test.ts\" && node test/studio.smoke.mjs",
+    "test:unit": "node --test --experimental-strip-types \"test/*.test.ts\"",
+    "test:browser": "node test/studio.smoke.mjs"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "vite": "^7.3.6"
+  }
+}
