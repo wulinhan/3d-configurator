@@ -1,0 +1,27 @@
+{
+  "name": "@allin/embed",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Embeddable product configurator — manifest-driven renderer and model pipeline",
+  "scripts": {
+    "test": "node --test --experimental-strip-types \"test/*.test.ts\" && node test/demo.smoke.mjs",
+    "test:unit": "node --test --experimental-strip-types \"test/*.test.ts\"",
+    "test:browser": "node test/demo.smoke.mjs",
+    "check:manifest": "node tools/check-manifest.ts",
+    "build": "esbuild src/embed.ts --bundle --format=esm --target=es2022 --minify --outfile=../../apps/demo/embed.js && cp src/embed.css ../../apps/demo/embed.css",
+    "build:model": "node tools/build-model.mjs",
+    "build:standalone": "node tools/bundle-demo.mjs ../../apps/demo/standalone.html"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.4.2",
+    "@gltf-transform/extensions": "^4.4.2",
+    "@gltf-transform/functions": "^4.4.2",
+    "meshoptimizer": "^1.2.0",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.0",
+    "esbuild": "^0.28.1"
+  }
+}

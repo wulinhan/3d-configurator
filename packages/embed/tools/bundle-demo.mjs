@@ -30,7 +30,7 @@ import { QUANTIZE_POSITION } from './compress.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG = join(HERE, '..');
-const DEMO = join(PKG, 'demo');
+const DEMO = join(PKG, '..', '..', 'apps', 'demo');
 
 const argv = process.argv.slice(2);
 const fragment = argv.includes('--fragment');

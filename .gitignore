@@ -1,7 +1,15 @@
-# Build intermediates — regenerate with tools/build-model.mjs
+# Dependencies
+node_modules/
+
+# Model-pipeline intermediates — regenerate with packages/embed tools
 *.raw.glb
 
-# Build output — regenerate with `npm run build`
-demo/embed.js
-demo/embed.css
-demo/standalone.html
+# Demo build output — regenerate with `npm run build` / `build:standalone`
+apps/demo/embed.js
+apps/demo/embed.css
+apps/demo/standalone.html
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

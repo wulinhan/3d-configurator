@@ -16,7 +16,7 @@ import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..', 'demo');
+const ROOT = join(HERE, '..', '..', '..', 'apps', 'demo');
 const PORT = 4321;
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',

@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { validateManifest, assertManifest } from '../src/manifest/validate.ts';
 import type { Manifest } from '../src/manifest/types.ts';
 
-const DEMO = new URL('../demo/tap-bar-3.manifest.json', import.meta.url);
+const DEMO = new URL('../../../apps/demo/tap-bar-3.manifest.json', import.meta.url);
 const base = (): Manifest => JSON.parse(readFileSync(DEMO, 'utf8'));
 
 /** Apply a mutation and return the paths that failed. */

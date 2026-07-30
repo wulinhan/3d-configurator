@@ -14,7 +14,7 @@ import {
 } from '../src/runtime/state.ts';
 import type { Manifest, ColourOption } from '../src/manifest/types.ts';
 
-const DEMO = new URL('../demo/tap-bar-3.manifest.json', import.meta.url);
+const DEMO = new URL('../../../apps/demo/tap-bar-3.manifest.json', import.meta.url);
 const load = (): Manifest => JSON.parse(readFileSync(DEMO, 'utf8'));
 const colourOption = (m: Manifest, id: string) => m.options.find((o) => o.id === id) as ColourOption;
 
