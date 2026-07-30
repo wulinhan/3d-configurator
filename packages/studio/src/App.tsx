@@ -125,7 +125,7 @@ export function App() {
       </header>
 
       <div className="workspace">
-        <ViewerPane project={project} selections={selections} selectedPart={selectedPart} onSelectPart={(id) => { setSelectedPart(id); setTab('Parts'); }} />
+        <ViewerPane project={project} selections={selections} selectedPart={selectedPart} onSelectPart={(id) => { setSelectedPart(id); setTab('Parts'); }} onChange={setManifest} />
 
         <aside className="panel">
           <nav className="tabs" role="tablist">

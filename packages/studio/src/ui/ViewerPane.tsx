@@ -3,21 +3,40 @@
 // setManifest (transform-only relayout) — the WebGL context is created once
 // per model, because browsers cap live contexts and rebuild-per-keystroke
 // exhausts them in about a minute.
+//
+// The gizmo rides on top: TransformControls attached to the selected part's
+// mesh. During a drag only the mesh moves (free preview); on release the
+// pose is committed through applyGizmoPose, and the resulting manifest lays
+// the mesh out in exactly the dropped position — so the hand-off from
+// "dragging" to "authored" is invisible.
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer } from '../../../embed/src/runtime/viewer.ts';
+import { applyGizmoPose, type GizmoPose } from '../lib/manifest-edit.ts';
+import { Gizmo, type GizmoMode } from './gizmo.ts';
 import type { Project } from '../App.tsx';
+
+const MODES: Array<{ id: GizmoMode; label: string }> = [
+  { id: 'off', label: 'Orbit' },
+  { id: 'translate', label: 'Move' },
+  { id: 'rotate', label: 'Rotate' },
+  { id: 'scale', label: 'Scale' },
+];
 
 export function ViewerPane(props: {
   project: Project;
   selections: Selections;
   selectedPart: string | null;
   onSelectPart: (id: string) => void;
+  onChange: (m: Manifest) => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
+  const gizmoRef = useRef<Gizmo | null>(null);
+  const [mode, setMode] = useState<GizmoMode>('off');
   // Span of the model when last framed — the baseline the refit compares to.
   // Set when load() resolves: initialising it lazily in the edit effect
   // swallowed the first big resize, because the viewer loads asynchronously
@@ -26,7 +45,12 @@ export function ViewerPane(props: {
   const onSelectRef = useRef(props.onSelectPart);
   onSelectRef.current = props.onSelectPart;
 
-  // One viewer per loaded model (keyed by the blob URL).
+  // A drag commits against whatever the manifest is at release time, not at
+  // gizmo construction — refs keep the callback current without rebuilding.
+  const commitCtx = useRef({ project: props.project, selectedPart: props.selectedPart, onChange: props.onChange });
+  commitCtx.current = { project: props.project, selectedPart: props.selectedPart, onChange: props.onChange };
+
+  // One viewer + gizmo per loaded model (keyed by the blob URL).
   useEffect(() => {
     const canvas = canvasRef.current!;
     const stage = stageRef.current!;
@@ -39,6 +63,20 @@ export function ViewerPane(props: {
     viewerRef.current = viewer;
     (window as any).__studioViewer = viewer; // test hook, same as __studio
     let disposed = false;
+
+    const gizmo = new Gizmo(viewer, canvas, (pose: GizmoPose) => {
+      const { project, selectedPart, onChange } = commitCtx.current;
+      if (!selectedPart) return;
+      try {
+        onChange(applyGizmoPose(project.manifest, selectedPart, project.raw, pose));
+      } catch {
+        // A pose the edit layer refuses (degenerate scale, detached part):
+        // snap the mesh back to the authored state rather than leaving the
+        // preview lying about what the manifest says.
+        viewer.setManifest(project.manifest);
+      }
+    });
+    gizmoRef.current = gizmo;
 
     const fit = () => viewer.resize(stage.clientWidth, stage.clientHeight);
     const observer = new ResizeObserver(fit);
@@ -60,6 +98,8 @@ export function ViewerPane(props: {
       disposed = true;
       (window as any).__studioViewerReady = false;
       observer.disconnect();
+      gizmo.dispose();
+      gizmoRef.current = null;
       viewer.dispose();
       viewerRef.current = null;
       spanRef.current = 0;
@@ -87,11 +127,27 @@ export function ViewerPane(props: {
 
   useEffect(() => {
     viewerRef.current?.highlight(props.selectedPart);
-  }, [props.selectedPart]);
+    gizmoRef.current?.attach(props.selectedPart);
+  }, [props.selectedPart, props.project.modelUrl]);
+
+  useEffect(() => {
+    gizmoRef.current?.setMode(mode);
+    gizmoRef.current?.attach(props.selectedPart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   return (
     <div className="stage" ref={stageRef}>
       <canvas ref={canvasRef} />
+      <div className="gizmo-bar" role="toolbar" aria-label="Transform mode">
+        {MODES.map((m) => (
+          <button
+            key={m.id} data-testid={`gizmo-${m.id}`}
+            className={mode === m.id ? 'is-active' : ''}
+            onClick={() => setMode(m.id)}
+          >{m.label}</button>
+        ))}
+      </div>
     </div>
   );
 }

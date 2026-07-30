@@ -128,6 +128,8 @@ export class Viewer {
   private rafId = 0;
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
   private rawBoxes = new Map<string, Box>();
+  /** Each part's untransformed centre — the pivot every transform is about. */
+  private centres = new Map<string, [number, number, number]>();
   private layout: ReturnType<typeof resolveLayout> = new Map();
 
   constructor(opts: ViewerOptions) {
@@ -220,7 +222,17 @@ export class Viewer {
     for (const part of this.manifest.parts) {
       const geo = geometries.get(part.mesh);
       const t = layout.get(part.id);
-      if (!geo || !t) continue;
+      const box = boxes.get(part.id);
+      if (!geo || !t || !box) continue;
+
+      // Layout maths (transformBox) scales and rotates about the part's
+      // centre. Mesh transforms act about the mesh's local origin — so move
+      // the origin to the centre, or a scaled part renders somewhere the
+      // anchor solver didn't put it. Position then carries the centre back.
+      const centre: [number, number, number] =
+        [0, 1, 2].map((a) => (box.min[a] + box.max[a]) / 2) as [number, number, number];
+      geo.translate(-centre[0], -centre[1], -centre[2]);
+      this.centres.set(part.id, centre);
 
       const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color('#CCCCCC'),
@@ -233,7 +245,7 @@ export class Viewer {
       mesh.userData.part = part.id;
       mesh.scale.set(...t.scale);
       mesh.rotation.set(...(t.rotation.map((d) => d * Math.PI / 180) as [number, number, number]));
-      mesh.position.set(...t.translate);
+      mesh.position.set(centre[0] + t.translate[0], centre[1] + t.translate[1], centre[2] + t.translate[2]);
 
       this.meshes.set(part.id, mesh);
       this.materials.set(part.id, material);
@@ -266,10 +278,11 @@ export class Viewer {
     for (const part of manifest.parts) {
       const mesh = this.meshes.get(part.id);
       const t = layout.get(part.id);
+      const centre = this.centres.get(part.id) ?? [0, 0, 0];
       if (!mesh || !t) continue;
       mesh.scale.set(...t.scale);
       mesh.rotation.set(...(t.rotation.map((d) => d * Math.PI / 180) as [number, number, number]));
-      mesh.position.set(...t.translate);
+      mesh.position.set(centre[0] + t.translate[0], centre[1] + t.translate[1], centre[2] + t.translate[2]);
       const material = this.materials.get(part.id);
       if (material) {
         material.roughness = part.material?.roughness ?? 0.9;
@@ -306,6 +319,16 @@ export class Viewer {
     this.camera.far = distance * 20;
     this.camera.updateProjectionMatrix();
     this.controls.update();
+  }
+
+  /** The mesh rendering a part — the object a Studio gizmo attaches to. */
+  meshOf(partId: string): THREE.Object3D | undefined {
+    return this.meshes.get(partId);
+  }
+
+  /** Let a gizmo pause orbiting while it owns the pointer. */
+  setOrbitEnabled(enabled: boolean): void {
+    this.controls.enabled = enabled;
   }
 
   /** Release the WebGL context. The instance is dead after this. */

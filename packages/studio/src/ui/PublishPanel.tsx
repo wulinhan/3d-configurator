@@ -1,17 +1,25 @@
 // Publish: name and currency, a validation report, and the two files a
 // merchant deploys — manifest.json and model.glb — plus the embed snippet.
-// The GLB written here is the same bytes the preview has been rendering.
+// The model download is meshopt-compressed in the browser with the same
+// recipe the pipeline verified (weld → quantise-14 → meshopt): the preview
+// rendered the uncompressed bytes, and the embed's lazy decoder reads the
+// compressed ones, so both sides of the trade are already exercised.
 
 import { useMemo, useState } from 'react';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import { validateManifest } from '../../../embed/src/manifest/validate.ts';
 import { frameCamera, withProductName, withCurrency } from '../lib/manifest-edit.ts';
 import { writeGlb } from '../lib/write-glb.ts';
+import { compressGlb } from '../lib/compress-glb.ts';
 import type { Project } from '../App.tsx';
+
+const kb = (n: number) => `${(n / 1024).toFixed(0)} KB`;
 
 export function PublishPanel(props: { project: Project; onChange: (m: Manifest) => void }) {
   const { manifest, model } = props.project;
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sizeNote, setSizeNote] = useState<string | null>(null);
   const report = useMemo(() => validateManifest(manifest), [manifest]);
 
   const download = (name: string, blob: Blob) => {
@@ -74,14 +82,27 @@ export function PublishPanel(props: { project: Project; onChange: (m: Manifest) 
           }}
         >Download manifest</button>
         <button
-          data-testid="download-model" disabled={!report.ok}
-          onClick={() => download('model.glb',
-            new Blob([writeGlb(model.parts) as BlobPart], { type: 'model/gltf-binary' }))}
-        >Download model.glb</button>
+          data-testid="download-model" disabled={!report.ok || busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              const raw = writeGlb(model.parts);
+              const packed = await compressGlb(raw);
+              download('model.glb', new Blob([packed as BlobPart], { type: 'model/gltf-binary' }));
+              setSizeNote(`model.glb: ${kb(packed.length)} compressed, from ${kb(raw.length)} raw.`);
+            } catch (err) {
+              setError(`compression failed: ${err instanceof Error ? err.message : err}`);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >{busy ? 'Compressing…' : 'Download model.glb'}</button>
       </div>
+      {sizeNote && <p className="hint" role="status" data-testid="size-note">{sizeNote}</p>}
       <p className="hint">
-        Host both files next to your product page. The model is uncompressed here;
-        run it through the pipeline's compress step before production traffic.
+        Host both files next to your product page. The model ships
+        meshopt-compressed; the embed decodes it automatically.
       </p>
 
       <h4>Embed snippet</h4>

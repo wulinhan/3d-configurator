@@ -31,6 +31,11 @@ src/lib/write-glb.ts      browser-portable GLB writer — publish output and
 src/lib/manifest-init.ts  first manifest from an imported model
 src/lib/manifest-edit.ts  every edit the UI can make. Each op either returns
                           a manifest that passes validateManifest, or throws.
+src/lib/compress-glb.ts   meshopt compression for publish — the pipeline's
+                          verified recipe (weld → quantise-14 → meshopt),
+                          run in the browser via WebIO
+src/ui/gizmo.ts           TransformControls wrapper; interpretation happens
+                          in applyGizmoPose, which is tested
 ```
 
 That last invariant is the point of the file: the Studio structurally cannot
@@ -49,6 +54,30 @@ recreating the viewer: placement and scale are mesh transforms, and browsers
 cap live WebGL contexts, so rebuild-per-keystroke dies within a minute of
 real use. When an edit moves the model outside the current view by more than
 a 25% band, the camera refits while keeping the merchant's orbit angle.
+
+## Gizmos
+
+Move / Rotate / Scale in the viewport (toolbar top-left), attached to the
+selected part, snapping to 0.5 mm and 15°. During a drag only the mesh moves;
+on release the pose is committed through `applyGizmoPose`, which turns it
+back into manifest placement: a translate on an anchored axis slides the
+offset and keeps the anchor, rotation lands as degrees, scale as multipliers.
+The committed manifest lays the mesh out exactly where it was dropped, so the
+hand-off from dragging to authored state is invisible.
+
+This is also why mesh transforms pivot on the part's centre (geometry is
+re-centred at load): the layout engine scales and rotates about part centres,
+and the smoke test asserts rendered meshes sit exactly where the layout
+engine says — the divergence check that catches pivot mismatches.
+
+## Publish compression
+
+`Download model.glb` compresses in the browser with the same recipe the
+pipeline verified — on the reference product that meant 46 KB gzipped from a
+227 KB raw GLB, with worst-case geometric drift two orders of magnitude under
+a printer layer line. `test/compress.test.ts` re-verifies fidelity on every
+run (order-independent, since welding reorders vertices), and the embed loads
+the result through its lazy meshopt decoder.
 
 ## Sizing semantics
 
@@ -69,9 +98,15 @@ test/import.test.ts   18 — every fixture generated in the test file, each
 test/edit.test.ts     32 — sizing arithmetic, anchor/cycle rejection, palette
                       ops, custom-colour and add-on pricing, camera framing,
                       immutability, and the everything-chained validity check
-test/studio.smoke.mjs 22 browser assertions — the full merchant journey
-                      against the production build, ending with the downloaded
-                      manifest re-validated by the embed's validator
+test/gizmo.test.ts    11 — pose→manifest commits: anchored drags slide their
+                      offsets, rotation changes the AABB the delta is measured
+                      against, round-trips land exactly
+test/compress.test.ts  3 — meshopt output is tagged, smaller, and within
+                      0.05 mm of the input
+test/studio.smoke.mjs 29 browser assertions — the full merchant journey
+                      against the production build, including a real pointer
+                      drag on the move gizmo, a mesh-vs-layout divergence
+                      check, and the compressed download
 ```
 
 The browser test exists because two real defects passed every unit test: the

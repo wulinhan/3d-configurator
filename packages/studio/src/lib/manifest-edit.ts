@@ -232,6 +232,89 @@ export function makePartRequired(manifest: Manifest, partId: string): Manifest {
   });
 }
 
+// ── gizmo commits ───────────────────────────────────────────────────────────
+
+/** Set a part's scale multipliers directly — what a scale gizmo commits. */
+export function withScale(manifest: Manifest, partId: string, scale: [number, number, number], lockAspect?: boolean): Manifest {
+  if (scale.some((v) => !Number.isFinite(v) || v <= 0)) {
+    throw new EditError('every scale axis must be a positive number');
+  }
+  return edit(manifest, (draft) => {
+    const part = partOf(draft, partId);
+    part.placement = {
+      ...part.placement,
+      scale,
+      ...(lockAspect != null ? { lockAspect } : {}),
+    };
+  });
+}
+
+/**
+ * Shift a part by millimetre deltas — what a translate gizmo commits.
+ *
+ * Works uniformly for anchored and as-modelled axes because both resolve
+ * linearly in `offset`: an anchored axis keeps its anchor and slides along
+ * it, an origin axis just moves. Dragging never silently rewires what a
+ * part is anchored to.
+ */
+export function nudge(manifest: Manifest, partId: string, deltas: [number, number, number]): Manifest {
+  if (deltas.some((v) => !Number.isFinite(v))) throw new EditError('nudge deltas must be finite millimetres');
+  return edit(manifest, (draft) => {
+    const part = partOf(draft, partId);
+    const placement = { ...part.placement };
+    (['x', 'y', 'z'] as const).forEach((name, axis) => {
+      if (!deltas[axis]) return;
+      const current: AxisPlacement = placement[name] ?? { to: 'origin', offset: 0 };
+      placement[name] = { ...current, offset: (current.offset ?? 0) + deltas[axis] };
+    });
+    part.placement = placement;
+  });
+}
+
+export interface GizmoPose {
+  /** World position of the mesh (whose origin is the part's raw centre). */
+  position: [number, number, number];
+  /** Euler XYZ, degrees. */
+  rotationDeg: [number, number, number];
+  scale: [number, number, number];
+}
+
+/**
+ * Commit whatever a gizmo did to the mesh back into the manifest.
+ *
+ * The viewer positions a part's mesh at `rawCentre + layoutTranslate`, so the
+ * translation delta is measured against where layout put it — computed here
+ * with the same engine, keeping this testable without a renderer.
+ */
+export function applyGizmoPose(
+  manifest: Manifest, partId: string, raw: Map<string, PartBounds>, pose: GizmoPose,
+): Manifest {
+  const bounds = raw.get(partId);
+  if (!bounds) throw new EditError(`no geometry for part "${partId}"`);
+  const centre = [0, 1, 2].map((a) => (bounds.min[a] + bounds.max[a]) / 2);
+
+  const part = partOf(manifest, partId);
+  const round = (v: number) => Math.round(v * 1000) / 1000;
+
+  let next = manifest;
+  const oldScale = part.placement?.scale ?? [1, 1, 1];
+  if (pose.scale.some((v, a) => Math.abs(v - oldScale[a]) > 1e-6)) {
+    next = withScale(next, partId, pose.scale.map(round) as [number, number, number]);
+  }
+  const oldRotation = part.placement?.rotation ?? [0, 0, 0];
+  if (pose.rotationDeg.some((v, a) => Math.abs(v - oldRotation[a]) > 1e-6)) {
+    next = withRotation(next, partId, pose.rotationDeg.map(round) as [number, number, number]);
+  }
+
+  // Where does layout put the mesh under the (possibly just-updated)
+  // manifest? Any remaining difference is the drag's translation.
+  const t = resolveLayout(next, raw).get(partId);
+  if (!t) throw new EditError(`layout could not place part "${partId}"`);
+  const deltas = [0, 1, 2].map((a) => round(pose.position[a] - (centre[a] + t.translate[a]))) as [number, number, number];
+  if (deltas.some((d) => d !== 0)) next = nudge(next, partId, deltas);
+  return next;
+}
+
 // ── camera ──────────────────────────────────────────────────────────────────
 
 /**

@@ -15,7 +15,11 @@
     "fflate": "^0.8.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "@gltf-transform/core": "^4.4.2",
+    "@gltf-transform/extensions": "^4.4.2",
+    "@gltf-transform/functions": "^4.4.2",
+    "meshoptimizer": "^1.2.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.13",

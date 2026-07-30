@@ -29,6 +29,9 @@ if (!existsSync(join(DIST, 'index.html'))) {
 const { validateManifest } = await import(
   pathToFileURL(join(HERE, '..', '..', 'embed', 'src', 'manifest', 'validate.ts')).href
 );
+const { resolveLayout } = await import(
+  pathToFileURL(join(HERE, '..', '..', 'embed', 'src', 'runtime', 'layout.ts')).href
+);
 
 const argv = process.argv.slice(2);
 const shotDir = argv.includes('--shots') ? argv[argv.indexOf('--shots') + 1] : null;
@@ -172,6 +175,107 @@ check('camera reframed after the resize (model in view, not engulfing it)',
   afterResize > 0.03 && afterResize < 0.55, afterResize.toFixed(4));
 await shoot('2-anchored.png');
 
+// ── 6b. what the viewer draws is where the layout engine says parts are ────
+// Guards the transform-pivot class of bug: layout scales about part centres,
+// so the meshes must too — a scaled, anchored pair diverges immediately if
+// the pivots disagree.
+{
+  const meshBoxes = await page.evaluate(() => {
+    const v = window.__studioViewer;
+    const out = {};
+    for (const part of window.__studio.manifest.parts) {
+      const mesh = v.meshOf(part.id);
+      if (!mesh) continue;
+      mesh.updateMatrixWorld(true);
+      mesh.geometry.computeBoundingBox();
+      const bb = mesh.geometry.boundingBox;
+      const V = mesh.position.constructor;
+      const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+      for (const x of [bb.min.x, bb.max.x]) for (const y of [bb.min.y, bb.max.y]) for (const z of [bb.min.z, bb.max.z]) {
+        const w = mesh.localToWorld(new V(x, y, z));
+        for (const [a, val] of [[0, w.x], [1, w.y], [2, w.z]]) {
+          if (val < min[a]) min[a] = val;
+          if (val > max[a]) max[a] = val;
+        }
+      }
+      out[part.id] = { min, max };
+    }
+    return out;
+  });
+  const rawEntries = await page.evaluate(() => [...window.__studio.raw.entries()]);
+  const layout = resolveLayout(m, new Map(rawEntries));
+  let worst = 0;
+  for (const [id, t] of layout) {
+    const drawn = meshBoxes[id];
+    if (!drawn) continue;
+    for (let a = 0; a < 3; a++) {
+      worst = Math.max(worst, Math.abs(drawn.min[a] - t.box.min[a]), Math.abs(drawn.max[a] - t.box.max[a]));
+    }
+  }
+  check('rendered meshes sit exactly where the layout engine puts them',
+    worst < 0.01, `worst divergence ${worst.toFixed(3)} mm`);
+}
+
+// ── 6c. move gizmo: a real pointer drag lands in the manifest ──────────────
+{
+  await page.click('[data-testid="gizmo-translate"]');
+  await page.waitForTimeout(300);
+  const before = await manifest();
+  const xOffsetBefore = before.parts[1].placement?.x?.offset ?? 0;
+
+  // Project the attached mesh's position and its +X direction to screen space.
+  const geometry2d = await page.evaluate(() => {
+    const v = window.__studioViewer;
+    const mesh = v.meshOf('cap');
+    const V = mesh.position.constructor;
+    const canvas = document.querySelector('.stage canvas');
+    const r = canvas.getBoundingClientRect();
+    const toPx = (world) => {
+      const p = world.clone().project(v.camera);
+      return [r.left + (p.x + 1) / 2 * r.width, r.top + (1 - p.y) / 2 * r.height];
+    };
+    const c = toPx(mesh.position);
+    const gizmoScale = mesh.position.clone().sub(v.camera.position).length() / 6; // gizmo world size heuristic
+    const x1 = toPx(mesh.position.clone().add(new V(gizmoScale, 0, 0)));
+    return { centre: c, xDir: [x1[0] - c[0], x1[1] - c[1]] };
+  });
+  const len = Math.hypot(...geometry2d.xDir);
+  const dir = [geometry2d.xDir[0] / len, geometry2d.xDir[1] / len];
+
+  // Walk out along the +X arrow until the gizmo takes the pointer.
+  let grabbed = false;
+  for (const dist of [30, 40, 50, 60, 70, 80, 95, 110]) {
+    const px = geometry2d.centre[0] + dir[0] * dist;
+    const py = geometry2d.centre[1] + dir[1] * dist;
+    await page.mouse.move(px, py);
+    await page.mouse.down();
+    await page.waitForTimeout(60);
+    grabbed = await page.evaluate(() => window.__studioGizmo?.dragging === true);
+    if (grabbed) {
+      for (let step = 1; step <= 8; step++) {
+        await page.mouse.move(px + dir[0] * 8 * step, py + dir[1] * 8 * step);
+        await page.waitForTimeout(20);
+      }
+      await page.mouse.up();
+      break;
+    }
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(300);
+  check('move gizmo: the pointer actually grabbed the X handle', grabbed, '');
+
+  m = await manifest();
+  const xOffsetAfter = m.parts[1].placement?.x?.offset ?? 0;
+  check('the drag committed millimetres into the manifest',
+    grabbed && xOffsetAfter > xOffsetBefore, `${xOffsetBefore} → ${xOffsetAfter}`);
+  check('the anchored Y axis survived the drag untouched',
+    m.parts[1].placement?.y?.to === 'base:max', m.parts[1].placement?.y);
+  const verdictAfterDrag = validateManifest(m);
+  check('manifest still valid after the drag', verdictAfterDrag.ok, verdictAfterDrag.errors);
+  await shoot('2b-gizmo.png');
+  await page.click('[data-testid="gizmo-off"]');
+}
+
 // ── 7. palette: add a colour, price a swatch ────────────────────────────────
 await page.click('.tabs button:has-text("Palette")');
 await page.fill('[data-testid="add-swatch"] input[aria-label="New colour name"]', 'Brand Teal');
@@ -240,6 +344,9 @@ const [modelDl] = await Promise.all([
 const glb = readFileSync(await modelDl.path());
 check('downloaded GLB has the GLB magic and both parts',
   glb.readUInt32LE(0) === 0x46546c67 && glb.includes('Base') && glb.includes('Cap'), glb.length);
+check('downloaded GLB is meshopt-compressed', glb.includes('EXT_meshopt_compression'), '');
+check('compression size note appears', /compressed, from/.test(await page.textContent('[data-testid="size-note"]') ?? ''),
+  await page.textContent('[data-testid="size-note"]'));
 await shoot('4-publish.png');
 
 check('no console errors across the whole session', errors.length === 0, errors.join(' | '));
