@@ -1,2 +1,7 @@
 # Build intermediates — regenerate with tools/build-model.mjs
 *.raw.glb
+
+# Build output — regenerate with `npm run build`
+demo/embed.js
+demo/embed.css
+demo/standalone.html

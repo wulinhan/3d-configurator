@@ -3,16 +3,26 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Embeddable product configurator — manifest-driven renderer and model pipeline",
+  "description": "Embeddable product configurator \u2014 manifest-driven renderer and model pipeline",
   "scripts": {
-    "test": "node --test --experimental-strip-types \"test/*.test.ts\"",
+    "test": "node --test --experimental-strip-types \"test/*.test.ts\" && node test/demo.smoke.mjs",
+    "test:unit": "node --test --experimental-strip-types \"test/*.test.ts\"",
+    "test:browser": "node test/demo.smoke.mjs",
     "check:manifest": "node tools/check-manifest.ts",
-    "build:model": "node tools/build-model.mjs"
+    "build": "esbuild src/embed.ts --bundle --format=esm --target=es2022 --minify --outfile=demo/embed.js && cp src/embed.css demo/embed.css",
+    "build:model": "node tools/build-model.mjs",
+    "build:standalone": "node tools/bundle-demo.mjs demo/standalone.html",
+    "serve": "node -e \"const h=require('node:http'),f=require('node:fs'),p=require('node:path');const T={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.glb':'model/gltf-binary'};h.createServer((q,s)=>{const u=decodeURIComponent(q.url.split('?')[0]);const x=p.join('demo',u==='/'?'index.html':u);if(!f.existsSync(x)){s.writeHead(404);return s.end()}s.writeHead(200,{'content-type':T[p.extname(x)]||'application/octet-stream'});s.end(f.readFileSync(x))}).listen(4321,()=>console.log('http://localhost:4321'))\""
   },
   "dependencies": {
     "@gltf-transform/core": "^4.4.2",
     "@gltf-transform/extensions": "^4.4.2",
     "@gltf-transform/functions": "^4.4.2",
-    "meshoptimizer": "^1.2.0"
+    "meshoptimizer": "^1.2.0",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.0",
+    "esbuild": "^0.28.1"
   }
 }

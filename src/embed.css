@@ -1,0 +1,142 @@
+/* Embed styling.
+ *
+ * Every colour, radius and font comes from the manifest's `brand` block via
+ * custom properties, so a merchant restyles the configurator without touching
+ * CSS. The layout is intrinsically responsive because the embed has no idea
+ * how wide the page it lands in will be. */
+
+.cfg {
+  --cfg-accent: #1a1a1a;
+  --cfg-surface: #f8f6f1;
+  --cfg-ink: #333;
+  --cfg-radius: 8px;
+  --cfg-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --cfg-line: #e8e6e1;
+  --cfg-muted: #9c9480;
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  font-family: var(--cfg-font);
+  color: var(--cfg-ink);
+  container-type: inline-size;
+}
+
+/* Narrow hosts get the panel underneath rather than a squeezed viewport. */
+@container (max-width: 720px) {
+  .cfg { grid-template-columns: minmax(0, 1fr); }
+}
+
+.cfg-stage {
+  position: relative;
+  min-height: 320px;
+  aspect-ratio: 4 / 3;
+  background: var(--cfg-surface);
+  border-radius: var(--cfg-radius);
+  overflow: hidden;
+}
+.cfg-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+
+.cfg-loading {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 13px; color: var(--cfg-muted);
+}
+
+.cfg-error {
+  padding: 16px;
+  border: 1.5px solid #e0b4b4; border-radius: var(--cfg-radius);
+  background: #fdf6f6; color: #8a3434; font-size: 13px;
+}
+
+.cfg-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.cfg-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.cfg-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 11px;
+  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  background: #fff; color: inherit;
+  font: inherit; font-size: 12px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.cfg-tab:hover { border-color: #c5c2bb; }
+.cfg-tab.is-active { border-color: var(--cfg-accent); background: var(--cfg-surface); }
+
+.cfg-dot {
+  width: 14px; height: 14px; flex: none;
+  border-radius: 50%; border: 1px solid rgba(0, 0, 0, .12);
+}
+
+.cfg-body { display: flex; flex-direction: column; gap: 10px; }
+.cfg-note { margin: 0; font-size: 11px; line-height: 1.5; color: var(--cfg-muted); }
+
+.cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, 40px); gap: 8px; }
+.cfg-swatch {
+  width: 40px; height: 40px; padding: 0;
+  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  cursor: pointer;
+  /* The ring sits outside the swatch so it reads on white and on black alike. */
+  box-shadow: none;
+  transition: box-shadow .15s, border-color .15s;
+}
+.cfg-swatch:hover { border-color: #c5c2bb; }
+.cfg-swatch.is-selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--cfg-accent);
+}
+
+.cfg-custom-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  width: 100%; padding: 10px 12px;
+  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  background: #fff; color: inherit;
+  font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.cfg-custom-btn:hover { border-color: #c5c2bb; background: #fafaf8; }
+.cfg-custom-btn.is-open { border-color: var(--cfg-accent); background: var(--cfg-surface); }
+.cfg-custom-price { font-size: 10px; font-weight: 700; letter-spacing: .4px; color: var(--cfg-muted); }
+
+.cfg-custom-fields {
+  margin-top: 7px; padding: 10px;
+  background: var(--cfg-surface); border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+}
+.cfg-hex-row { display: flex; align-items: center; gap: 7px; }
+.cfg-hash { font-size: 12px; color: var(--cfg-muted); font-family: ui-monospace, monospace; }
+.cfg-hex {
+  flex: 1; min-width: 0; height: 28px; padding: 0 8px;
+  border: 1.5px solid var(--cfg-line); border-radius: 7px; background: #fff;
+  font: inherit; font-size: 12px; font-family: ui-monospace, monospace;
+  text-transform: uppercase;
+}
+.cfg-native {
+  width: 32px; height: 32px; flex: none; padding: 0;
+  border: 1.5px solid var(--cfg-line); border-radius: 6px;
+  background: transparent; cursor: pointer;
+  -webkit-appearance: none; appearance: none; overflow: hidden;
+}
+
+.cfg-choices { display: flex; flex-direction: column; gap: 6px; }
+.cfg-choice {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  background: #fff; color: inherit;
+  font: inherit; font-size: 12px; cursor: pointer; text-align: left;
+}
+.cfg-choice:hover { border-color: #c5c2bb; }
+.cfg-choice.is-selected { border-color: var(--cfg-accent); background: var(--cfg-surface); }
+.cfg-choice-price { font-size: 11px; font-weight: 700; color: var(--cfg-muted); }
+
+.cfg-summary { border-top: 1px solid var(--cfg-line); padding-top: 12px; }
+.cfg-summary-label {
+  font-size: 9px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--cfg-muted); margin-bottom: 8px;
+}
+.cfg-summary-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0; font-size: 12px;
+}
+.cfg-summary-part { flex: 1; min-width: 0; }
+.cfg-summary-value { color: var(--cfg-muted); text-align: right; }
+.cfg-summary-delta .cfg-summary-value { color: var(--cfg-accent); font-weight: 600; }

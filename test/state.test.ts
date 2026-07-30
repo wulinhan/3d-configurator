@@ -1,0 +1,213 @@
+// Selection resolution and surcharge arithmetic.
+//
+// This is what the merchant's cart charges against, so the custom-colour
+// rules get the most attention: charging per part instead of per colour
+// overcharges a customer who picks the same bespoke shade twice, and missing
+// a link means the wrong colour reaches the print queue.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import {
+  defaultSelections, resolveValue, resolveColour, partColours, visibleParts,
+  coloursInUse, priceDeltas, buildPayload, isCustomColour,
+} from '../src/runtime/state.ts';
+import type { Manifest, ColourOption } from '../src/manifest/types.ts';
+
+const DEMO = new URL('../demo/tap-bar-3.manifest.json', import.meta.url);
+const load = (): Manifest => JSON.parse(readFileSync(DEMO, 'utf8'));
+const colourOption = (m: Manifest, id: string) => m.options.find((o) => o.id === id) as ColourOption;
+
+test('defaults come straight from the manifest', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  assert.equal(s['body-colour'], 'jade-white');
+  assert.equal(s['sleeve-colour'], 'black');
+  assert.equal(s['text-colour'], '@sleeve-colour');
+  assert.equal(s['stand'], 'none');
+});
+
+test('a linked option follows the option it points at', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  assert.equal(resolveValue(m, s, 'text-colour'), 'black');
+
+  s['sleeve-colour'] = 'teal';
+  assert.equal(resolveValue(m, s, 'text-colour'), 'teal', 'text should still be following the sleeves');
+});
+
+test('picking a value explicitly breaks the link', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['text-colour'] = 'red';
+  s['sleeve-colour'] = 'teal';
+  assert.equal(resolveValue(m, s, 'text-colour'), 'red');
+});
+
+test('a swatch id resolves to hex and its name', () => {
+  const m = load();
+  const c = resolveColour(m, defaultSelections(m), colourOption(m, 'sleeve-colour'))!;
+  assert.equal(c.hex, '#1A1A1A');
+  assert.equal(c.name, 'Black');
+  assert.equal(c.custom, false);
+});
+
+test('a hex value is treated as a custom colour and normalised to upper case', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['body-colour'] = '#ff5733';
+  const c = resolveColour(m, s, colourOption(m, 'body-colour'))!;
+  assert.equal(c.hex, '#FF5733');
+  assert.equal(c.custom, true);
+  assert.ok(isCustomColour('#FF5733'));
+  assert.ok(!isCustomColour('jade-white'));
+});
+
+test('every part a colour option names gets painted', () => {
+  const m = load();
+  const colours = partColours(m, defaultSelections(m));
+  assert.equal(colours.get('body')!.hex, '#FEFEFE');
+  assert.equal(colours.get('sleeves')!.hex, '#1A1A1A');
+  assert.equal(colours.get('text')!.hex, '#1A1A1A', 'text follows the sleeves');
+  assert.equal(colours.size, m.parts.length);
+});
+
+test('a fixedColour part is painted without any option', () => {
+  const m = load();
+  (m.parts as any[]).push({ id: 'trim', label: 'Trim', mesh: 'bar#body', material: { fixedColour: '#C0C0C0' } });
+  assert.equal(partColours(m, defaultSelections(m)).get('trim')!.hex, '#C0C0C0');
+});
+
+test('colours in use are deduped and exclude the "used" option itself', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  // body and tiles both default to Jade White, icons and sleeves both to Black
+  const used = coloursInUse(m, s);
+  assert.deepEqual(used.map((c) => c.hex).sort(), ['#1A1A1A', '#FEFEFE']);
+
+  s['tile-colour'] = 'teal';
+  assert.equal(coloursInUse(m, s).length, 3);
+});
+
+test('no surcharge for a stock configuration', () => {
+  const m = load();
+  assert.deepEqual(priceDeltas(m, defaultSelections(m)), []);
+});
+
+test('a choice add-on adds its delta', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['stand'] = 'oak';
+  const d = priceDeltas(m, s);
+  assert.equal(d.length, 1);
+  assert.equal(d[0].amount, 24);
+  assert.match(d[0].label, /Oak stand/);
+});
+
+test('a custom colour is charged once', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['body-colour'] = '#FF5733';
+  const d = priceDeltas(m, s);
+  assert.equal(d.length, 1);
+  assert.equal(d[0].amount, 35);
+});
+
+test('the same custom colour on two parts is one filament change, not two', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['body-colour'] = '#FF5733';
+  s['tile-colour'] = '#ff5733';   // same colour, different case
+  const d = priceDeltas(m, s);
+  assert.equal(d.length, 1, JSON.stringify(d));
+  assert.equal(d[0].amount, 35);
+  assert.match(d[0].label, /Body/);
+  assert.match(d[0].label, /Tiles/);
+});
+
+test('two different custom colours are charged twice', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['body-colour'] = '#FF5733';
+  s['tile-colour'] = '#00A0B0';
+  const d = priceDeltas(m, s);
+  assert.equal(d.length, 2);
+  assert.equal(d.reduce((n, x) => n + x.amount, 0), 70);
+});
+
+test('a custom colour on an option that forbids it is not charged', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['text-colour'] = '#FF5733';   // text-colour has custom.allowed === false
+  assert.deepEqual(priceDeltas(m, s), []);
+});
+
+test('when options price custom colours differently, the dearest wins', () => {
+  const m = load();
+  colourOption(m, 'tile-colour').custom!.priceDelta = 12;
+  const s = defaultSelections(m);
+  s['body-colour'] = '#FF5733';
+  s['tile-colour'] = '#FF5733';
+  const d = priceDeltas(m, s);
+  assert.equal(d.length, 1);
+  assert.equal(d[0].amount, 35, 'the cheap surface must not buy a bespoke colour for the dear one');
+});
+
+test('a swatch-level surcharge is picked up', () => {
+  const m = load();
+  m.palettes![0].swatches.find((sw) => sw.id === 'teal')!.priceDelta = 6;
+  const s = defaultSelections(m);
+  s['body-colour'] = 'teal';
+  assert.equal(priceDeltas(m, s)[0].amount, 6);
+});
+
+test('visibleWhen gates a part on a choice', () => {
+  const m = load();
+  (m.parts as any[]).push({
+    id: 'stand-mesh', label: 'Stand', mesh: 'bar#body',
+    visibleWhen: { option: 'stand', equals: ['oak', 'steel'] },
+  });
+  const s = defaultSelections(m);
+  assert.ok(!visibleParts(m, s).has('stand-mesh'));
+  s['stand'] = 'steel';
+  assert.ok(visibleParts(m, s).has('stand-mesh'));
+});
+
+test('the payload carries resolved values, names and an itemised total', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['sleeve-colour'] = 'teal';
+  s['body-colour'] = '#FF5733';
+  s['stand'] = 'oak';
+
+  const p = buildPayload(m, s);
+  assert.equal(p.type, 'configurator:change');
+  assert.equal(p.productId, m.id);
+  assert.equal(p.currency, 'SGD');
+  assert.equal(p.selections['text-colour'], 'teal', 'links are resolved, not passed through');
+  assert.equal(p.colourNames['sleeve-colour'], 'Teal');
+  assert.equal(p.colourNames['body-colour'], '#FF5733');
+  assert.equal(p.deltaTotal, 59);
+  assert.equal(p.priceDeltas.reduce((n, d) => n + d.amount, 0), p.deltaTotal);
+});
+
+test('deltaTotal does not accumulate floating-point dust', () => {
+  const m = load();
+  const stand = m.options.find((o) => o.id === 'stand') as any;
+  stand.choices[1].priceDelta = 0.1;
+  stand.choices[2].priceDelta = 0.2;
+  colourOption(m, 'body-colour').custom!.priceDelta = 0.2;
+  const s = defaultSelections(m);
+  s['stand'] = 'oak';
+  s['body-colour'] = '#FF5733';
+  assert.equal(buildPayload(m, s).deltaTotal, 0.3);
+});
+
+test('a link cycle resolves to empty instead of recursing forever', () => {
+  const m = load();
+  const s = defaultSelections(m);
+  s['body-colour'] = '@tile-colour';
+  s['tile-colour'] = '@body-colour';
+  assert.equal(resolveValue(m, s, 'body-colour'), '');
+  assert.doesNotThrow(() => buildPayload(m, s));
+});

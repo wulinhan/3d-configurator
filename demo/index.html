@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Northsend — Connect Bar (3 tile)</title>
+<link rel="icon" href="data:,"><!-- stops the browser's unprompted /favicon.ico 404 -->
+<!--
+  A pretend merchant's product page. Deliberately plain: the point is to show
+  the configurator dropping into somebody else's storefront and handing that
+  storefront everything it needs to sell the result.
+
+  The cart on the right is dumb on purpose. It owns the base price and does
+  the arithmetic; the configurator only ever tells it "this selection carries
+  these surcharges". That split is the contract — a merchant's store stays the
+  authority on money.
+-->
+<link rel="stylesheet" href="embed.css">
+<style>
+  :root { --shop-ink: #1d1d1f; --shop-line: #e3e1dc; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px 64px;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--shop-ink); background: #fff;
+    -webkit-font-smoothing: antialiased;
+  }
+  .shop { max-width: 1180px; margin: 0 auto; }
+  .shop-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .shop-brand { font-weight: 700; letter-spacing: -.02em; font-size: 15px; }
+  .shop-crumb { font-size: 12px; color: #8b8880; }
+  h1 { margin: 6px 0 2px; font-size: 30px; letter-spacing: -.02em; }
+  .shop-sub { margin: 0 0 24px; color: #6f6c65; font-size: 14px; max-width: 60ch; }
+
+  .shop-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: start; }
+  @media (max-width: 940px) { .shop-layout { grid-template-columns: minmax(0, 1fr); } }
+
+  .cart {
+    position: sticky; top: 24px;
+    border: 1px solid var(--shop-line); border-radius: 12px; padding: 18px;
+    background: #fff;
+  }
+  .cart h2 { margin: 0 0 14px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #8b8880; }
+  .cart-line { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 13px; }
+  .cart-line span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .cart-line.muted { color: #6f6c65; }
+  .cart-total {
+    display: flex; justify-content: space-between; gap: 12px;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--shop-line);
+    font-size: 17px; font-weight: 700;
+  }
+  .cart-total span:last-child { font-variant-numeric: tabular-nums; }
+  .cart-btn {
+    width: 100%; margin-top: 14px; padding: 12px;
+    border: 0; border-radius: 8px; background: var(--shop-ink); color: #fff;
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .cart-note { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: #8b8880; }
+
+  details { margin-top: 22px; }
+  summary { cursor: pointer; font-size: 12px; color: #6f6c65; }
+  pre {
+    margin: 10px 0 0; padding: 14px; overflow: auto; max-height: 320px;
+    background: #1d1d1f; color: #e8e6e1; border-radius: 10px;
+    font-size: 11px; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<div class="shop">
+  <div class="shop-head">
+    <span class="shop-brand">NORTHSEND</span>
+    <span class="shop-crumb">Shop / Desk / Connect Bar</span>
+  </div>
+  <h1>Connect Bar (3 tile)</h1>
+  <p class="shop-sub">
+    Three tappable tiles on a solid desk bar. Configure the finish below — the price
+    updates as you go.
+  </p>
+
+  <div class="shop-layout">
+    <div id="configurator" data-configurator="tap-bar-3.manifest.json"></div>
+
+    <aside class="cart">
+      <h2>Your order</h2>
+      <div class="cart-line"><span>Connect Bar (3 tile)</span><span id="base">—</span></div>
+      <div id="extras"></div>
+      <div class="cart-total"><span>Total</span><span id="total">—</span></div>
+      <button class="cart-btn" id="add">Add to cart</button>
+      <p class="cart-note">
+        The store owns this price. The configurator only reports what the
+        customer changed and what each change costs.
+      </p>
+    </aside>
+  </div>
+
+  <details>
+    <summary>What the configurator posted to this page</summary>
+    <pre id="payload">waiting…</pre>
+  </details>
+</div>
+
+<script type="module">
+  import { autoMount } from './embed.js';
+
+  // The merchant's own price, from the merchant's own catalogue.
+  const BASE = 129;
+  const money = (n) => new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(n);
+
+  const extras = document.getElementById('extras');
+  const payloadEl = document.getElementById('payload');
+  document.getElementById('base').textContent = money(BASE);
+
+  // Two ways in: a DOM event when the embed is inline, or postMessage when it's
+  // in an iframe. Same payload either way, so a merchant can pick.
+  const apply = (p) => {
+    if (p?.type !== 'configurator:change') return;
+    extras.replaceChildren();
+    for (const d of p.priceDeltas) {
+      const row = document.createElement('div');
+      row.className = 'cart-line muted';
+      row.innerHTML = `<span></span><span>+${money(d.amount).replace('S$', 'S$')}</span>`;
+      row.firstChild.textContent = d.label;
+      extras.append(row);
+    }
+    document.getElementById('total').textContent = money(BASE + p.deltaTotal);
+    payloadEl.textContent = JSON.stringify(p, null, 2);
+  };
+
+  document.addEventListener('configurator:change', (e) => apply(e.detail));
+  addEventListener('message', (e) => apply(e.data));
+
+  document.getElementById('add').addEventListener('click', () => {
+    const p = JSON.parse(payloadEl.textContent);
+    alert(`Added to cart — ${money(BASE + p.deltaTotal)}\n\n` +
+      Object.entries(p.colourNames).map(([k, v]) => `${k}: ${v}`).join('\n'));
+  });
+
+  autoMount().catch((err) => { payloadEl.textContent = String(err); });
+</script>
+</body>
+</html>
