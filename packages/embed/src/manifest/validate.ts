@@ -126,6 +126,20 @@ export function validateManifest(input: unknown): ValidationResult {
     err('parts', `placement anchors form a cycle: ${cycle.join(' → ')}`);
   }
 
+  // ── groups ────────────────────────────────────────────────────────────────
+  const groupIds = dupes(m.groups, 'groups');
+  void groupIds;
+  const grouped = new Map<string, string>();
+  (m.groups ?? []).forEach((g, i) => {
+    if (!g?.label) err(`groups[${i}].label`, 'required');
+    if (!g?.parts?.length || g.parts.length < 2) err(`groups[${i}].parts`, 'a group needs at least two parts');
+    (g?.parts ?? []).forEach((pid, j) => {
+      if (!partIds.has(pid)) err(`groups[${i}].parts[${j}]`, `unknown part "${pid}"`);
+      else if (grouped.has(pid)) err(`groups[${i}].parts[${j}]`, `part "${pid}" is already in group "${grouped.get(pid)}"`);
+      else grouped.set(pid, g.id);
+    });
+  });
+
   // ── palettes ──────────────────────────────────────────────────────────────
   const swatchIds = new Map<string, Set<string>>();
   (m.palettes ?? []).forEach((pal, i) => {

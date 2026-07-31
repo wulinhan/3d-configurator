@@ -15,9 +15,9 @@ import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer } from '../../../embed/src/runtime/viewer.ts';
 import { applyGizmoPose, setCameraView, snapFaces, type GizmoPose } from '../lib/manifest-edit.ts';
-import { Gizmo, type GizmoMode } from './gizmo.ts';
+import { Gizmo, type GizmoMode, type CommitPhase } from './gizmo.ts';
 import { ViewCube } from './view-cube.ts';
-import type { Project } from '../App.tsx';
+import type { Project, SetManifestOptions } from '../App.tsx';
 
 const MODES: Array<{ id: GizmoMode; label: string }> = [
   { id: 'off', label: 'Orbit' },
@@ -30,7 +30,7 @@ export function ViewerPane(props: {
   selectedPart: string | null;
   hiddenParts: Set<string>;
   onSelectPart: (id: string | null) => void;
-  onChange: (m: Manifest) => void;
+  onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -85,11 +85,16 @@ export function ViewerPane(props: {
     (window as any).__studioViewer = viewer; // test hook, same as __studio
     let disposed = false;
 
-    const gizmo = new Gizmo(viewer, canvas, (pose: GizmoPose) => {
+    // A whole drag is ONE undo step: the first commit of a gesture records
+    // history, every later live commit (and the release) replaces in place.
+    let midDrag = false;
+    const gizmo = new Gizmo(viewer, canvas, (pose: GizmoPose, phase: CommitPhase) => {
       const { project, selectedPart, onChange } = commitCtx.current;
       if (!selectedPart) return;
+      const transient = midDrag;
+      midDrag = phase !== 'end';
       try {
-        onChange(applyGizmoPose(project.manifest, selectedPart, project.raw, pose));
+        onChange(applyGizmoPose(project.manifest, selectedPart, project.raw, pose), { transient });
       } catch {
         // A pose the edit layer refuses (degenerate scale, detached part):
         // snap the mesh back to the authored state rather than leaving the

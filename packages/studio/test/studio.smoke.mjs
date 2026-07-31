@@ -289,6 +289,21 @@ await shoot('2-anchored.png');
     m.parts[1].placement?.y?.to === 'base:max', m.parts[1].placement?.y);
   const verdictAfterDrag = validateManifest(m);
   check('manifest still valid after the drag', verdictAfterDrag.ok, verdictAfterDrag.errors);
+
+  // The whole drag — many throttled live commits plus the release — must be
+  // ONE undo step. One Ctrl+Z lands on the pre-drag manifest exactly.
+  if (grabbed) {
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(200);
+    m = await manifest();
+    check('one undo rewinds the whole drag',
+      near(m.parts[1].placement?.x?.offset ?? 0, xOffsetBefore), m.parts[1].placement?.x);
+    await page.keyboard.press('Control+Shift+z');
+    await page.waitForTimeout(200);
+    m = await manifest();
+    check('one redo restores the drag',
+      near(m.parts[1].placement?.x?.offset ?? 0, xOffsetAfter), m.parts[1].placement?.x);
+  }
   const rings = await page.evaluate(() => {
     let quarterArcs = 0, grips = 0;
     const colours = {};
@@ -560,6 +575,134 @@ check('downloaded GLB is meshopt-compressed', glb.includes('EXT_meshopt_compress
 check('compression size note appears', /compressed, from/.test(await page.textContent('[data-testid="size-note"]') ?? ''),
   await page.textContent('[data-testid="size-note"]'));
 await shoot('4-publish.png');
+
+// ── 11. structure: undo/redo, reorder, variants, groups, preview ───────────
+{
+  const visible = (id) => page.evaluate((pid) => window.__studioViewer.meshOf(pid)?.visible, id);
+
+  // 11a. keyboard + button undo/redo of an ordinary edit
+  await page.click('.tabs button:has-text("Parts")');
+  await page.click('.part-name:has-text("Base")');
+  await page.waitForTimeout(150);
+  await page.fill('[data-testid="size-w"]', '90');
+  await page.press('[data-testid="size-w"]', 'Enter');
+  await page.waitForTimeout(200);
+  await page.click('.tabs button:has-text("Parts")'); // move focus off the input — its own Ctrl+Z is the text field's
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(200);
+  let w = Number(await page.inputValue('[data-testid="size-w"]'));
+  check('Ctrl+Z undoes the size edit', near(w, 80), w);
+  await page.click('[data-testid="redo"]');
+  await page.waitForTimeout(200);
+  w = Number(await page.inputValue('[data-testid="size-w"]'));
+  check('Redo button restores it', near(w, 90), w);
+  await page.click('[data-testid="undo"]');
+  await page.waitForTimeout(200);
+  w = Number(await page.inputValue('[data-testid="size-w"]'));
+  check('Undo button rewinds again', near(w, 80), w);
+
+  // 11b. release the cap from its add-on so it can join structures
+  await page.click('.part-name:has-text("Cap")');
+  await page.waitForTimeout(150);
+  await page.uncheck('[data-testid="addon-toggle"]');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  check('cap back to always-included',
+    !m.parts[1].visibleWhen && !m.options.some((o) => o.id === 'cap-addon'),
+    { visibleWhen: m.parts[1].visibleWhen, options: m.options.map((o) => o.id) });
+
+  // 11c. reorder entries — parts order, option order and the explorer follow
+  await page.click('[data-testid="move-down-base"]');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  check('move-down reorders manifest parts and drags the options along',
+    m.parts.map((p) => p.id).join(',') === 'cap,base'
+    && m.options.findIndex((o) => o.id === 'cap-colour') < m.options.findIndex((o) => o.id === 'base-colour'),
+    { parts: m.parts.map((p) => p.id), options: m.options.map((o) => o.id) });
+  check('explorer lists the new order', (await page.textContent('.part-rows .part-name'))?.includes('Cap'),
+    await page.textContent('.part-rows .part-name'));
+  await page.click('[data-testid="move-up-base"]');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  check('move-up restores the order', m.parts.map((p) => p.id).join(',') === 'base,cap', m.parts.map((p) => p.id));
+
+  // 11d. multi-select → customer choice: mutually exclusive variants
+  await page.check('[data-testid="pick-base"]');
+  await page.check('[data-testid="pick-cap"]');
+  await page.click('[data-testid="make-variant"]');
+  await page.fill('[data-testid="structure-label"]', 'Body style');
+  await page.click('[data-testid="structure-confirm"]');
+  await page.waitForTimeout(300);
+  m = await manifest();
+  const variant = m.options.find((o) => o.id === 'body-style');
+  check('customer choice created from the selection',
+    variant?.role === 'variant' && variant?.choices?.map((c) => c.id).join(',') === 'base,cap'
+    && variant?.default === 'base'
+    && m.parts.every((p) => p.visibleWhen?.option === 'body-style'),
+    variant);
+  check('variants are mutually exclusive — only the default shows',
+    (await visible('base')) === true && (await visible('cap')) === false, '');
+  await page.click('.entry-members .part-name:has-text("Cap")');
+  await page.waitForTimeout(300);
+  check('clicking the hidden variant swaps which one shows',
+    (await visible('base')) === false && (await visible('cap')) === true, '');
+  check('variant member editor prices the choice — no add-on toggle to corrupt it',
+    (await page.isVisible('[data-testid="variant-price"]'))
+    && !(await page.isVisible('[data-testid="addon-toggle"]')), '');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  m = await manifest();
+  check('undo dissolves the choice; both parts always visible again',
+    !m.options.some((o) => o.id === 'body-style') && m.parts.every((p) => !p.visibleWhen)
+    && (await visible('base')) === true && (await visible('cap')) === true,
+    m.options.map((o) => o.id));
+
+  // 11e. multi-select → group: one entry, one merged colour control
+  await page.check('[data-testid="pick-base"]');
+  await page.check('[data-testid="pick-cap"]');
+  await page.click('[data-testid="make-group"]');
+  await page.fill('[data-testid="structure-label"]', 'Shell');
+  await page.click('[data-testid="structure-confirm"]');
+  await page.waitForTimeout(300);
+  m = await manifest();
+  const shellColour = m.options.find((o) => o.id === 'shell-colour');
+  check('group recorded; member colour options merged into one',
+    m.groups?.[0]?.id === 'shell' && m.groups[0].parts.join(',') === 'base,cap'
+    && shellColour?.parts?.length === 2
+    && !m.options.some((o) => o.id === 'base-colour' || o.id === 'cap-colour'),
+    { groups: m.groups, options: m.options.map((o) => o.id) });
+  await page.click('[data-testid="eye-shell"]');
+  await page.waitForTimeout(200);
+  check('group eyeball hides every member',
+    (await visible('base')) === false && (await visible('cap')) === false, '');
+  await page.click('[data-testid="eye-shell"]');
+  await page.waitForTimeout(200);
+  check('…and shows them again',
+    (await visible('base')) === true && (await visible('cap')) === true, '');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  m = await manifest();
+  check('undo ungroups and restores the per-part colour options',
+    !m.groups && m.options.some((o) => o.id === 'base-colour') && m.options.some((o) => o.id === 'cap-colour'),
+    { groups: m.groups, options: m.options.map((o) => o.id) });
+  await shoot('5-structure.png');
+
+  // 11f. the customer preview is the real embed
+  await page.click('[data-testid="preview-open"]');
+  await page.waitForSelector('.preview-overlay .cfg-swatch', { timeout: 20000 });
+  const previewBits = await page.evaluate(() => ({
+    swatches: document.querySelectorAll('.preview-overlay .cfg-swatch').length,
+    tabs: document.querySelectorAll('.preview-overlay .cfg-tab').length,
+    canvas: !!document.querySelector('.preview-overlay .cfg-stage canvas'),
+  }));
+  check('preview mounts the real embed — swatches, tabs, its own canvas',
+    previewBits.swatches > 0 && previewBits.tabs > 0 && previewBits.canvas, previewBits);
+  await shoot('6-preview.png');
+  await page.click('[data-testid="preview-close"]');
+  await page.waitForTimeout(200);
+  check('preview closes cleanly',
+    await page.evaluate(() => !document.querySelector('.preview-overlay')), '');
+}
 
 // ── 12. delete a part ──────────────────────────────────────────────────────
 {

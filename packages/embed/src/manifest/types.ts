@@ -142,6 +142,12 @@ export interface ChoiceOption {
   id: string;
   type: 'choice';
   label: string;
+  /**
+   * What the Studio built this choice as: an optional add-on part, or a set
+   * of mutually exclusive variant parts. Purely structural metadata — the
+   * runtime treats every choice the same.
+   */
+  role?: 'addon' | 'variant';
   choices: Array<{
     id: string;
     label: string;
@@ -216,6 +222,13 @@ export interface Pricing {
   basePrice?: number;
 }
 
+/** Parts authored and presented as one thing — a Studio structuring aid. */
+export interface PartGroup {
+  id: string;
+  label: string;
+  parts: string[];
+}
+
 export interface Manifest {
   /** Bumped only on a breaking change; the runtime refuses what it can't read. */
   schema: 1;
@@ -227,6 +240,7 @@ export interface Manifest {
   brand?: Branding;
   models: ModelSource[];
   parts: Part[];
+  groups?: PartGroup[];
   palettes?: Palette[];
   options: Option[];
   camera?: CameraSetup;

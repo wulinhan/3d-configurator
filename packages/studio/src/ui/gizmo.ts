@@ -18,6 +18,10 @@ import type { GizmoPose } from '../lib/manifest-edit.ts';
 
 export type GizmoMode = 'transform' | 'off';
 
+/** 'live' streams during the drag; 'end' is the release commit. The host
+ * uses the distinction to fold a whole drag into one undo step. */
+export type CommitPhase = 'live' | 'end';
+
 export class Gizmo {
   private readonly all: TransformControls[];
   private readonly helpers: THREE.Object3D[];
@@ -27,7 +31,7 @@ export class Gizmo {
   private readonly release: () => void;
   private mode: GizmoMode = 'off';
 
-  constructor(viewer: Viewer, canvas: HTMLCanvasElement, onCommit: (pose: GizmoPose) => void) {
+  constructor(viewer: Viewer, canvas: HTMLCanvasElement, onCommit: (pose: GizmoPose, phase: CommitPhase) => void) {
     this.viewer = viewer;
     this.canvas = canvas;
 
@@ -157,7 +161,7 @@ export class Gizmo {
         const dragging = !!e.value;
         viewer.setOrbitEnabled(!dragging);
         const target = controls.object;
-        if (!dragging && target) onCommit(poseOf(target));
+        if (!dragging && target) onCommit(poseOf(target), 'end');
       });
       // Throttled commits DURING the drag keep the panel's mm and degrees
       // live under the merchant's hand, not just on release.
@@ -167,7 +171,7 @@ export class Gizmo {
         const now = performance.now();
         if (now - lastLive < 120) return;
         lastLive = now;
-        onCommit(poseOf(target));
+        onCommit(poseOf(target), 'live');
       });
     }
 

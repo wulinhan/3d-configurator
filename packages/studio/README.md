@@ -86,16 +86,53 @@ hand-off from dragging to authored state is invisible.
 
 ## Parts management
 
-Each part row has an eyeball (hide/show), a solo toggle, rename (✎ or
-double-click), and delete. Deleting repairs every reference: parts anchored
-to the deleted one keep their world position, its options are pruned, and
-dangling colour links re-point. Hide/solo are authoring aids only — never
-part of the manifest. The part editor also carries the default customer
-colour, custom-colour pricing (moved here from the old Options tab),
+The explorer renders ENTRIES, not raw parts: a loose part, a **group**
+(several parts treated as one), or a **customer choice** (variants the
+customer picks between). ▲▼ buttons reorder whole entries, and that order is
+the manifest's part order and the option order customers meet. Multi-select
+two or more loose parts and an action bar offers both structures:
+
+- **Group as one** records `manifest.groups` and merges the members' solo
+  colour options into a single option (one colour control for the customer —
+  that's what "treated as one part" means at the storefront). The group
+  editor renames, nudges every member together (members anchored to each
+  other move once, not twice — the anchor already carries them), and
+  ungroups; ungrouping keeps the merged colour option.
+- **Customer choice** builds a `choice` option with `role: 'variant'` and
+  points each member's `visibleWhen` at it — mutual exclusivity by
+  construction, no runtime special-casing. In the Studio exactly one variant
+  is visible; clicking a hidden member in the explorer (hollow dot) swaps the
+  preview to it so it can be edited. A variant member's editor prices the
+  choice instead of showing the add-on toggle, which would otherwise orphan
+  the option.
+
+Each part row keeps an eyeball (hide/show — a group's eyeball hides every
+member), a solo toggle, rename (✎ or double-click), and delete. Deleting
+repairs every reference: parts anchored to the deleted one keep their world
+position, its options are pruned, dangling colour links re-point, and a
+variant choice sheds the deleted member (dissolving entirely below two).
+Hide/solo are authoring aids only — never part of the manifest. The part
+editor also carries the default customer colour, custom-colour pricing,
 match-position, and the Snap tool mates two clicked faces as a live anchor —
 the first-clicked part moves, the joint holds when the target later moves.
 An origin grid and axes mark 0,0,0; selecting a part eases the orbit centre
 onto it, deselecting eases back over the origin.
+
+## Undo / redo
+
+Global, Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z (topbar buttons too). Because every
+edit op returns a fresh validated manifest, history is just a stack of past
+manifests — no command objects, no inverse operations, nothing to get out of
+sync. Gizmo drags stream `transient` commits that replace instead of push, so
+a whole drag is one undo step; keystrokes inside text fields are left to the
+field's own undo.
+
+## Customer preview
+
+The **Preview** button opens the storefront embed itself — `mount()` from
+`@allin/embed`, panel, pricing and all — over the manifest as authored and
+the same GLB blob the Studio previews. It cannot drift from what customers
+will see because it is not a simulation of the embed; it is the embed.
 
 ## View cube & saved views
 
@@ -148,11 +185,18 @@ test/compress.test.ts  3 — meshopt output is tagged, smaller, and within
                       0.05 mm of the input
 test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
-test/studio.smoke.mjs 35 browser assertions — the full merchant journey
+test/structure.test.ts 13 — groups merge colours without double-painting,
+                      variants are exclusive by construction, group nudges
+                      never move an anchored member twice, reordering drags
+                      the option order along, deletes repair both structures
+test/studio.smoke.mjs 74 browser assertions — the full merchant journey
                       against the production build, including a real pointer
-                      drag on the combined gizmo, view-cube navigation, the
-                      saved view surviving publish, a mesh-vs-layout
-                      divergence check, and the compressed download
+                      drag on the combined gizmo (and that one Ctrl+Z rewinds
+                      the whole drag), view-cube navigation, the saved view
+                      surviving publish, a mesh-vs-layout divergence check,
+                      variant/group creation through the explorer UI, the
+                      customer preview mounting the real embed, and the
+                      compressed download
 ```
 
 The browser test exists because two real defects passed every unit test: the

@@ -115,6 +115,15 @@ stretching new geometry onto old numbers.
 the host's cart own base price, currency, tax and discounts. A merchant's store
 is the authority on money; a second copy here would go stale.
 
+Two structural notions sit on top of parts. `groups` marks a set of parts the
+Studio treats as one (moved together, one shared colour option) — the runtime
+ignores it beyond validation, because by the time a manifest ships, the merge
+has already happened in the options. A `choice` option with `role: "variant"`
+makes its parts mutually exclusive: each carries `visibleWhen` on that option,
+so customers pick which part they get and exactly one renders. `role` is
+advisory (the Studio's construction note); visibility itself flows through the
+same `visibleWhen` machinery add-ons use.
+
 ## Trying it
 
 From the repository root:

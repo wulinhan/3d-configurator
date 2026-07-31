@@ -368,8 +368,27 @@ export function removePart(manifest: Manifest, partId: string, raw: Map<string, 
         option.parts = option.parts.filter((id) => id !== partId);
         return option.parts.length > 0 || option.source === 'used';
       }
+      if (isChoice(option) && option.role === 'variant') {
+        option.choices = option.choices.filter((c) => c.id !== partId);
+        if (option.choices.length < 2) {
+          // One variant is no choice — the survivors become always-visible.
+          for (const part of draft.parts) {
+            if (part.visibleWhen?.option === option.id) delete part.visibleWhen;
+          }
+          return false;
+        }
+        if (option.default === partId) option.default = option.choices[0].id;
+      }
       return true;
     });
+
+    // Groups shed the member; a one-part group dissolves.
+    if (draft.groups) {
+      draft.groups = draft.groups
+        .map((g) => ({ ...g, parts: g.parts.filter((id) => id !== partId) }))
+        .filter((g) => g.parts.length >= 2);
+      if (!draft.groups.length) delete draft.groups;
+    }
 
     // Repair colour links and @defaults that pointed at removed options.
     const optionIds = new Set(draft.options.map((o) => o.id));
@@ -443,6 +462,219 @@ export function snapFaces(
   const targetEdge: AnchorEdge = target.normal[axis] > 0 ? 'max' : 'min';
   return withAnchor(manifest, moving.partId, axis, {
     align: movingEdge, to: target.partId, edge: targetEdge, offset: 0,
+  });
+}
+
+// ── groups & variants ───────────────────────────────────────────────────────
+
+/**
+ * Group parts so they read and behave as one thing. Their solo colour
+ * options merge into a single option painting every member — one colour
+ * control for the customer, which is most of what "one part" means to them.
+ */
+export function makeGroup(manifest: Manifest, partIds: string[], label: string): Manifest {
+  if (partIds.length < 2) throw new EditError('a group needs at least two parts');
+  if (!label.trim()) throw new EditError('a group needs a name');
+  for (const id of partIds) {
+    partOf(manifest, id);
+    if (manifest.groups?.some((g) => g.parts.includes(id))) {
+      throw new EditError(`part "${id}" is already in a group`);
+    }
+  }
+  return edit(manifest, (draft) => {
+    let groupId = slug(label);
+    for (let n = 2; (draft.groups ?? []).some((g) => g.id === groupId) || draft.parts.some((p) => p.id === groupId); n++) {
+      groupId = `${slug(label)}-${n}`;
+    }
+    draft.groups = [...(draft.groups ?? []), { id: groupId, label: label.trim(), parts: [...partIds] }];
+
+    // Merge each member's solo colour option into one.
+    const solos = draft.options.filter(
+      (o): o is ColourOption => isColour(o) && o.source !== 'used'
+        && o.parts.length === 1 && partIds.includes(o.parts[0]));
+    if (solos.length) {
+      const first = solos[0];
+      const optionId = `${groupId}-colour`;
+      const covered = new Set(solos.flatMap((o) => o.parts));
+      const merged: ColourOption = {
+        ...structuredClone(first),
+        id: optionId,
+        label: label.trim(),
+        parts: partIds.filter((id) => covered.has(id)
+          // members with no colour option at all join the merged one, unless
+          // some other option already paints them
+          || !draft.options.some((o) => isColour(o) && o.parts.includes(id))),
+      };
+      const soloIds = new Set(solos.map((o) => o.id));
+      const at = draft.options.findIndex((o) => o.id === first.id);
+      draft.options = draft.options.filter((o) => !soloIds.has(o.id));
+      draft.options.splice(Math.min(at, draft.options.length), 0, merged);
+      // Anything linked to a merged-away option follows to the merged one.
+      for (const option of draft.options) {
+        if (!isColour(option)) continue;
+        if (option.linkedTo && soloIds.has(option.linkedTo)) option.linkedTo = optionId;
+        if (option.default.startsWith('@') && soloIds.has(option.default.slice(1))) option.default = `@${optionId}`;
+      }
+    }
+  });
+}
+
+/** Dissolve a group. The merged colour option stays — it still makes sense. */
+export function ungroup(manifest: Manifest, groupId: string): Manifest {
+  if (!manifest.groups?.some((g) => g.id === groupId)) throw new EditError(`no group "${groupId}"`);
+  return edit(manifest, (draft) => {
+    draft.groups = (draft.groups ?? []).filter((g) => g.id !== groupId);
+    if (!draft.groups.length) delete draft.groups;
+  });
+}
+
+export function renameGroup(manifest: Manifest, groupId: string, label: string): Manifest {
+  if (!label.trim()) throw new EditError('a group needs a name');
+  return edit(manifest, (draft) => {
+    const group = (draft.groups ?? []).find((g) => g.id === groupId);
+    if (!group) throw new EditError(`no group "${groupId}"`);
+    group.label = label.trim();
+    const option = draft.options.find((o) => o.id === `${groupId}-colour`);
+    if (option) option.label = label.trim();
+  });
+}
+
+/**
+ * Move a whole group by millimetre deltas. Members anchored to another
+ * member are carried by the anchor already — nudging them too would move
+ * them twice.
+ */
+export function nudgeGroup(manifest: Manifest, groupId: string, deltas: [number, number, number]): Manifest {
+  const group = manifest.groups?.find((g) => g.id === groupId);
+  if (!group) throw new EditError(`no group "${groupId}"`);
+  let next = manifest;
+  for (const partId of group.parts) {
+    const part = partOf(manifest, partId);
+    const effective: [number, number, number] = [...deltas];
+    (['x', 'y', 'z'] as const).forEach((name, axis) => {
+      const to = part.placement?.[name]?.to;
+      if (to && to !== 'origin' && group.parts.includes(to.split(':')[0])) effective[axis] = 0;
+    });
+    if (effective.some((d) => d !== 0)) next = nudge(next, partId, effective);
+  }
+  return next;
+}
+
+/**
+ * Turn parts into customer-selectable variants: a choice option where
+ * exactly one of the parts is visible at a time.
+ */
+export function makeVariantChoice(manifest: Manifest, partIds: string[], label: string): Manifest {
+  if (partIds.length < 2) throw new EditError('a choice needs at least two parts');
+  if (!label.trim()) throw new EditError('the choice needs a name — customers see it');
+  for (const id of partIds) {
+    const part = partOf(manifest, id);
+    if (part.visibleWhen) throw new EditError(`part "${id}" is already an add-on or variant`);
+  }
+  return edit(manifest, (draft) => {
+    let optionId = slug(label);
+    for (let n = 2; draft.options.some((o) => o.id === optionId); n++) optionId = `${slug(label)}-${n}`;
+    draft.options.push({
+      id: optionId,
+      type: 'choice',
+      role: 'variant',
+      label: label.trim(),
+      choices: partIds.map((id) => ({ id, label: partOf(draft, id).label })),
+      default: partIds[0],
+    });
+    for (const id of partIds) {
+      partOf(draft, id).visibleWhen = { option: optionId, equals: [id] };
+    }
+  });
+}
+
+/** Undo makeVariantChoice: every part always visible again, option gone. */
+export function dissolveVariantChoice(manifest: Manifest, optionId: string): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || !isChoice(option) || option.role !== 'variant') {
+    throw new EditError(`"${optionId}" is not a variant choice`);
+  }
+  return edit(manifest, (draft) => {
+    draft.options = draft.options.filter((o) => o.id !== optionId);
+    for (const part of draft.parts) {
+      if (part.visibleWhen?.option === optionId) delete part.visibleWhen;
+    }
+  });
+}
+
+// ── explorer entries & ordering ─────────────────────────────────────────────
+
+export type ExplorerEntry =
+  | { kind: 'part'; id: string; parts: [string] }
+  | { kind: 'group'; id: string; label: string; parts: string[] }
+  | { kind: 'variant'; id: string; label: string; parts: string[] };
+
+/**
+ * The explorer's row model: groups and variant choices fold their members
+ * into one entry, ordered by each entry's first part in manifest order —
+ * which is also the order customers meet things in.
+ */
+export function entriesOf(manifest: Manifest): ExplorerEntry[] {
+  const claimed = new Map<string, ExplorerEntry>();
+  for (const g of manifest.groups ?? []) {
+    const entry: ExplorerEntry = { kind: 'group', id: g.id, label: g.label, parts: [...g.parts] };
+    for (const p of g.parts) claimed.set(p, entry);
+  }
+  for (const o of manifest.options) {
+    if (isChoice(o) && o.role === 'variant') {
+      const parts = o.choices.map((c) => c.id).filter((id) => manifest.parts.some((p) => p.id === id));
+      const entry: ExplorerEntry = { kind: 'variant', id: o.id, label: o.label, parts };
+      for (const p of parts) if (!claimed.has(p)) claimed.set(p, entry);
+    }
+  }
+  const out: ExplorerEntry[] = [];
+  const emitted = new Set<ExplorerEntry>();
+  for (const part of manifest.parts) {
+    const entry = claimed.get(part.id);
+    if (!entry) {
+      out.push({ kind: 'part', id: part.id, parts: [part.id] });
+    } else if (!emitted.has(entry)) {
+      emitted.add(entry);
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
+/**
+ * Move an explorer entry up or down. Rebuilds the parts array from the new
+ * entry order (an entry's parts travel together) and re-sorts options to
+ * follow — options order is what the customer panel renders.
+ */
+export function moveEntry(manifest: Manifest, entryId: string, direction: -1 | 1): Manifest {
+  const entries = entriesOf(manifest);
+  const at = entries.findIndex((e) => e.id === entryId);
+  if (at === -1) throw new EditError(`no explorer entry "${entryId}"`);
+  const to = at + direction;
+  if (to < 0 || to >= entries.length) return manifest;
+  const reordered = [...entries];
+  const [entry] = reordered.splice(at, 1);
+  reordered.splice(to, 0, entry);
+
+  return edit(manifest, (draft) => {
+    const byId = new Map(draft.parts.map((p) => [p.id, p]));
+    draft.parts = reordered.flatMap((e) => e.parts.map((id) => byId.get(id)!).filter(Boolean));
+
+    const partIndex = new Map(draft.parts.map((p, i) => [p.id, i]));
+    const orderKey = (o: Option): number => {
+      if (isColour(o)) return Math.min(...o.parts.map((p) => partIndex.get(p) ?? Infinity), Infinity);
+      if (isChoice(o) && o.role === 'variant') {
+        return Math.min(...o.choices.map((c) => partIndex.get(c.id) ?? Infinity), Infinity);
+      }
+      if (isChoice(o) && o.id.endsWith('-addon')) {
+        return partIndex.get(o.id.slice(0, -'-addon'.length)) ?? Infinity;
+      }
+      return Infinity;
+    };
+    draft.options = draft.options
+      .map((o, i) => ({ o, i, key: orderKey(o) }))
+      .sort((a, b) => a.key - b.key || a.i - b.i)
+      .map((x) => x.o);
   });
 }
 
