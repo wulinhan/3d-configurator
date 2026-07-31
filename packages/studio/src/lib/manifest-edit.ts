@@ -271,6 +271,49 @@ export function nudge(manifest: Manifest, partId: string, deltas: [number, numbe
   });
 }
 
+/**
+ * Bring a part to the origin: centred on X and Z, sitting on the ground
+ * (min-Y at 0). Implemented as offset slides, so anchors survive — the part
+ * is moved, not re-wired.
+ */
+export function partToOrigin(manifest: Manifest, partId: string, raw: Map<string, PartBounds>): Manifest {
+  partOf(manifest, partId);
+  const box = resolveLayout(manifest, raw).get(partId)?.box;
+  if (!box) throw new EditError(`no geometry for "${partId}"`);
+  const deltas: [number, number, number] = [
+    -(box.min[0] + box.max[0]) / 2,
+    -box.min[1],
+    -(box.min[2] + box.max[2]) / 2,
+  ];
+  if (deltas.every((d) => Math.abs(d) < 1e-9)) return manifest;
+  return nudge(manifest, partId, deltas);
+}
+
+/** Bring a whole assembly to the origin, moving it as one rigid thing. */
+export function groupToOrigin(manifest: Manifest, groupId: string, raw: Map<string, PartBounds>): Manifest {
+  const group = manifest.groups?.find((g) => g.id === groupId);
+  if (!group) throw new EditError(`no assembly "${groupId}"`);
+  const layout = resolveLayout(manifest, raw);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const partId of group.parts) {
+    const box = layout.get(partId)?.box;
+    if (!box) continue;
+    for (const a of [0, 1, 2]) {
+      min[a] = Math.min(min[a], box.min[a]);
+      max[a] = Math.max(max[a], box.max[a]);
+    }
+  }
+  if (!Number.isFinite(min[0])) throw new EditError(`assembly "${groupId}" has no geometry`);
+  const deltas: [number, number, number] = [
+    -(min[0] + max[0]) / 2,
+    -min[1],
+    -(min[2] + max[2]) / 2,
+  ];
+  if (deltas.every((d) => Math.abs(d) < 1e-9)) return manifest;
+  return nudgeGroup(manifest, groupId, deltas);
+}
+
 export interface GizmoPose {
   /** World position of the mesh (whose origin is the part's raw centre). */
   position: [number, number, number];

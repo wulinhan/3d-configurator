@@ -15,6 +15,7 @@ import {
   makeVariantChoice, dissolveVariantChoice,
   addPartToGroup, removePartFromGroup, addPartToChoice, removePartFromChoice,
   entriesOf, moveEntry, moveEntryTo, withAnchor, makePartOptional, EditError,
+  partToOrigin, groupToOrigin, nudge,
 } from '../src/lib/manifest-edit.ts';
 
 const near = (a: number, b: number, tol = 1e-6) => assert.ok(Math.abs(a - b) < tol, `${a} !== ${b}`);
@@ -171,6 +172,45 @@ test('removePartFromGroup splits the colour back out; below two the assembly dis
   m = removePartFromGroup(m, 'shell', 'badge');
   valid(m);
   assert.equal(m.groups, undefined, 'one-member assembly dissolves');
+});
+
+test('partToOrigin centres X/Z and grounds the part, sliding offsets not anchors', () => {
+  let m = withAnchor(fresh(), 'badge', 1, { align: 'min', to: 'body', edge: 'max', offset: 1 });
+  m = nudge(m, 'badge', [7, 0, 3]);
+  m = partToOrigin(m, 'badge', RAW);
+  valid(m);
+  const box = resolveLayout(m, RAW).get('badge')!.box;
+  near((box.min[0] + box.max[0]) / 2, 0);
+  near(box.min[1], 0);
+  near((box.min[2] + box.max[2]) / 2, 0);
+  // The y anchor survived — the part moved, its wiring didn't.
+  assert.equal(m.parts.find((p) => p.id === 'badge')!.placement!.y!.to, 'body:max');
+  assert.equal(partToOrigin(m, 'badge', RAW), m, 'already at origin is a no-op');
+});
+
+test('groupToOrigin moves the assembly as one rigid thing', () => {
+  let m = withAnchor(fresh(), 'badge', 1, { align: 'min', to: 'body', edge: 'max', offset: 1 });
+  m = makeGroup(m, ['body', 'badge'], 'Shell');
+  m = nudgeGroup(m, 'shell', [12, 4, -6]);
+  const before = resolveLayout(m, RAW);
+  const gap = before.get('badge')!.box.min[1] - before.get('body')!.box.max[1];
+  m = groupToOrigin(m, 'shell', RAW);
+  valid(m);
+  const after = resolveLayout(m, RAW);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const id of ['body', 'badge']) {
+    const box = after.get(id)!.box;
+    for (const a of [0, 1, 2]) {
+      min[a] = Math.min(min[a], box.min[a]);
+      max[a] = Math.max(max[a], box.max[a]);
+    }
+  }
+  near((min[0] + max[0]) / 2, 0);
+  near(min[1], 0);
+  near((min[2] + max[2]) / 2, 0);
+  // Rigid: the badge kept its distance from the body.
+  near(after.get('badge')!.box.min[1] - after.get('body')!.box.max[1], gap);
 });
 
 test('moveEntryTo lands an entry at an arbitrary position and clamps', () => {

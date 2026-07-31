@@ -9,7 +9,7 @@
 // and camera focus easing — select a part and the orbit centre glides to it,
 // deselect and it returns to the model over the origin.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
@@ -38,6 +38,9 @@ export function ViewerPane(props: {
   const [viewSaved, setViewSaved] = useState(false);
   const viewerRef = useRef<Viewer | null>(null);
   const gizmoRef = useRef<Gizmo | null>(null);
+  const axesRef = useRef<THREE.AxesHelper | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLSpanElement>(null);
   const [mode, setMode] = useState<GizmoMode>('off');
   // Face-snap: null = off; 'first' = waiting for the surface that moves;
   // a SurfaceHit = that surface is chosen (and stays highlighted) while the
@@ -121,6 +124,8 @@ export function ViewerPane(props: {
     // drawing them through the model made the parts read as transparent.
     axes.setColors(new THREE.Color(0xd44a3a), new THREE.Color(0x3a6fd4), new THREE.Color(0x4a9a44));
     viewer.scene.add(grid, axes);
+    axesRef.current = axes;
+    (window as any).__studioAxes = axes; // test hook
 
     viewer.load().then(() => {
       if (disposed) return;
@@ -133,6 +138,10 @@ export function ViewerPane(props: {
         spanRef.current = span;
         grid.scale.setScalar(span * 1.6);
         axes.scale.setScalar(span * 0.35);
+        // Grid slightly below ground, axes slightly above: exactly coplanar
+        // lines fight in the depth buffer and shimmer as the camera moves.
+        grid.position.y = -span * 0.004;
+        axes.position.y = span * 0.004;
       }
       (window as any).__studioViewerReady = true;
     });
@@ -145,6 +154,7 @@ export function ViewerPane(props: {
       (window as any).__studioViewCube = null;
       gizmo.dispose();
       gizmoRef.current = null;
+      axesRef.current = null;
       grid.geometry.dispose();
       viewer.dispose();
       viewerRef.current = null;
@@ -205,6 +215,27 @@ export function ViewerPane(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  // The origin axes and the gizmo's coloured axes say the same thing in the
+  // same colours — both visible at once reads as flicker. While the gizmo is
+  // attached, it IS the axes; the origin ones step aside.
+  useEffect(() => {
+    const axes = axesRef.current;
+    if (axes) axes.visible = !(props.selectedPart && mode === 'transform');
+  }, [props.selectedPart, mode, props.project.modelUrl]);
+
+  // The dark pill glides between Orbit / Transform / Snap (the framer-motion
+  // layoutId tab pattern, done with a measured absolute span).
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    const pill = pillRef.current;
+    if (!bar || !pill) return;
+    const activeId = snapArm !== null ? 'snap-tool' : mode === 'off' ? 'gizmo-off' : 'gizmo-transform';
+    const btn = bar.querySelector<HTMLButtonElement>(`[data-testid="${activeId}"]`);
+    if (!btn) return;
+    pill.style.left = `${btn.offsetLeft}px`;
+    pill.style.width = `${btn.offsetWidth}px`;
+  }, [mode, snapArm]);
+
   // Face snapping: two picks, first names the mover. The whole flat surface
   // under the pointer glows as a preview; the first pick keeps its glow (in
   // the accent colour) while the second is chosen.
@@ -263,11 +294,12 @@ export function ViewerPane(props: {
     <div className="stage" ref={stageRef}>
       <canvas ref={canvasRef} />
       <canvas ref={cubeRef} className="viewcube" width={92} height={92} data-testid="view-cube" />
-      <div className="gizmo-bar" role="toolbar" aria-label="Transform mode">
+      <div className="gizmo-bar" role="toolbar" aria-label="Transform mode" ref={barRef}>
+        <span className="mode-pill" ref={pillRef} aria-hidden="true" />
         {MODES.map((m) => (
           <button
             key={m.id} data-testid={`gizmo-${m.id}`}
-            className={mode === m.id ? 'is-active' : ''}
+            className={snapArm === null && mode === m.id ? 'is-active' : ''}
             onClick={() => { setMode(m.id); setSnapArm(null); }}
           >{m.label}</button>
         ))}

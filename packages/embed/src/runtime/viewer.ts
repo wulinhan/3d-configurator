@@ -167,7 +167,11 @@ export class Viewer {
     this.renderer.toneMappingExposure = 1.25;
     this.renderer.setClearColor(new THREE.Color(cam.background ?? '#F8F6F1'));
 
-    this.camera = new THREE.PerspectiveCamera(cam.fov ?? 38, 1, 0.1, 5000);
+    // Near at 1 mm, not 0.1: a 50 000:1 far/near ratio starves the depth
+    // buffer and coplanar-ish lines (origin axes over the grid, part edges
+    // on the ground) shimmer. minDistance is 50 mm, so nothing legitimate
+    // ever gets within 1 mm of the lens.
+    this.camera = new THREE.PerspectiveCamera(cam.fov ?? 38, 1, 1, 5000);
     this.camera.position.set(...(cam.position ?? [0, 90, 280]));
 
     this.controls = new OrbitControls(this.camera, opts.canvas);

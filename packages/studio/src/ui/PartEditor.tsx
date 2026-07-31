@@ -9,7 +9,7 @@ import {
   sizeMm, withSizeMm, withAnchor, withRotation,
   makePartOptional, makePartRequired, setChoicePrice,
   setDefaultSwatch, copyPlacement, setCustomColour,
-  ungroup, renameGroup, nudgeGroup,
+  ungroup, renameGroup, nudgeGroup, partToOrigin, groupToOrigin,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -63,6 +63,13 @@ export function GroupEditor(props: {
       <section>
         <h4>Move together</h4>
         <p className="hint">Shifts every part in the assembly by the given distance. Parts anchored to each other keep their joints.</p>
+        <div className="match-row">
+          <button
+            className="mini" data-testid="group-to-origin"
+            title="Centre the whole assembly on X/Y, sit it on the ground at Z 0"
+            onClick={() => act(() => groupToOrigin(manifest, group.id, props.project.raw))}
+          >Bring assembly to origin</button>
+        </div>
         <div className="field-row" key={nudgeTick}>
           {UI_AXES.map(({ label, axis }) => (
             <NumberField
@@ -172,6 +179,10 @@ export function PartEditor(props: {
             className="mini" data-testid="match-apply" disabled={!matchFrom}
             onClick={() => { act(() => copyPlacement(manifest, matchFrom, part.id)); setMatchFrom(''); }}
           >Apply</button>
+          <button
+            className="mini" data-testid="to-origin" title="Centre on X/Y, sit on the ground at Z 0 — anchors survive"
+            onClick={() => act(() => partToOrigin(manifest, part.id, raw))}
+          >To origin</button>
         </div>
       </section>
 
@@ -180,7 +191,7 @@ export function PartEditor(props: {
         <div className="field-row">
           {UI_AXES.map(({ label, axis }) => (
             <NumberField
-              key={label} label={label} value={rotation[axis]} suffix="°" step={15}
+              key={label} label={label} value={rotation[axis]} suffix="°" step={5}
               testId={`rot-${label.toLowerCase()}`}
               onCommit={(deg) => {
                 const next = [...rotation] as [number, number, number];

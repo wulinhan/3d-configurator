@@ -77,7 +77,8 @@ the mesh with a capture-phase pointerdown arbitrating who owns the drag
 screen-space free-rotate handles are removed — their pick radius overlaps
 the translate arrow tips.
 
-Snapping is 0.5 mm and 15°. During a drag only the mesh moves; on release
+Snapping is 0.1 mm and 5° (panel rotation steps 5° too — fine work first,
+big sweeps by typing). During a drag only the mesh moves; on release
 the pose is committed through `applyGizmoPose`, which turns it back into
 manifest placement: a translate on an anchored axis slides the offset and
 keeps the anchor, rotation lands as degrees, scale as multipliers. The
@@ -123,13 +124,23 @@ pruned, dangling colour links re-point, and a pick-one set sheds the
 deleted member (dissolving entirely below two). Hide/solo are authoring
 aids only — never part of the manifest. Selecting a part slides a floating
 properties panel in from the stage's right edge (size, position anchors,
-rotation, colour, pricing, match-position); deselecting slides it away.
+rotation, colour, pricing, match-position, and **To origin** — centre on the flat axes, sit on the
+ground, implemented as offset slides so anchors survive; assemblies have
+the same button and move as one rigid thing); deselecting slides it away.
 The tool row (Orbit / Transform / Snap / Save view) sits directly above
-that panel at the same width; the view cube keeps the top-left corner. The
+that panel at the same width, with a dark pill that glides between modes
+(the framer-motion layoutId tab pattern, done with a measured span); the
+view cube keeps the top-left corner. The
 explorer panel itself resizes by dragging the divider, and the divider's
-pill collapses/expands it. An origin grid and axes mark 0,0,0; selecting a
-part eases the orbit centre onto it, deselecting eases back over the
-origin.
+pill collapses/expands it. An origin grid and axes mark 0,0,0 — the grid
+sits a hair below ground and the axes a hair above (exactly coplanar lines
+shimmer in the depth buffer), the camera's near plane is 1 mm not 0.1 (a
+50 000:1 far/near ratio starved depth precision into visible flicker), and
+the origin axes step aside while the gizmo is attached, since both say the
+same thing in the same colours. Selecting a part eases the orbit centre
+onto it, deselecting eases back over the origin. While dragging explorer
+rows, a card copy of the row rides the cursor (the dnd-kit DragOverlay
+pattern) and the row dims in place.
 
 ## Snapping surfaces
 
@@ -229,7 +240,7 @@ test/structure.test.ts 19 — assemblies merge colours without double-painting,
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
                       deletes repair both structures
-test/studio.smoke.mjs 90 browser assertions — the full merchant journey
+test/studio.smoke.mjs 95 browser assertions — the full merchant journey
                       against the production build, including a real pointer
                       drag on the combined gizmo (and that one Ctrl+Z rewinds
                       the whole drag), view-cube navigation, the saved view

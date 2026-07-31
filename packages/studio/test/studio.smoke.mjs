@@ -241,6 +241,13 @@ await shoot('2-anchored.png');
       && g.translate.object === g.rotate.object && g.rotate.object === g.scale.object);
   });
   check('all three gizmo layers attach to the selected part', attached, '');
+  const pill = await page.evaluate(() => ({
+    pill: document.querySelector('.mode-pill')?.getBoundingClientRect().left ?? -1,
+    active: document.querySelector('.gizmo-bar button.is-active')?.getBoundingClientRect().left ?? -2,
+  }));
+  check('the mode pill slid under the active mode', Math.abs(pill.pill - pill.active) < 2, pill);
+  check('origin axes step aside while the gizmo shows its own',
+    await page.evaluate(() => window.__studioAxes.visible === false), '');
   const before = await manifest();
   const xOffsetBefore = before.parts[1].placement?.x?.offset ?? 0;
 
@@ -371,6 +378,7 @@ await shoot('2-anchored.png');
   check('clicking empty space deselects and hides the gizmo', detached.object === false, detached);
   check('…and the floating properties panel slides away', await page.evaluate(
     () => !document.querySelector('[data-testid="props-float"]')?.classList.contains('is-open')), '');
+  check('…and the origin axes return', await page.evaluate(() => window.__studioAxes.visible === true), '');
   await page.click('.part-name:has-text("Cap")');
   await page.waitForTimeout(700);
   check('selecting a part slides the properties panel in', await page.evaluate(
@@ -656,8 +664,23 @@ await shoot('4-publish.png');
   w = Number(await page.inputValue('[data-testid="size-w"]'));
   check('Undo button rewinds again', near(w, 80), w);
 
+  // Move-to-origin from the properties panel; one undo brings it back.
+  await page.click('.part-name:has-text("Cap")');
+  await page.waitForTimeout(400);
+  await page.click('[data-testid="to-origin"]');
+  await page.waitForTimeout(250);
+  const capBox = await page.evaluate(() => window.__studioViewer.partBox('cap'));
+  check('To origin centres the part on the flat axes and grounds it',
+    Math.abs((capBox.min[0] + capBox.max[0]) / 2) < 1e-3
+    && Math.abs(capBox.min[1]) < 1e-3
+    && Math.abs((capBox.min[2] + capBox.max[2]) / 2) < 1e-3,
+    capBox);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(250);
+
   // A pointer drag from a six-dot handle to a target element. `place` picks
   // the drop band: above/below a row reorders, centre of a bundle joins it.
+  let ghostSeen = false;
   const dragTo = async (handleSel, targetSel, place) => {
     const h = await page.locator(handleSel).boundingBox();
     const t = await page.locator(targetSel).boundingBox();
@@ -671,6 +694,7 @@ await shoot('4-publish.png');
     for (let i = 1; i <= 6; i++) {
       await page.mouse.move(from[0] + (to[0] - from[0]) * i / 6, from[1] + (to[1] - from[1]) * i / 6);
       await page.waitForTimeout(30);
+      if (i === 3 && await page.isVisible('.drag-ghost')) ghostSeen = true;
     }
     await page.mouse.up();
     await page.waitForTimeout(250);
@@ -686,6 +710,7 @@ await shoot('4-publish.png');
     { parts: m.parts.map((p) => p.id), options: m.options.map((o) => o.id) });
   check('explorer lists the new order', (await page.textContent('.part-rows .part-name'))?.includes('Cap'),
     await page.textContent('.part-rows .part-name'));
+  check('a card rides the cursor while dragging', ghostSeen, '');
   await dragTo('[data-testid="drag-base"]', '.entry-line:has([data-testid="drag-cap"])', 'above');
   m = await manifest();
   check('dragging back above restores the order', m.parts.map((p) => p.id).join(',') === 'base,cap', m.parts.map((p) => p.id));

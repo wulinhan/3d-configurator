@@ -79,8 +79,16 @@ input, select { font: inherit; }
   padding: 6px 4px; font-size: 12px; color: var(--ink2);
   flex: 1; min-width: 0; white-space: nowrap;
 }
+.gizmo-bar button { position: relative; z-index: 1; transition: color .18s; }
 .gizmo-bar button:hover { background: var(--surface); }
-.gizmo-bar button.is-active { background: var(--accent); color: #fff; font-weight: 600; }
+.gizmo-bar button.is-active { background: none; color: #fff; font-weight: 600; }
+.gizmo-bar button.is-active:hover { background: none; }
+/* The sliding pill behind the active mode — measured span, eased travel. */
+.mode-pill {
+  position: absolute; top: 3px; bottom: 3px; left: 3px; width: 0;
+  background: var(--accent); border-radius: 7px; z-index: 0;
+  transition: left .22s cubic-bezier(.4, 0, .2, 1), width .22s cubic-bezier(.4, 0, .2, 1);
+}
 .gizmo-sep { width: 1px; flex: none; align-self: stretch; margin: 4px 3px; background: var(--line); }
 /* Must out-rank `.stage canvas`'s 100% sizing or the overlay swallows the
  * whole stage — and with it, every pointer event the gizmo needs. */
@@ -229,11 +237,11 @@ input, select { font: inherit; }
   border-radius: 8px; background: #fff; overflow: hidden;
 }
 .field-box input {
-  border: none; outline: none; padding: 7px 8px; width: 100%; min-width: 0;
-  font-variant-numeric: tabular-nums;
+  border: none; outline: none; padding: 6px 7px; width: 100%; min-width: 0;
+  font-variant-numeric: tabular-nums; font-size: 11px;
 }
 .field-box input::-webkit-outer-spin-button, .field-box input::-webkit-inner-spin-button { -webkit-appearance: none; }
-.field-suffix { padding: 0 8px 0 0; font-size: 11px; color: var(--ink2); white-space: nowrap; }
+.field-suffix { padding: 0 7px 0 0; font-size: 10px; color: var(--ink2); white-space: nowrap; }
 .field-error { font-size: 11px; color: var(--danger); }
 .field.wide > input {
   border: 1.5px solid var(--line); border-radius: 8px; padding: 7px 10px;
@@ -324,6 +332,11 @@ input, select { font: inherit; }
   background: #fff; border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, .14);
   padding: 4px; display: flex; flex-direction: column; gap: 1px;
+  animation: pop-in .13s ease;
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to { opacity: 1; transform: none; }
 }
 .ui-select-opt {
   display: flex; align-items: center; gap: 8px;
@@ -341,12 +354,30 @@ input, select { font: inherit; }
   background: rgba(29, 29, 31, .35);
   display: grid; place-items: center; padding: 24px;
 }
+.dialog-backdrop { animation: fade-in .14s ease; }
 .dialog-card {
   width: min(420px, 100%);
   background: #fff; border-radius: 14px;
   box-shadow: 0 18px 50px rgba(0, 0, 0, .22);
   padding: 20px;
+  animation: dialog-in .16s cubic-bezier(.3, 1.2, .5, 1);
 }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(10px) scale(.97); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The card riding the cursor during an explorer drag. */
+.drag-ghost {
+  position: fixed; z-index: 70; pointer-events: none;
+  display: flex; align-items: center; gap: 8px;
+  background: #fff; border: 1.5px solid var(--accent); border-radius: 9px;
+  padding: 7px 12px; font-size: 12px; font-weight: 600; color: var(--ink);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .2);
+  transform: rotate(2deg);
+}
+.drag-ghost svg { color: var(--ink2); }
 .dialog-card h3 { margin: 0 0 8px; font-size: 15px; }
 .dialog-body { font-size: 13px; line-height: 1.55; color: var(--ink2); }
 .dialog-body p { margin: 0; }

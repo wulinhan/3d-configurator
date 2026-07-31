@@ -44,8 +44,8 @@ export class Gizmo {
     const translate = make('translate', 1.15);
     const rotate = make('rotate', 0.9);
     const scale = make('scale', 0.62);
-    translate.setTranslationSnap(0.5);
-    rotate.setRotationSnap(THREE.MathUtils.degToRad(15));
+    translate.setTranslationSnap(0.1);
+    rotate.setRotationSnap(THREE.MathUtils.degToRad(5));
     this.all = [translate, rotate, scale];
 
     // Drop the rotate gizmo's screen-space free-rotate handles ('E' outer

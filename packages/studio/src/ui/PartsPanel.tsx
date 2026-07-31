@@ -62,6 +62,7 @@ export function PartsPanel(props: {
   const [structureLabel, setStructureLabel] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [drag, setDrag] = useState<DragSource | null>(null);
+  const [dragXY, setDragXY] = useState<{ x: number; y: number } | null>(null);
   const [drop, setDrop] = useState<DropTarget>(null);
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -156,12 +157,14 @@ export function PartsPanel(props: {
       if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
       moved = true;
       setDrag(source);
+      setDragXY({ x: ev.clientX, y: ev.clientY });
       setDrop(resolveDrop(source, ev.clientX, ev.clientY));
     };
     const up = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       setDrag(null);
+      setDragXY(null);
       setDrop(null);
       if (moved) commitDrop(source, resolveDrop(source, ev.clientX, ev.clientY));
     };
@@ -379,6 +382,26 @@ export function PartsPanel(props: {
         </div>
       )}
       {error && <p className="error" role="alert">{error}</p>}
+
+      {drag && dragXY && (() => {
+        // The card riding the cursor — the dnd-kit DragOverlay pattern: the
+        // row itself dims in place, a copy travels with the pointer.
+        const entry = drag.kind === 'entry' ? entries.find((e) => e.id === drag.id) : undefined;
+        const label = drag.kind === 'member'
+          ? manifest.parts.find((p) => p.id === drag.partId)?.label ?? drag.partId
+          : entry && entry.kind !== 'part'
+            ? entry.label
+            : manifest.parts.find((p) => p.id === drag.id)?.label ?? drag.id;
+        return (
+          <div className="drag-ghost" style={{ left: dragXY.x + 14, top: dragXY.y + 10 }}>
+            {DOTS}
+            <span>{label}</span>
+            {entry && entry.kind !== 'part' && (
+              <span className="tag">{entry.kind === 'group' ? 'assembly' : 'pick one'}</span>
+            )}
+          </div>
+        );
+      })()}
 
       {confirmDelete && (
         <ConfirmDialog
