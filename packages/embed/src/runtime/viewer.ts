@@ -253,6 +253,10 @@ export class Viewer {
         roughness: part.material?.roughness ?? 0.55,
         metalness: part.material?.metalness ?? 0,
         flatShading: part.material?.flatShading ?? true,
+        // Merchant meshes arrive with whatever winding their tool produced;
+        // single-sided rendering turns any stray face into a see-through
+        // hole. Solid plastic has no inside to save fill rate on.
+        side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(geo, material);
       mesh.castShadow = mesh.receiveShadow = true;
@@ -443,6 +447,10 @@ export class Viewer {
     const hit = raycaster.intersectObjects([...this.meshes.values()].filter((m) => m.visible))[0];
     if (!hit?.face) return null;
     const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    // Rendering is double-sided, so the nearest face may be wound inward.
+    // The caller asked "which way does the surface I clicked face" — that is
+    // toward the viewer, whatever the triangle's winding says.
+    if (normal.dot(raycaster.ray.direction) > 0) normal.negate();
     return { partId: hit.object.userData.part as string, normal: [normal.x, normal.y, normal.z] };
   }
 

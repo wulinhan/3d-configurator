@@ -576,6 +576,8 @@ await shoot('4-publish.png');
 
 check('material has the studio environment (dull-gloss plastic)',
   await page.evaluate(() => !!window.__studioViewer.scene.environment), '');
+check('parts render double-sided — stray winding cannot look transparent',
+  await page.evaluate(() => window.__studioViewer.meshOf('base')?.material.side === 2 /* THREE.DoubleSide */), '');
 
 check('no console errors across the whole session', errors.length === 0, errors.join(' | '));
 

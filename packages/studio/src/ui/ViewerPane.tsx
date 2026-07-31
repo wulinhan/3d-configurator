@@ -111,10 +111,9 @@ export function ViewerPane(props: {
     const grid = new THREE.GridHelper(2, 20, 0xc9c5bd, 0xe7e4de);
     const axes = new THREE.AxesHelper(1);
     // Studio speaks Z-up: vertical (internal y) wears Z's blue, depth
-    // (internal z) wears Y's green.
+    // (internal z) wears Y's green. Axes depth-test like everything else —
+    // drawing them through the model made the parts read as transparent.
     axes.setColors(new THREE.Color(0xd44a3a), new THREE.Color(0x3a6fd4), new THREE.Color(0x4a9a44));
-    (axes.material as THREE.Material).depthTest = false;
-    axes.renderOrder = 1;
     viewer.scene.add(grid, axes);
 
     viewer.load().then(() => {
