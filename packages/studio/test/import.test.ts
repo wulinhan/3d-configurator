@@ -399,3 +399,25 @@ test('3MF: a genuinely dangling reference names the file and asks for a report',
   </model>`;
   assert.throws(() => import3mf(make3mf(root)), /missing object "99" in 3D\/3dmodel\.model.*report/);
 });
+
+test('3MF: mirrored transforms keep the surface facing outward', () => {
+  // Signed volume flips sign when winding inverts; a mirrored placement must
+  // re-wind or the part renders see-through under back-face culling.
+  const signedVolume = (p: Float32Array, idx: Uint32Array) => {
+    let v = 0;
+    for (let t = 0; t < idx.length; t += 3) {
+      const [a, b, c] = [idx[t] * 3, idx[t + 1] * 3, idx[t + 2] * 3];
+      v += (p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1])
+        - p[a + 1] * (p[b] * p[c + 2] - p[b + 2] * p[c])
+        + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c])) / 6;
+    }
+    return v;
+  };
+  const straight = import3mf(make3mf(TWO_PART_3MF));
+  const mirrored = import3mf(make3mf(
+    TWO_PART_3MF.replace('<item objectid="1"/>', '<item objectid="1" transform="-1 0 0 0 1 0 0 0 1 0 0 0"/>')));
+  const vStraight = signedVolume(straight.parts[0].positions, straight.parts[0].indices);
+  const vMirrored = signedVolume(mirrored.parts[0].positions, mirrored.parts[0].indices);
+  assert.ok(vStraight > 0, `fixture winding should be outward (${vStraight})`);
+  assert.ok(vMirrored > 0, `mirrored part must be re-wound outward (${vMirrored})`);
+});

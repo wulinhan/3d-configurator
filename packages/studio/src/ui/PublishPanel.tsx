@@ -88,7 +88,10 @@ export function PublishPanel(props: { project: Project; onChange: (m: Manifest) 
             setBusy(true);
             setError(null);
             try {
-              const raw = writeGlb(model.parts);
+              // Deleted parts keep their mesh in the project; the published
+              // GLB only carries what the manifest still binds.
+              const used = new Set(manifest.parts.map((p) => p.mesh.split('#')[1]));
+              const raw = writeGlb(model.parts.filter((p) => used.has(p.name)));
               const packed = await compressGlb(raw);
               download('model.glb', new Blob([packed as BlobPart], { type: 'model/gltf-binary' }));
               setSizeNote(`model.glb: ${kb(packed.length)} compressed, from ${kb(raw.length)} raw.`);

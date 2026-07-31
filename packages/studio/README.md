@@ -57,9 +57,13 @@ a 25% band, the camera refits while keeping the merchant's orbit angle.
 
 ## Gizmos
 
-One combined gizmo (toolbar: Orbit / Transform): translate arrows outermost,
-rotation rings between, per-axis scale cubes on the shafts — the cubes are
-what makes non-uniform scaling draggable; the centre handle scales uniformly.
+One combined gizmo (toolbar: Orbit / Transform / Snap): translate arrows
+outermost, complete rotation rings with a 45° grab sphere each (the
+affordance that says "drag me"), per-axis scale cubes on the shafts — the
+cubes are what makes non-uniform scaling draggable; the centre handle scales
+uniformly. Commits stream during the drag (throttled), so the panel's mm and
+degrees update live under the merchant's hand. Clicking a handle never
+changes the selection; clicking empty space deselects and hides the gizmo.
 three.js only ships single-mode TransformControls, so three instances share
 the mesh with a capture-phase pointerdown arbitrating who owns the drag
 (scale → translate → rotate, since the handles nest). The rotate gizmo's
@@ -72,6 +76,19 @@ manifest placement: a translate on an anchored axis slides the offset and
 keeps the anchor, rotation lands as degrees, scale as multipliers. The
 committed manifest lays the mesh out exactly where it was dropped, so the
 hand-off from dragging to authored state is invisible.
+
+## Parts management
+
+Each part row has an eyeball (hide/show), a solo toggle, rename (✎ or
+double-click), and delete. Deleting repairs every reference: parts anchored
+to the deleted one keep their world position, its options are pruned, and
+dangling colour links re-point. Hide/solo are authoring aids only — never
+part of the manifest. The part editor also carries the default customer
+colour, custom-colour pricing (moved here from the old Options tab),
+match-position, and the Snap tool mates two clicked faces as a live anchor —
+the first-clicked part moves, the joint holds when the target later moves.
+An origin grid and axes mark 0,0,0; selecting a part eases the orbit centre
+onto it, deselecting eases back over the origin.
 
 ## View cube & saved views
 

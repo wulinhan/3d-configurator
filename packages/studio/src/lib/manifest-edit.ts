@@ -315,6 +315,137 @@ export function applyGizmoPose(
   return next;
 }
 
+// ── part management ─────────────────────────────────────────────────────────
+
+/** Rename a part's label everywhere it shows. Ids and mesh bindings stay. */
+export function renamePart(manifest: Manifest, partId: string, label: string): Manifest {
+  if (!label.trim()) throw new EditError('a part needs a name');
+  return edit(manifest, (draft) => {
+    partOf(draft, partId).label = label.trim();
+    // Options that exist purely for this part read better renamed with it.
+    for (const option of draft.options) {
+      if (isColour(option) && option.parts.length === 1 && option.parts[0] === partId) option.label = label.trim();
+      if (option.id === `${partId}-addon`) {
+        option.label = label.trim();
+        if (isChoice(option)) {
+          const yes = option.choices.find((c) => c.id === 'yes');
+          if (yes) yes.label = `Add ${label.trim()}`;
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Delete a part, and repair everything that referenced it: parts anchored to
+ * it keep their current world position (the anchor collapses to an origin
+ * offset computed from the pre-removal layout), its solo colour options and
+ * add-on option go, shared colour options just drop it from their list, and
+ * dangling colour links re-point somewhere safe.
+ */
+export function removePart(manifest: Manifest, partId: string, raw: Map<string, PartBounds>): Manifest {
+  partOf(manifest, partId);
+  if (manifest.parts.length === 1) throw new EditError('the last part cannot be deleted');
+  const layout = resolveLayout(manifest, raw);
+
+  return edit(manifest, (draft) => {
+    for (const part of draft.parts) {
+      if (part.id === partId) continue;
+      (['x', 'y', 'z'] as const).forEach((name, axis) => {
+        const placement = part.placement?.[name];
+        if (placement?.to && placement.to !== 'origin' && placement.to.split(':')[0] === partId) {
+          const t = layout.get(part.id);
+          part.placement = { ...part.placement, [name]: { to: 'origin', offset: t ? round3(t.translate[axis]) : 0 } };
+        }
+      });
+    }
+
+    draft.parts = draft.parts.filter((p) => p.id !== partId);
+
+    draft.options = draft.options.filter((option) => {
+      if (option.id === `${partId}-addon`) return false;
+      if (isColour(option)) {
+        option.parts = option.parts.filter((id) => id !== partId);
+        return option.parts.length > 0 || option.source === 'used';
+      }
+      return true;
+    });
+
+    // Repair colour links and @defaults that pointed at removed options.
+    const optionIds = new Set(draft.options.map((o) => o.id));
+    const firstColour = draft.options.find((o) => isColour(o) && o.source !== 'used');
+    for (const option of draft.options) {
+      if (!isColour(option)) continue;
+      if (option.linkedTo && !optionIds.has(option.linkedTo)) delete option.linkedTo;
+      if (option.default.startsWith('@') && !optionIds.has(option.default.slice(1))) {
+        option.default = firstColour && firstColour.id !== option.id
+          ? `@${firstColour.id}`
+          : draft.palettes?.[0]?.swatches[0]?.id ?? option.default;
+      }
+    }
+  });
+}
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/** The colour customers see first for a part — set from the Studio. */
+export function setDefaultSwatch(manifest: Manifest, optionId: string, swatchId: string): Manifest {
+  return edit(manifest, (draft) => {
+    const option = optionOf(draft, optionId);
+    if (!isColour(option)) throw new EditError(`option "${optionId}" is not a colour option`);
+    option.default = swatchId;
+  });
+}
+
+/** Give one part exactly another part's placement (position axes + rotation). */
+export function copyPlacement(manifest: Manifest, fromId: string, toId: string): Manifest {
+  if (fromId === toId) throw new EditError('a part cannot copy its own position');
+  const from = partOf(manifest, fromId);
+  return edit(manifest, (draft) => {
+    const to = partOf(draft, toId);
+    const source = structuredClone(from.placement ?? {});
+    // Never copy an anchor pointing at the destination itself.
+    (['x', 'y', 'z'] as const).forEach((name) => {
+      const a = source[name];
+      if (a?.to && a.to !== 'origin' && a.to.split(':')[0] === toId) delete source[name];
+    });
+    to.placement = {
+      ...to.placement,
+      x: source.x, y: source.y, z: source.z,
+      rotation: source.rotation,
+    };
+  });
+}
+
+/**
+ * Snap two parts face to face. The merchant clicked a face on the part that
+ * should MOVE, then a face on the part that stays; the moving part's clicked
+ * face is anchored flush against the target's. Expressed as an anchor, so
+ * the joint keeps holding when the target part later moves or resizes.
+ */
+export function snapFaces(
+  manifest: Manifest,
+  moving: { partId: string; normal: [number, number, number] },
+  target: { partId: string; normal: [number, number, number] },
+): Manifest {
+  if (moving.partId === target.partId) throw new EditError('pick faces on two different parts');
+  const axisOf = (n: [number, number, number]): Axis => {
+    const abs = n.map(Math.abs);
+    const axis = abs.indexOf(Math.max(...abs));
+    if (abs[axis] < 0.7) throw new EditError('that face is too angled to snap along one axis');
+    return axis as Axis;
+  };
+  const axis = axisOf(target.normal);
+  if (axisOf(moving.normal) !== axis) {
+    throw new EditError('the two faces must face along the same axis to snap');
+  }
+  const movingEdge: AnchorEdge = moving.normal[axis] > 0 ? 'max' : 'min';
+  const targetEdge: AnchorEdge = target.normal[axis] > 0 ? 'max' : 'min';
+  return withAnchor(manifest, moving.partId, axis, {
+    align: movingEdge, to: target.partId, edge: targetEdge, offset: 0,
+  });
+}
+
 // ── camera ──────────────────────────────────────────────────────────────────
 
 /**

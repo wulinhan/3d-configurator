@@ -47,6 +47,12 @@ const compose = (outer: Affine, inner: Affine): Affine => {
   return r;
 };
 
+/** Determinant of the linear part — negative means the transform mirrors. */
+const det3 = (m: Affine): number =>
+  m[0] * (m[4] * m[8] - m[5] * m[7]) -
+  m[1] * (m[3] * m[8] - m[5] * m[6]) +
+  m[2] * (m[3] * m[7] - m[4] * m[6]);
+
 const apply = (m: Affine, x: number, y: number, z: number): [number, number, number] => [
   x * m[0] + y * m[3] + z * m[6] + m[9],
   x * m[1] + y * m[4] + z * m[7] + m[10],
@@ -159,7 +165,19 @@ export function import3mf(bytes: Uint8Array): ImportedModel {
         const [x, y, z] = apply(m, src[i], src[i + 1], src[i + 2]);
         positions[i] = x; positions[i + 1] = y; positions[i + 2] = z;
       }
-      into.push({ positions, indices: def.mesh.indices });
+      // A mirroring transform (slicers mirror parts freely) turns triangles
+      // inside out; with back-face culling that renders as see-through
+      // patches. Re-wind so the surface stays outward.
+      let indices = def.mesh.indices;
+      if (det3(m) < 0) {
+        indices = new Uint32Array(indices.length);
+        for (let t = 0; t < indices.length; t += 3) {
+          indices[t] = def.mesh.indices[t];
+          indices[t + 1] = def.mesh.indices[t + 2];
+          indices[t + 2] = def.mesh.indices[t + 1];
+        }
+      }
+      into.push({ positions, indices });
     }
     for (const c of def.components) {
       // A pathless reference stays in the component's own file — ids are only

@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 import type { Manifest } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
@@ -127,6 +128,8 @@ export class Viewer {
   private highlighted: string | null = null;
   private rafId = 0;
   private viewTween = 0;
+  private hiddenParts = new Set<string>();
+  private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
   private rawBoxes = new Map<string, Box>();
   /** Each part's untransformed centre — the pivot every transform is about. */
@@ -158,9 +161,17 @@ export class Viewer {
     this.controls.target.set(...(cam.target ?? [0, 0, 0]));
     this.controls.autoRotate = cam.autoRotate ?? false;
     this.controls.update();
+    this.controls.addEventListener('start', () => cancelAnimationFrame(this.viewTween));
 
     this.scene.add(this.group);
     this.addLights();
+    // A soft studio environment gives painted plastic its dull gloss — pure
+    // analytic lights leave MeshStandardMaterial looking flat and, with
+    // stray-wound faces, oddly translucent.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.35;
+    pmrem.dispose();
     this.bindPicking(opts.canvas);
   }
 
@@ -237,7 +248,9 @@ export class Viewer {
 
       const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color('#CCCCCC'),
-        roughness: part.material?.roughness ?? 0.9,
+        // 0.55 + the room environment reads as painted plastic with a dull
+        // gloss; manifests can push it matte (0.9) or shinier per part.
+        roughness: part.material?.roughness ?? 0.55,
         metalness: part.material?.metalness ?? 0,
         flatShading: part.material?.flatShading ?? true,
       });
@@ -286,7 +299,7 @@ export class Viewer {
       mesh.position.set(centre[0] + t.translate[0], centre[1] + t.translate[1], centre[2] + t.translate[2]);
       const material = this.materials.get(part.id);
       if (material) {
-        material.roughness = part.material?.roughness ?? 0.9;
+        material.roughness = part.material?.roughness ?? 0.55;
         material.metalness = part.material?.metalness ?? 0;
       }
     }
@@ -329,37 +342,108 @@ export class Viewer {
   }
 
   /**
+   * Tween the camera to a new orbit: direction and/or target and/or distance.
+   *
+   * Two things made the naive version janky, both fixed here: OrbitControls'
+   * damping kept applying leftover orbit momentum underneath the animation
+   * (so the camera drifted while tweening), and a linear vector lerp sweeps
+   * an arc at uneven angular speed. Damping is paused for the duration, the
+   * direction change is a quaternion slerp (constant angular velocity), and
+   * the whole thing runs under an ease-in-out. A pointerdown cancels the
+   * tween — the user always outranks the animation.
+   */
+  private tweenCamera(
+    to: { direction?: THREE.Vector3; target?: THREE.Vector3; distance?: number },
+    duration = 480,
+  ): void {
+    cancelAnimationFrame(this.viewTween);
+    const fromTarget = this.controls.target.clone();
+    const toTarget = to.target ?? fromTarget.clone();
+    const fromOffset = this.camera.position.clone().sub(fromTarget);
+    const fromDistance = Math.max(fromOffset.length(), 1e-6);
+    const fromDir = fromOffset.clone().normalize();
+    const toDir = (to.direction ?? fromDir).clone().normalize();
+    const toDistance = THREE.MathUtils.clamp(
+      to.distance ?? fromDistance, this.controls.minDistance, this.controls.maxDistance);
+
+    const arc = new THREE.Quaternion().setFromUnitVectors(fromDir, toDir);
+    const identity = new THREE.Quaternion();
+    const wasDamped = this.controls.enableDamping;
+    this.controls.enableDamping = false; // stop leftover momentum drifting under the tween
+
+    const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+    const start = performance.now();
+    const q = new THREE.Quaternion();
+    const dir = new THREE.Vector3();
+    const step = () => {
+      const t = Math.min((performance.now() - start) / duration, 1);
+      const e = easeInOut(t);
+      q.copy(identity).slerp(arc, e);
+      dir.copy(fromDir).applyQuaternion(q);
+      this.controls.target.lerpVectors(fromTarget, toTarget, e);
+      this.camera.position.copy(this.controls.target)
+        .addScaledVector(dir, THREE.MathUtils.lerp(fromDistance, toDistance, e));
+      this.controls.update();
+      if (t < 1) {
+        this.viewTween = requestAnimationFrame(step);
+      } else {
+        this.controls.enableDamping = wasDamped;
+      }
+    };
+    step();
+  }
+
+  /**
    * Swing the camera to look at the target from a direction, keeping the
-   * current distance. What a view-cube click calls. Animated by default —
-   * an instant snap loses the viewer's sense of which way the model turned.
+   * current distance. What a view-cube click calls.
    */
   lookFrom(direction: [number, number, number], opts: { animate?: boolean } = {}): void {
     const dir = new THREE.Vector3(...direction);
     if (!dir.lengthSq()) return;
     dir.normalize();
-    const target = this.controls.target.clone();
-    const distance = Math.max(this.camera.position.distanceTo(target), this.controls.minDistance);
-    cancelAnimationFrame(this.viewTween);
-
-    const from = this.camera.position.clone().sub(target).normalize();
-    // Antipodal directions have no unique arc — jump rather than divide by ~0.
-    if (opts.animate === false || from.dot(dir) < -0.999) {
+    if (opts.animate === false) {
+      const target = this.controls.target;
+      const distance = this.camera.position.distanceTo(target);
       this.camera.position.copy(target).addScaledVector(dir, distance);
       this.controls.update();
       return;
     }
+    // Antipodal directions have no unique arc; bow through a side point.
+    const fromDir = this.camera.position.clone().sub(this.controls.target).normalize();
+    if (fromDir.dot(dir) < -0.999) {
+      const side = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+      this.tweenCamera({ direction: side.cross(dir).normalize() }, 200);
+      setTimeout(() => this.tweenCamera({ direction: dir }, 280), 200);
+      return;
+    }
+    this.tweenCamera({ direction: dir });
+  }
 
-    const DURATION = 320;
-    const start = performance.now();
-    const step = () => {
-      const t = Math.min((performance.now() - start) / DURATION, 1);
-      const eased = t * (2 - t);
-      const v = from.clone().lerp(dir, eased).normalize();
-      this.camera.position.copy(target).addScaledVector(v, distance);
-      this.controls.update();
-      if (t < 1) this.viewTween = requestAnimationFrame(step);
-    };
-    step();
+  /**
+   * Ease the orbit centre (and viewing distance) somewhere new — selecting a
+   * part orbits around that part; deselecting returns to the model.
+   */
+  focusOn(target: [number, number, number], opts: { distance?: number } = {}): void {
+    this.tweenCamera({ target: new THREE.Vector3(...target), distance: opts.distance });
+  }
+
+  /**
+   * What part and which face is under a client-space point — the Studio's
+   * face-snapping tool asks. Normal comes back in world space, unit length.
+   */
+  pickFaceAt(clientX: number, clientY: number): { partId: string; normal: [number, number, number] } | null {
+    const canvas = this.renderer.domElement;
+    const r = canvas.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((clientX - r.left) / r.width) * 2 - 1,
+      -((clientY - r.top) / r.height) * 2 + 1,
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, this.camera);
+    const hit = raycaster.intersectObjects([...this.meshes.values()].filter((m) => m.visible))[0];
+    if (!hit?.face) return null;
+    const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    return { partId: hit.object.userData.part as string, normal: [normal.x, normal.y, normal.z] };
   }
 
   /** The mesh rendering a part — the object a Studio gizmo attaches to. */
@@ -381,15 +465,35 @@ export class Viewer {
 
   /** Repaint and re-hide parts for a new set of selections. */
   apply(selections: Selections): void {
+    this.lastSelections = selections;
     const colours = partColours(this.manifest, selections);
     const visible = visibleParts(this.manifest, selections);
     for (const [partId, material] of this.materials) {
       const colour = colours.get(partId);
       if (colour) material.color.set(colour.hex);
       const mesh = this.meshes.get(partId);
-      if (mesh) mesh.visible = visible.has(partId);
+      if (mesh) mesh.visible = visible.has(partId) && !this.hiddenParts.has(partId);
     }
     this.highlight(this.highlighted);
+  }
+
+  /**
+   * Authoring-side visibility overlay (eyeballs, solo) — intersects with,
+   * never overrides, what the manifest says is visible. Not persisted.
+   */
+  setHiddenParts(hidden: Set<string>): void {
+    this.hiddenParts = hidden;
+    this.apply(this.lastSelections);
+  }
+
+  /** Studio panning: right-drag / two-finger drag. Off in the embed. */
+  setPanEnabled(enabled: boolean): void {
+    this.controls.enablePan = enabled;
+  }
+
+  /** World-space box of one laid-out part, or null before load. */
+  partBox(partId: string): Box | null {
+    return this.layout.get(partId)?.box ?? null;
   }
 
   /** Glow the part the customer is editing, so the panel and model agree. */
@@ -419,8 +523,9 @@ export class Viewer {
     canvas.addEventListener('pointerup', (e) => {
       // An orbit drag that happens to end on the model isn't a click.
       if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
-      const part = pick(e);
-      if (part) this.onSelectPart?.(part);
+      // null on empty space: hosts that care (the Studio) deselect; the embed
+      // panel ignores it.
+      this.onSelectPart?.(pick(e));
     });
     canvas.addEventListener('pointermove', (e) => {
       canvas.style.cursor = pick(e) ? 'pointer' : 'grab';

@@ -76,6 +76,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, dev
 const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', (e) => errors.push(String(e)));
+page.on('dialog', (d) => d.accept());
 
 const shoot = (name) => (shotDir ? page.screenshot({ path: join(shotDir, name) }) : Promise.resolve());
 const manifest = () => page.evaluate(() => (window).__studio?.manifest);
@@ -156,7 +157,7 @@ size = await sizeOf('base');
 check('and the value snaps back', near(size.w, 80), size.w);
 
 // ── 6. anchor the cap against the base ──────────────────────────────────────
-await page.click('.part-list button:has-text("Cap")');
+await page.click('.part-name:has-text("Cap")');
 await page.waitForTimeout(150);
 await page.selectOption('[data-testid="anchor-y"] select >> nth=0', 'base');
 await page.selectOption('[data-testid="anchor-y"] select >> nth=1', 'min');
@@ -171,8 +172,10 @@ check('cap anchored: my min at base:max + 2 mm',
 // The base was doubled earlier; the camera must have backed off to keep the
 // whole model in frame. Inside-the-model looks like coverage near 1.0.
 const afterResize = await measureCoverage();
+// The camera is focused on the selected cap, so the model fills a good share
+// of the frame — but "inside the model" is ~1.0 coverage with no background.
 check('camera reframed after the resize (model in view, not engulfing it)',
-  afterResize > 0.03 && afterResize < 0.55, afterResize.toFixed(4));
+  afterResize > 0.03 && afterResize < 0.92, afterResize.toFixed(4));
 await shoot('2-anchored.png');
 
 // ── 6b. what the viewer draws is where the layout engine says parts are ────
@@ -262,8 +265,13 @@ await shoot('2-anchored.png');
     if (grabbed) {
       for (let step = 1; step <= 8; step++) {
         await page.mouse.move(px + dir[0] * 8 * step, py + dir[1] * 8 * step);
-        await page.waitForTimeout(20);
+        await page.waitForTimeout(30);
       }
+      // Numbers must go live BEFORE release — throttled commits during drag.
+      const midDrag = await manifest();
+      check('panel values update live mid-drag',
+        (midDrag.parts[1].placement?.x?.offset ?? 0) !== (before.parts[1].placement?.x?.offset ?? 0),
+        midDrag.parts[1].placement?.x);
       await page.mouse.up();
       break;
     }
@@ -281,7 +289,48 @@ await shoot('2-anchored.png');
     m.parts[1].placement?.y?.to === 'base:max', m.parts[1].placement?.y);
   const verdictAfterDrag = validateManifest(m);
   check('manifest still valid after the drag', verdictAfterDrag.ok, verdictAfterDrag.errors);
+  const rings = await page.evaluate(() => {
+    let fullRings = 0, grips = 0;
+    const walk = (o) => {
+      if (o.visible === false) return; // pickers are hidden at the group level
+      if (o.isMesh && ['X', 'Y', 'Z'].includes(o.name)
+        && o.geometry?.type === 'TorusGeometry' && o.geometry.parameters.arc > Math.PI * 1.9) fullRings++;
+      if (o.isMesh && o.geometry?.type === 'SphereGeometry') grips++;
+      for (const c of o.children) walk(c);
+    };
+    walk(window.__studioGizmo.rotate.getHelper());
+    return { fullRings, grips };
+  });
+  check('rotation rings are complete circles with 45° grab spheres',
+    rings.fullRings === 3 && rings.grips === 3, rings);
   await shoot('2b-gizmo.png');
+
+  // Clicking empty space deselects and the gizmo goes away. "Empty" is
+  // whatever the face picker says is empty — the model's screen footprint
+  // moves as the test edits it, so scan for a background pixel.
+  const empty = await page.evaluate(() => {
+    const r = document.querySelector('.stage canvas').getBoundingClientRect();
+    // Grid-scan for background, keeping clear of the toolbar (top-left) and
+    // the view cube (top-right).
+    for (let fy = 0.15; fy < 0.95; fy += 0.1) {
+      for (let fx = 0.05; fx < 0.95; fx += 0.08) {
+        if (fy < 0.25 && (fx < 0.35 || fx > 0.75)) continue;
+        const x = r.left + r.width * fx, y = r.top + r.height * fy;
+        if (!window.__studioViewer.pickFaceAt(x, y)) return [x, y];
+      }
+    }
+    return null;
+  });
+  check('found an empty pixel to click', !!empty, '');
+  await page.mouse.click(empty[0], empty[1]);
+  await page.waitForTimeout(600);
+  const detached = await page.evaluate(() => ({
+    object: !!window.__studioGizmo.translate.object,
+    selected: (window).__studio?.manifest && document.querySelector('.part-row.is-active') !== null,
+  }));
+  check('clicking empty space deselects and hides the gizmo', detached.object === false, detached);
+  await page.click('.part-name:has-text("Cap")');
+  await page.waitForTimeout(700);
   await page.click('[data-testid="gizmo-off"]');
 }
 
@@ -326,6 +375,85 @@ await shoot('2-anchored.png');
     { saved: m.camera.position, live: live.position });
 }
 
+// ── 6f. eyeballs, solo, rename, default colour ─────────────────────────────
+{
+  await page.click('.tabs button:has-text("Parts")');
+  const visible = (id) => page.evaluate((pid) => window.__studioViewer.meshOf(pid)?.visible, id);
+
+  await page.click('[data-testid="eye-cap"]');
+  await page.waitForTimeout(150);
+  check('eyeball hides the part', (await visible('cap')) === false, '');
+  await page.click('[data-testid="eye-cap"]');
+  await page.waitForTimeout(150);
+  check('…and shows it again', (await visible('cap')) === true, '');
+
+  await page.click('[data-testid="solo-base"]');
+  await page.waitForTimeout(150);
+  check('solo shows only that part',
+    (await visible('base')) === true && (await visible('cap')) === false, '');
+  await page.click('[data-testid="show-all"]');
+  await page.waitForTimeout(150);
+  check('Show all restores everything',
+    (await visible('base')) === true && (await visible('cap')) === true, '');
+  await page.click('[data-testid="hide-all"]');
+  await page.waitForTimeout(150);
+  check('Hide all hides everything',
+    (await visible('base')) === false && (await visible('cap')) === false, '');
+  await page.click('[data-testid="show-all"]');
+  await page.waitForTimeout(150);
+
+  await page.click('[data-testid="rename-cap"]');
+  await page.fill('[data-testid="rename-input-cap"]', 'Lid');
+  await page.press('[data-testid="rename-input-cap"]', 'Enter');
+  await page.waitForTimeout(150);
+  m = await manifest();
+  check('rename changes the label, not the id',
+    m.parts[1].label === 'Lid' && m.parts[1].id === 'cap', m.parts[1]);
+  await page.click('[data-testid="rename-cap"]');
+  await page.fill('[data-testid="rename-input-cap"]', 'Cap');
+  await page.press('[data-testid="rename-input-cap"]', 'Enter');
+  await page.waitForTimeout(150);
+
+  await page.click('.part-name:has-text("Base")');
+  await page.waitForTimeout(150);
+  await page.selectOption('[data-testid="default-colour"]', 'red');
+  await page.waitForTimeout(250);
+  m = await manifest();
+  const baseHex = await page.evaluate(() => window.__studioViewer.meshOf('base')?.material.color.getHexString());
+  check('default colour set in the Studio paints the preview',
+    m.options.find((o) => o.id === 'base-colour')?.default === 'red' && baseHex === 'c82020',
+    { manifest: m.options.find((o) => o.id === 'base-colour')?.default, baseHex });
+}
+
+// ── 6g. face snapping ──────────────────────────────────────────────────────
+{
+  await page.evaluate(() => window.__studioViewCube.go('Front'));
+  await page.waitForTimeout(700);
+  await page.click('[data-testid="snap-tool"]');
+  check('snap tool prompts for the moving face',
+    /MOVE/.test(await page.textContent('[data-testid="snap-hint"]') ?? ''), '');
+
+  const screenPos = (id) => page.evaluate((pid) => {
+    const v = window.__studioViewer;
+    const mesh = v.meshOf(pid);
+    const q = mesh.position.clone().project(v.camera);
+    const r = document.querySelector('.stage canvas').getBoundingClientRect();
+    return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height];
+  }, id);
+  const capAt = await screenPos('cap');
+  await page.mouse.click(capAt[0], capAt[1]);
+  await page.waitForTimeout(200);
+  const baseAt = await screenPos('base');
+  await page.mouse.click(baseAt[0], baseAt[1]);
+  await page.waitForTimeout(300);
+  m = await manifest();
+  check('snapping mates the two clicked faces as a live anchor',
+    JSON.stringify(m.parts[1].placement?.z) === JSON.stringify({ align: 'max', to: 'base:max', offset: 0 }),
+    m.parts[1].placement?.z);
+  const snapVerdict = validateManifest(m);
+  check('manifest still valid after the snap', snapVerdict.ok, snapVerdict.errors);
+}
+
 // ── 7. palette: add a colour, price a swatch ────────────────────────────────
 await page.click('.tabs button:has-text("Palette")');
 await page.fill('[data-testid="add-swatch"] input[aria-label="New colour name"]', 'Brand Teal');
@@ -341,8 +469,10 @@ m = await manifest();
 check('swatch surcharge saved', m.palettes[0].swatches.find((s) => s.id === 'brand-teal')?.priceDelta === 6,
   m.palettes[0].swatches.find((s) => s.id === 'brand-teal'));
 
-// ── 8. custom colours with surcharge ────────────────────────────────────────
-await page.click('.tabs button:has-text("Options")');
+// ── 8. custom colours with surcharge (now a part property, Parts tab) ──────
+await page.click('.tabs button:has-text("Parts")');
+await page.click('.part-name:has-text("Base")');
+await page.waitForTimeout(150);
 await page.check('[data-testid="custom-toggle-base-colour"]');
 await page.fill('[data-testid="custom-price-base-colour"]', '35');
 await page.press('[data-testid="custom-price-base-colour"]', 'Enter');
@@ -354,7 +484,7 @@ check('custom colour rule saved with surcharge',
 
 // ── 9. cap becomes a priced add-on ──────────────────────────────────────────
 await page.click('.tabs button:has-text("Parts")');
-await page.click('.part-list button:has-text("Cap")');
+await page.click('.part-name:has-text("Cap")');
 await page.check('[data-testid="addon-toggle"]');
 await page.waitForTimeout(150);
 await page.fill('[data-testid="addon-price"]', '15');
@@ -402,6 +532,22 @@ check('downloaded GLB is meshopt-compressed', glb.includes('EXT_meshopt_compress
 check('compression size note appears', /compressed, from/.test(await page.textContent('[data-testid="size-note"]') ?? ''),
   await page.textContent('[data-testid="size-note"]'));
 await shoot('4-publish.png');
+
+// ── 12. delete a part ──────────────────────────────────────────────────────
+{
+  await page.click('.tabs button:has-text("Parts")');
+  await page.click('[data-testid="delete-cap"]');
+  await page.waitForTimeout(300);
+  m = await manifest();
+  check('deleting a part removes it and its options',
+    m.parts.length === 1 && !m.options.some((o) => o.id === 'cap-colour' || o.id === 'cap-addon'),
+    { parts: m.parts.length, options: m.options.map((o) => o.id) });
+  const afterDelete = validateManifest(m);
+  check('manifest still valid after the delete', afterDelete.ok, afterDelete.errors);
+}
+
+check('material has the studio environment (dull-gloss plastic)',
+  await page.evaluate(() => !!window.__studioViewer.scene.environment), '');
 
 check('no console errors across the whole session', errors.length === 0, errors.join(' | '));
 

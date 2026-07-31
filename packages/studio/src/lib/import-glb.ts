@@ -147,6 +147,19 @@ export function importGlb(bytes: Uint8Array): ImportedModel {
         const count = positions.length / 3;
         for (const i of indices) if (i >= count) throw new ImportError('triangle index out of range');
 
+        // Negative-determinant node transforms (mirrored exports) flip the
+        // winding; re-wind so back-face culling doesn't hollow the part out.
+        const det = world[0] * (world[5] * world[10] - world[6] * world[9])
+          - world[4] * (world[1] * world[10] - world[2] * world[9])
+          + world[8] * (world[1] * world[6] - world[2] * world[5]);
+        if (det < 0) {
+          for (let t = 0; t < indices.length; t += 3) {
+            const swap = indices[t + 1];
+            indices[t + 1] = indices[t + 2];
+            indices[t + 2] = swap;
+          }
+        }
+
         const base = node.name || mesh?.name || `part-${parts.length + 1}`;
         const n = (seenNames.get(base) ?? 0) + 1;
         seenNames.set(base, n);

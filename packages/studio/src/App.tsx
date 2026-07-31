@@ -12,7 +12,6 @@ import { ImportError } from './lib/types.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
 import { PalettePanel } from './ui/PalettePanel.tsx';
-import { OptionsPanel } from './ui/OptionsPanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
 
 export interface Project {
@@ -24,7 +23,7 @@ export interface Project {
   modelUrl: string;
 }
 
-const TABS = ['Parts', 'Palette', 'Options', 'Publish'] as const;
+const TABS = ['Parts', 'Palette', 'Publish'] as const;
 type Tab = typeof TABS[number];
 
 export function App() {
@@ -32,6 +31,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('Parts');
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
+  const [hiddenParts, setHiddenParts] = useState<Set<string>>(new Set());
+  const [solo, setSolo] = useState<string | null>(null);
   const [axes, setAxes] = useState<string>(AXIS_PRESETS[1].axes); // 3D-print files dominate
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -51,6 +52,8 @@ export function App() {
         return { model, manifest, raw, modelUrl };
       });
       setSelectedPart(manifest.parts[0]?.id ?? null);
+      setHiddenParts(new Set());
+      setSolo(null);
       setTab('Parts');
     } catch (err) {
       setError(err instanceof ImportError ? err.message : `import failed: ${err}`);
@@ -61,10 +64,25 @@ export function App() {
     setProject((old) => (old ? { ...old, manifest } : old));
   }, []);
 
-  const selections = useMemo(
-    () => (project ? defaultSelections(project.manifest) : {}),
-    [project?.manifest],
-  );
+  const selections = useMemo(() => {
+    if (!project) return {};
+    const s = defaultSelections(project.manifest);
+    // Authoring preview: optional add-on parts stay visible. A customer's
+    // default is "not selected", and honouring that in the Studio made a part
+    // vanish the moment it was marked optional — technically faithful,
+    // practically maddening.
+    for (const part of project.manifest.parts) {
+      if (part.visibleWhen?.equals?.length) s[part.visibleWhen.option] = part.visibleWhen.equals[0];
+    }
+    return s;
+  }, [project?.manifest]);
+
+  // Solo outranks the eyeballs: only the soloed part shows.
+  const effectiveHidden = useMemo(() => {
+    if (!project) return new Set<string>();
+    if (solo) return new Set(project.manifest.parts.filter((p) => p.id !== solo).map((p) => p.id));
+    return hiddenParts;
+  }, [project?.manifest, hiddenParts, solo]);
 
   // The browser test reads and drives the app through this handle; it costs
   // nothing in production and makes "did the feature actually work" checkable.
@@ -125,7 +143,12 @@ export function App() {
       </header>
 
       <div className="workspace">
-        <ViewerPane project={project} selections={selections} selectedPart={selectedPart} onSelectPart={(id) => { setSelectedPart(id); setTab('Parts'); }} onChange={setManifest} />
+        <ViewerPane
+          project={project} selections={selections} selectedPart={selectedPart}
+          hiddenParts={effectiveHidden}
+          onSelectPart={(id) => { setSelectedPart(id); if (id) setTab('Parts'); }}
+          onChange={setManifest}
+        />
 
         <aside className="panel">
           <nav className="tabs" role="tablist">
@@ -136,10 +159,21 @@ export function App() {
             ))}
           </nav>
           {tab === 'Parts' && (
-            <PartsPanel project={project} selectedPart={selectedPart} onSelectPart={setSelectedPart} onChange={setManifest} />
+            <PartsPanel
+              project={project} selectedPart={selectedPart}
+              hiddenParts={hiddenParts} solo={solo}
+              onSelectPart={setSelectedPart}
+              onToggleHidden={(id) => setHiddenParts((old) => {
+                const next = new Set(old);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                return next;
+              })}
+              onSolo={setSolo}
+              onHideAll={(hide) => { setSolo(null); setHiddenParts(hide ? new Set(project.manifest.parts.map((p) => p.id)) : new Set()); }}
+              onChange={setManifest}
+            />
           )}
           {tab === 'Palette' && <PalettePanel project={project} onChange={setManifest} />}
-          {tab === 'Options' && <OptionsPanel project={project} onChange={setManifest} />}
           {tab === 'Publish' && <PublishPanel project={project} onChange={setManifest} />}
         </aside>
       </div>
