@@ -110,6 +110,9 @@ export function ViewerPane(props: {
     // against. Studio-only — never part of the published scene.
     const grid = new THREE.GridHelper(2, 20, 0xc9c5bd, 0xe7e4de);
     const axes = new THREE.AxesHelper(1);
+    // Studio speaks Z-up: vertical (internal y) wears Z's blue, depth
+    // (internal z) wears Y's green.
+    axes.setColors(new THREE.Color(0xd44a3a), new THREE.Color(0x3a6fd4), new THREE.Color(0x4a9a44));
     (axes.material as THREE.Material).depthTest = false;
     axes.renderOrder = 1;
     viewer.scene.add(grid, axes);

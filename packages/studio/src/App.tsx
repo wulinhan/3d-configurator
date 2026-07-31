@@ -143,13 +143,6 @@ export function App() {
       </header>
 
       <div className="workspace">
-        <ViewerPane
-          project={project} selections={selections} selectedPart={selectedPart}
-          hiddenParts={effectiveHidden}
-          onSelectPart={(id) => { setSelectedPart(id); if (id) setTab('Parts'); }}
-          onChange={setManifest}
-        />
-
         <aside className="panel">
           <nav className="tabs" role="tablist">
             {TABS.map((t) => (
@@ -176,6 +169,13 @@ export function App() {
           {tab === 'Palette' && <PalettePanel project={project} onChange={setManifest} />}
           {tab === 'Publish' && <PublishPanel project={project} onChange={setManifest} />}
         </aside>
+
+        <ViewerPane
+          project={project} selections={selections} selectedPart={selectedPart}
+          hiddenParts={effectiveHidden}
+          onSelectPart={(id) => { setSelectedPart(id); if (id) setTab('Parts'); }}
+          onChange={setManifest}
+        />
       </div>
     </div>
   );

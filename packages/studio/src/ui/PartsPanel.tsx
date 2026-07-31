@@ -19,6 +19,15 @@ import { NumberField } from './fields.tsx';
 const AXIS_LABELS = ['W', 'H', 'D'] as const; // x, y, z in canonical space
 const EDGES: AnchorEdge[] = ['min', 'center', 'max'];
 
+// The Studio speaks Z-up: X and Y are the flat plane, Z is height. The
+// internal space (manifest, renderer) stays Y-up — this table is purely how
+// axes are named and ordered on screen.
+const UI_AXES: Array<{ label: string; axis: Axis }> = [
+  { label: 'X', axis: 0 }, // internal x — width
+  { label: 'Y', axis: 2 }, // internal z — depth
+  { label: 'Z', axis: 1 }, // internal y — height
+];
+
 const EYE = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>;
 const EYE_OFF = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
 
@@ -159,8 +168,8 @@ function PartEditor(props: {
 
       <section>
         <h4>Position</h4>
-        {AXIS_NAMES.map((name, axis) => (
-          <AxisAnchorRow key={name} axis={axis as Axis} {...props} />
+        {UI_AXES.map(({ label, axis }) => (
+          <AxisAnchorRow key={label} axis={axis} uiLabel={label} {...props} />
         ))}
         <div className="match-row">
           <select
@@ -182,7 +191,7 @@ function PartEditor(props: {
       <section>
         <h4>Rotation</h4>
         <div className="field-row">
-          {['X', 'Y', 'Z'].map((label, axis) => (
+          {UI_AXES.map(({ label, axis }) => (
             <NumberField
               key={label} label={label} value={rotation[axis]} suffix="°" step={15}
               testId={`rot-${label.toLowerCase()}`}
@@ -268,6 +277,7 @@ function AxisAnchorRow(props: {
   project: Project;
   partId: string;
   axis: Axis;
+  uiLabel: string;
   onChange: (m: Manifest) => void;
 }) {
   const { manifest } = props.project;
@@ -282,7 +292,7 @@ function AxisAnchorRow(props: {
 
   return (
     <div className="anchor-row" data-testid={`anchor-${AXIS_NAMES[props.axis]}`}>
-      <span className="axis-name">{AXIS_LABELS_BY_AXIS[props.axis]}</span>
+      <span className="axis-name">{props.uiLabel}</span>
       <select
         aria-label="anchor mode" value={anchored ? ref : 'origin'}
         onChange={(e) => {
@@ -322,4 +332,3 @@ function AxisAnchorRow(props: {
   );
 }
 
-const AXIS_LABELS_BY_AXIS = ['X', 'Y', 'Z'];

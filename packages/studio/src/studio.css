@@ -60,7 +60,7 @@ input, select { font: inherit; }
 .ghost:hover { border-color: #c5c2bb; background: var(--surface); }
 .ghost.danger { color: var(--danger); border: none; padding: 4px 8px; }
 
-.workspace { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 380px; min-height: 0; }
+.workspace { flex: 1; display: grid; grid-template-columns: 380px minmax(0, 1fr); min-height: 0; }
 .stage { position: relative; background: var(--surface); min-height: 0; }
 .stage canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 .gizmo-bar {
@@ -84,7 +84,7 @@ input, select { font: inherit; }
 }
 
 /* ── panel ── */
-.panel { border-left: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; }
+.panel { border-right: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; }
 .tabs { display: flex; gap: 2px; padding: 10px 12px 0; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: #fff; z-index: 2; }
 .tabs button {
   border: none; background: none; padding: 8px 12px; font-size: 13px;

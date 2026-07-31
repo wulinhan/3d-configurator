@@ -55,27 +55,87 @@ export class Gizmo {
     });
     for (const o of doomed) o.removeFromParent();
 
-    // three draws the rings as half-tori facing the camera, which reads as
-    // "decoration" rather than "handle". Swap the visuals for complete rings
-    // (the invisible pickers were full tori all along) and put a grab sphere
-    // at 45° on each — the affordance that says "drag me". The sphere shares
-    // the ring's material, so hover-highlighting covers both.
-    rotate.getHelper().traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh || !['X', 'Y', 'Z'].includes(mesh.name)) return;
+    // Rotation visuals: axis-aligned quarter arcs joining the positive axes
+    // (the classic corner gizmo), each with a grab sphere at its 45°
+    // midpoint. Two fights with three.js here:
+    //  - its rings are half-tori, so swap the geometry for a quarter arc;
+    //  - its gizmo re-orients every ring to face the camera each frame, so
+    //    the arcs are re-pinned to their world planes after each update.
+    // The pickers stay full (invisible) tori, so rotation is grabbable all
+    // the way round even where no arc is drawn.
+    const ARC_POSES: Record<string, THREE.Quaternion> = {
+      // ring about Z: arc spans +X→+Y in the XY plane (torus's home pose)
+      Z: new THREE.Quaternion(),
+      // ring about X: arc spans +Y→+Z in the YZ plane
+      X: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+        new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0))),
+      // ring about Y: arc spans +Z→+X in the XZ plane
+      Y: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+        new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0))),
+    };
+    // Address the VISUAL group directly — visibility guards don't work here,
+    // because three keeps non-current-mode groups hidden at construction and
+    // the picker groups hidden always.
+    const arcHandles: THREE.Mesh[] = [];
+    const rotateGizmo = rotate.getHelper().children.find(
+      (c) => 'picker' in c && 'gizmo' in c) as (THREE.Object3D & {
+        gizmo: Record<string, THREE.Object3D>;
+      }) | undefined;
+    for (const node of rotateGizmo?.gizmo['rotate']?.children ?? []) {
+      const mesh = node as THREE.Mesh;
+      if (!mesh.isMesh || !['X', 'Y', 'Z'].includes(mesh.name)) continue;
       const geometry = mesh.geometry as THREE.TorusGeometry;
-      if (geometry.type !== 'TorusGeometry') return;
-      const { radius, arc } = geometry.parameters;
-      const material = mesh.material as THREE.Material & { visible: boolean };
-      if (material.visible === false) return; // picker — already a full ring
-      if (arc < Math.PI * 1.9) {
-        mesh.geometry = new THREE.TorusGeometry(radius, 0.012, 6, 96);
-        geometry.dispose();
-      }
-      const grip = new THREE.Mesh(new THREE.SphereGeometry(0.05, 16, 12), material);
+      if (geometry.type !== 'TorusGeometry') continue;
+      const { radius } = geometry.parameters;
+      mesh.geometry = new THREE.TorusGeometry(radius, 0.014, 6, 32, Math.PI / 2);
+      geometry.dispose();
+      const grip = new THREE.Mesh(new THREE.SphereGeometry(0.05, 16, 12), mesh.material as THREE.Material);
       grip.position.set(radius * Math.SQRT1_2, radius * Math.SQRT1_2, 0);
       mesh.add(grip);
-    });
+      arcHandles.push(mesh);
+    }
+
+    // Re-pin after three's own realignment runs each frame.
+    if (rotateGizmo) {
+      const original = rotateGizmo.updateMatrixWorld.bind(rotateGizmo);
+      rotateGizmo.updateMatrixWorld = (force?: boolean) => {
+        original(force);
+        let repinned = false;
+        for (const mesh of arcHandles) {
+          const pose = ARC_POSES[mesh.name];
+          if (pose && !mesh.quaternion.equals(pose)) {
+            mesh.quaternion.copy(pose);
+            repinned = true;
+          }
+        }
+        if (repinned) THREE.Object3D.prototype.updateMatrixWorld.call(rotateGizmo, true);
+      };
+    }
+
+    // The Studio speaks Z-up (X/Y flat, Z is height) while the scene is
+    // three.js Y-up — so the VERTICAL handles must wear Z's blue and the
+    // depth handles Y's green, or the colours argue with the panel labels.
+    // Materials stash their base colour in _color and re-copy it every
+    // frame, so both must change.
+    const swapAxisColours = (root: THREE.Object3D) => {
+      const seen = new Set<THREE.Material>();
+      const mats = { Y: [] as THREE.Material[], Z: [] as THREE.Material[] };
+      root.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        const key = mesh.name as 'Y' | 'Z';
+        if (!mesh.isMesh && !(o as THREE.Line).isLine) return;
+        if (key !== 'Y' && key !== 'Z') return;
+        const material = mesh.material as THREE.Material;
+        if (material && !seen.has(material)) { seen.add(material); mats[key].push(material); }
+      });
+      type Tinted = THREE.Material & { color: THREE.Color; _color?: THREE.Color };
+      const yColour = (mats.Y[0] as Tinted)?.color.clone();
+      const zColour = (mats.Z[0] as Tinted)?.color.clone();
+      if (!yColour || !zColour) return;
+      for (const m of mats.Y as Tinted[]) { m.color.copy(zColour); m._color?.copy(zColour); }
+      for (const m of mats.Z as Tinted[]) { m.color.copy(yColour); m._color?.copy(yColour); }
+    };
+    for (const c of this.all) swapAxisColours(c.getHelper());
 
     this.helpers = this.all.map((c) => c.getHelper());
     for (const helper of this.helpers) {

@@ -290,19 +290,30 @@ await shoot('2-anchored.png');
   const verdictAfterDrag = validateManifest(m);
   check('manifest still valid after the drag', verdictAfterDrag.ok, verdictAfterDrag.errors);
   const rings = await page.evaluate(() => {
-    let fullRings = 0, grips = 0;
+    let quarterArcs = 0, grips = 0;
+    const colours = {};
     const walk = (o) => {
       if (o.visible === false) return; // pickers are hidden at the group level
-      if (o.isMesh && ['X', 'Y', 'Z'].includes(o.name)
-        && o.geometry?.type === 'TorusGeometry' && o.geometry.parameters.arc > Math.PI * 1.9) fullRings++;
+      if (o.isMesh && ['X', 'Y', 'Z'].includes(o.name) && o.geometry?.type === 'TorusGeometry') {
+        const arc = o.geometry.parameters.arc;
+        if (arc > 1.4 && arc < 1.7) quarterArcs++;
+        colours[o.name] = '#' + o.material.color.getHexString();
+        // Pinned to its world plane, not spun toward the camera: the pin
+        // rewrites the quaternion every frame, so it must match its pose.
+      }
       if (o.isMesh && o.geometry?.type === 'SphereGeometry') grips++;
       for (const c of o.children) walk(c);
     };
     walk(window.__studioGizmo.rotate.getHelper());
-    return { fullRings, grips };
+    const rgb = (hex) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+    const [, , yB] = rgb(colours.Y ?? '#000000');
+    const [, zG] = rgb(colours.Z ?? '#000000');
+    return { quarterArcs, grips, yIsBlue: yB > 128, zIsGreen: zG > 128, colours };
   });
-  check('rotation rings are complete circles with 45° grab spheres',
-    rings.fullRings === 3 && rings.grips === 3, rings);
+  check('rotation arcs are axis-aligned quarter rings with 45° grab spheres',
+    rings.quarterArcs === 3 && rings.grips === 3, rings);
+  check('Z-up colours: the vertical handle wears blue, depth wears green',
+    rings.yIsBlue && rings.zIsGreen, rings.colours);
   await shoot('2b-gizmo.png');
 
   // Clicking empty space deselects and the gizmo goes away. "Empty" is
@@ -336,6 +347,17 @@ await shoot('2-anchored.png');
 
 // ── 6d. view cube: quick views by face and corner ──────────────────────────
 {
+  // Camera tweens are time-based but frames can crawl under SwiftShader —
+  // wait for the orbit to stop moving instead of guessing a delay.
+  const settleCamera = async () => {
+    let last = '';
+    for (let i = 0; i < 30; i++) {
+      await page.waitForTimeout(120);
+      const now = JSON.stringify(await page.evaluate(() => window.__studioViewer.cameraView()));
+      if (now === last) return;
+      last = now;
+    }
+  };
   const dirNow = () => page.evaluate(() => {
     const v = window.__studioViewer.cameraView();
     const d = [0, 1, 2].map((a) => v.position[a] - v.target[a]);
@@ -346,14 +368,14 @@ await shoot('2-anchored.png');
   // A real click in the middle of the cube canvas: the camera starts on the
   // front-upper quadrant, so the centre of the cube is the Front face.
   await page.click('[data-testid="view-cube"]');
-  await page.waitForTimeout(500);
+  await settleCamera();
   let d = await dirNow();
   check('clicking the cube face swings the camera to Front',
     d[2] > 0.99 && Math.abs(d[0]) < 0.05 && Math.abs(d[1]) < 0.05,
     d.map((x) => x.toFixed(3)));
 
   const went = await page.evaluate(() => window.__studioViewCube.go('corner+x+y+z'));
-  await page.waitForTimeout(500);
+  await settleCamera();
   d = await dirNow();
   const k = 1 / Math.sqrt(3);
   check('a corner quick view lands on the isometric diagonal',
@@ -428,7 +450,13 @@ await shoot('2-anchored.png');
 // ── 6g. face snapping ──────────────────────────────────────────────────────
 {
   await page.evaluate(() => window.__studioViewCube.go('Front'));
-  await page.waitForTimeout(700);
+  let settled = '';
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(120);
+    const now = JSON.stringify(await page.evaluate(() => window.__studioViewer.cameraView()));
+    if (now === settled) break;
+    settled = now;
+  }
   await page.click('[data-testid="snap-tool"]');
   check('snap tool prompts for the moving face',
     /MOVE/.test(await page.textContent('[data-testid="snap-hint"]') ?? ''), '');

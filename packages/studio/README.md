@@ -58,10 +58,17 @@ a 25% band, the camera refits while keeping the merchant's orbit angle.
 ## Gizmos
 
 One combined gizmo (toolbar: Orbit / Transform / Snap): translate arrows
-outermost, complete rotation rings with a 45° grab sphere each (the
-affordance that says "drag me"), per-axis scale cubes on the shafts — the
-cubes are what makes non-uniform scaling draggable; the centre handle scales
-uniformly. Commits stream during the drag (throttled), so the panel's mm and
+outermost, axis-aligned quarter-arc rotation rings joining the positive axes
+with a 45° grab sphere each (three's own rings billboard to the camera; the
+Studio re-pins them to their world planes every frame), per-axis scale cubes
+on the shafts — the cubes are what makes non-uniform scaling draggable; the
+centre handle scales uniformly. Rotation stays grabbable all the way round
+via the full invisible pickers.
+
+The Studio speaks Z-up — X and Y are the flat plane, Z is height, and the
+vertical handles wear blue. The internal space (manifest, embed, glTF) stays
+Y-up; the mapping is purely presentational, in `UI_AXES` and the gizmo
+colour swap. Commits stream during the drag (throttled), so the panel's mm and
 degrees update live under the merchant's hand. Clicking a handle never
 changes the selection; clicking empty space deselects and hides the gizmo.
 three.js only ships single-mode TransformControls, so three instances share
