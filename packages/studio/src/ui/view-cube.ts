@@ -14,13 +14,22 @@ export interface CubeTarget {
   dir: [number, number, number];
 }
 
+// Top and Bottom carry a 2° tilt toward +Z instead of pointing exactly along
+// the pole. Straight down the pole the orbit's azimuth is degenerate — the
+// screen orientation you land in depends on where the camera came from, so
+// repeated clicks flipped and jerked. The fixed tilt means both poles are
+// always approached from the same side: top is top, bottom is bottom, every
+// time, with the model's front toward the viewer.
+const TILT = Math.sin(2 * Math.PI / 180);
+const POLE = Math.cos(2 * Math.PI / 180);
+
 export const FACES: CubeTarget[] = [
   { name: 'Front', dir: [0, 0, 1] },
   { name: 'Back', dir: [0, 0, -1] },
   { name: 'Left', dir: [-1, 0, 0] },
   { name: 'Right', dir: [1, 0, 0] },
-  { name: 'Top', dir: [0, 1, 0] },
-  { name: 'Bottom', dir: [0, -1, 0] },
+  { name: 'Top', dir: [0, POLE, TILT] },
+  { name: 'Bottom', dir: [0, -POLE, TILT] },
 ];
 
 /** The eight corner directions, unit length — the unnamed quick views. */

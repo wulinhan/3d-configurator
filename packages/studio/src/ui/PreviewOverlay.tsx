@@ -27,7 +27,11 @@ export function PreviewOverlay(props: { project: Project; onClose: () => void })
     for (const model of manifest.models) model.url = props.project.modelUrl;
     const framed = manifest.camera?.userSet ? manifest : frameCamera(manifest, props.project.raw);
 
-    const onChange = (e: Event) => setTotal((e as CustomEvent<SelectionPayload>).detail);
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<SelectionPayload>).detail;
+      setTotal(detail);
+      (window as any).__previewPayload = detail; // test hook
+    };
     root.addEventListener('configurator:change', onChange);
 
     mount({ root, manifest: framed, target: window })

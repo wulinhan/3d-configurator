@@ -13,7 +13,8 @@ import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-ini
 import {
   makeGroup, ungroup, renameGroup, nudgeGroup,
   makeVariantChoice, dissolveVariantChoice,
-  entriesOf, moveEntry, withAnchor, makePartOptional, EditError,
+  addPartToGroup, removePartFromGroup, addPartToChoice, removePartFromChoice,
+  entriesOf, moveEntry, moveEntryTo, withAnchor, makePartOptional, EditError,
 } from '../src/lib/manifest-edit.ts';
 
 const near = (a: number, b: number, tol = 1e-6) => assert.ok(Math.abs(a - b) < tol, `${a} !== ${b}`);
@@ -98,11 +99,88 @@ test('makeVariantChoice: exactly one variant visible, customers pick', () => {
   assert.ok(!visible.has('lid') && visible.has('flat-lid'), 'switching swaps visibility');
 });
 
-test('makeVariantChoice refuses parts that are already add-ons or variants', () => {
+test('makeVariantChoice absorbs an add-on part instead of refusing', () => {
+  // The failure a merchant actually hit: a part still marked "customer
+  // selects this part" made choice creation silently impossible. Joining a
+  // pick-one set now supersedes the add-on.
   const withAddon = makePartOptional(fresh(), 'lid', 5);
-  assert.throws(() => makeVariantChoice(withAddon, ['lid', 'flat-lid'], 'Lid'), /already/);
+  const m = makeVariantChoice(withAddon, ['lid', 'flat-lid'], 'Lid style');
+  valid(m);
+  assert.ok(!m.options.some((o) => o.id === 'lid-addon'), 'add-on option is gone');
+  assert.deepEqual(m.parts.find((p) => p.id === 'lid')!.visibleWhen,
+    { option: 'lid-style', equals: ['lid'] });
+});
+
+test('makeVariantChoice still refuses parts already in another choice', () => {
   const varianted = makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid');
   assert.throws(() => makeVariantChoice(varianted, ['flat-lid', 'badge'], 'Again'), /already/);
+});
+
+test('addPartToChoice and removePartFromChoice grow and shrink the set', () => {
+  let m = makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid style');
+  m = addPartToChoice(m, 'lid-style', 'badge');
+  valid(m);
+  let option = m.options.find((o) => o.id === 'lid-style') as ChoiceOption;
+  assert.deepEqual(option.choices.map((c) => c.id), ['lid', 'flat-lid', 'badge']);
+  assert.deepEqual(m.parts.find((p) => p.id === 'badge')!.visibleWhen,
+    { option: 'lid-style', equals: ['badge'] });
+
+  // Removing the default retargets it; removing below two dissolves the set.
+  m = removePartFromChoice(m, 'lid-style', 'lid');
+  valid(m);
+  option = m.options.find((o) => o.id === 'lid-style') as ChoiceOption;
+  assert.deepEqual(option.choices.map((c) => c.id), ['flat-lid', 'badge']);
+  assert.equal(option.default, 'flat-lid');
+  assert.equal(m.parts.find((p) => p.id === 'lid')!.visibleWhen, undefined);
+  m = removePartFromChoice(m, 'lid-style', 'badge');
+  valid(m);
+  assert.ok(!m.options.some((o) => o.id === 'lid-style'));
+  assert.ok(m.parts.every((p) => !p.visibleWhen));
+});
+
+test('addPartToChoice absorbs add-ons, refuses grouped or other-choice parts', () => {
+  let m = makeVariantChoice(makePartOptional(fresh(), 'badge', 3), ['lid', 'flat-lid'], 'Lid style');
+  m = addPartToChoice(m, 'lid-style', 'badge');
+  valid(m);
+  assert.ok(!m.options.some((o) => o.id === 'badge-addon'));
+
+  const grouped = makeGroup(makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid'), ['body', 'badge'], 'Shell');
+  assert.throws(() => addPartToChoice(grouped, 'lid', 'badge'), /assembly/);
+});
+
+test('addPartToGroup merges the newcomer\'s colour option into the shared one', () => {
+  let m = makeGroup(fresh(), ['body', 'badge'], 'Shell');
+  m = addPartToGroup(m, 'shell', 'lid');
+  valid(m);
+  assert.deepEqual(m.groups![0].parts, ['body', 'badge', 'lid']);
+  const merged = m.options.find((o) => o.id === 'shell-colour') as ColourOption;
+  assert.ok(merged.parts.includes('lid'));
+  assert.ok(!m.options.some((o) => o.id === 'lid-colour'));
+  const painted = m.options.flatMap((o) => (o.type === 'colour' ? o.parts : []));
+  assert.equal(new Set(painted).size, painted.length, 'no part painted twice');
+  assert.equal(addPartToGroup(m, 'shell', 'lid'), m, 'already a member is a no-op');
+});
+
+test('removePartFromGroup splits the colour back out; below two the assembly dissolves', () => {
+  let m = addPartToGroup(makeGroup(fresh(), ['body', 'badge'], 'Shell'), 'shell', 'lid');
+  m = removePartFromGroup(m, 'shell', 'lid');
+  valid(m);
+  assert.deepEqual(m.groups![0].parts, ['body', 'badge']);
+  const split = m.options.find((o) => o.type === 'colour' && (o as ColourOption).parts.join() === 'lid');
+  assert.ok(split, 'departing part paints alone again');
+  m = removePartFromGroup(m, 'shell', 'badge');
+  valid(m);
+  assert.equal(m.groups, undefined, 'one-member assembly dissolves');
+});
+
+test('moveEntryTo lands an entry at an arbitrary position and clamps', () => {
+  let m = makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid style');
+  // entries: body, [lid-style], badge → send body to the end
+  m = moveEntryTo(m, 'body', 2);
+  valid(m);
+  assert.deepEqual(m.parts.map((p) => p.id), ['lid', 'flat-lid', 'badge', 'body']);
+  assert.equal(moveEntryTo(m, 'badge', 99).parts.at(-1)!.id, 'badge', 'clamped to the end');
+  assert.throws(() => moveEntryTo(m, 'ghost', 0), EditError);
 });
 
 test('dissolveVariantChoice makes everything visible again', () => {

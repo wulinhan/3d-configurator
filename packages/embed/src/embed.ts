@@ -60,7 +60,13 @@ export async function mount(opts: MountOptions) {
     manifest,
     resolveUrl: (u) => (opts.baseUrl ? new URL(u, opts.baseUrl).href : u),
     onSelectPart: (partId) => {
-      // Clicking the model selects whichever option paints that part.
+      // A part whose visibility hangs on a choice (a variant, an add-on) opens
+      // that choice — clicking the thing you might swap shows the swap. Any
+      // other part selects whichever option paints it.
+      const part = manifest.parts.find((p) => p.id === partId);
+      const gate = part?.visibleWhen
+        && manifest.options.find((o) => o.id === part.visibleWhen!.option && isChoice(o));
+      if (gate) { select(gate.id); return; }
       const option = manifest.options.find((o) => isColour(o) && o.parts.includes(partId!));
       if (option) select(option.id);
     },

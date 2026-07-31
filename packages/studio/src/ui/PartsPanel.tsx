@@ -1,47 +1,53 @@
-// The parts explorer and per-part editing. The explorer renders the manifest
-// as ENTRIES — a loose part, a group (parts treated as one), or a variant
-// choice (customer picks one, mutually exclusive) — in the order customers
-// will meet them; ▲▼ reorders whole entries. Multi-selecting loose parts
-// grows an action bar that turns them into a group or a choice. Every
-// control calls a tested edit op; this file only renders and routes.
+// The parts explorer. The manifest renders as ENTRIES — a loose part, an
+// assembly (parts treated as one), or a pick-one set (customers choose one,
+// mutually exclusive) — in the order customers will meet them.
+//
+// Structure is rearranged by DRAGGING the six-dot handle: drop a row between
+// rows to reorder, drop a loose part onto an assembly or pick-one set to add
+// it, drag a member out to set it loose. The drag is plain pointer maths
+// (no HTML5 DnD — its ghost images and enter/leave churn fight custom drop
+// zones); every drop commits through a tested edit op, so an illegal drop is
+// refused by the edit layer, not by fragile UI guards.
 
-import { useState } from 'react';
-import type { Manifest, AnchorEdge, ColourOption, ChoiceOption } from '../../../embed/src/manifest/types.ts';
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import type { Manifest, ChoiceOption } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import {
-  sizeMm, withSizeMm, withAnchor, withRotation,
-  makePartOptional, makePartRequired, setChoicePrice,
-  renamePart, removePart, setDefaultSwatch, copyPlacement, setCustomColour,
-  entriesOf, moveEntry, makeGroup, makeVariantChoice,
-  ungroup, renameGroup, nudgeGroup, dissolveVariantChoice,
-  AXIS_NAMES, type Axis, type ExplorerEntry,
+  renamePart, removePart,
+  entriesOf, moveEntryTo, makeGroup, makeVariantChoice,
+  ungroup, dissolveVariantChoice,
+  addPartToGroup, removePartFromGroup, addPartToChoice, removePartFromChoice,
+  type ExplorerEntry,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
-import { NumberField } from './fields.tsx';
-
-const AXIS_LABELS = ['W', 'H', 'D'] as const; // x, y, z in canonical space
-const EDGES: AnchorEdge[] = ['min', 'center', 'max'];
-
-// The Studio speaks Z-up: X and Y are the flat plane, Z is height. The
-// internal space (manifest, renderer) stays Y-up — this table is purely how
-// axes are named and ordered on screen.
-const UI_AXES: Array<{ label: string; axis: Axis }> = [
-  { label: 'X', axis: 0 }, // internal x — width
-  { label: 'Y', axis: 2 }, // internal z — depth
-  { label: 'Z', axis: 1 }, // internal y — height
-];
 
 const EYE = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>;
 const EYE_OFF = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+const DOTS = (
+  <svg width="8" height="14" viewBox="0 0 8 14" aria-hidden="true">
+    {[2, 7, 12].flatMap((cy) => [2, 6].map((cx) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1.3" fill="currentColor" />))}
+  </svg>
+);
+
+type DragSource =
+  | { kind: 'entry'; id: string }
+  | { kind: 'member'; partId: string; parent: { kind: 'group' | 'variant'; id: string } };
+type DropTarget =
+  | { kind: 'reorder'; index: number }
+  | { kind: 'into'; entryId: string; entryKind: 'group' | 'variant' }
+  | { kind: 'out' }
+  | null;
 
 export function PartsPanel(props: {
   project: Project;
   selectedPart: string | null;
   hiddenParts: Set<string>;
   solo: string | null;
-  /** What the viewer currently shows — tells variant rows which member is live. */
+  /** What the viewer currently shows — tells pick-one rows which member is live. */
   selections: Selections;
+  editingGroup: string | null;
   onSelectPart: (id: string | null) => void;
+  onEditGroup: (id: string | null) => void;
   onSetHidden: (ids: string[], hidden: boolean) => void;
   onSolo: (id: string | null) => void;
   onHideAll: (hide: boolean) => void;
@@ -54,13 +60,12 @@ export function PartsPanel(props: {
   const [pending, setPending] = useState<null | 'group' | 'variant'>(null);
   const [structureLabel, setStructureLabel] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  // Which group's editor is open; outranks the part editor while set.
-  const [editingGroup, setEditingGroup] = useState<string | null>(null);
+  const [drag, setDrag] = useState<DragSource | null>(null);
+  const [drop, setDrop] = useState<DropTarget>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const entries = entriesOf(manifest);
-  const group = editingGroup ? manifest.groups?.find((g) => g.id === editingGroup) : undefined;
-  const part = manifest.parts.find((p) => p.id === props.selectedPart) ?? manifest.parts[0];
-  if (!part) return <p className="empty">No parts in this model.</p>;
+  if (!manifest.parts.length) return <p className="empty">No parts in this model.</p>;
 
   const act = (fn: () => Manifest) => {
     try { props.onChange(fn()); setError(null); }
@@ -74,6 +79,114 @@ export function PartsPanel(props: {
     return next;
   });
 
+  // ── drag machinery ─────────────────────────────────────────────────────────
+
+  const resolveDrop = (source: DragSource, x: number, y: number): DropTarget => {
+    for (const el of document.elementsFromPoint(x, y)) {
+      const d = (el as HTMLElement).dataset ?? {};
+      if (d.dropInto !== undefined) {
+        const entry = entries.find((en) => en.id === d.dropInto);
+        if (!entry || entry.kind === 'part') continue;
+        // Hovering a member over its own bundle means nothing — not "out".
+        if (source.kind === 'member' && source.parent.id === entry.id) return null;
+        const joinable = source.kind === 'entry'
+          ? entries.find((en) => en.id === source.id)?.kind === 'part' && source.id !== entry.id
+          : true;
+        // A bundle header doubles as a reorder row: its middle band means
+        // "into", its edges mean "before/after".
+        if (d.dropIndex !== undefined) {
+          const r = (el as HTMLElement).getBoundingClientRect();
+          const band = (y - r.top) / r.height;
+          if (!joinable || band < 0.25 || band > 0.75) {
+            if (source.kind === 'member') return { kind: 'out' };
+            return { kind: 'reorder', index: band < 0.5 ? Number(d.dropIndex) : Number(d.dropIndex) + 1 };
+          }
+        }
+        if (joinable) return { kind: 'into', entryId: entry.id, entryKind: entry.kind };
+        continue;
+      }
+      if (d.dropIndex !== undefined) {
+        if (source.kind === 'member') return { kind: 'out' };
+        const r = (el as HTMLElement).getBoundingClientRect();
+        const before = y < r.top + r.height / 2;
+        const idx = Number(d.dropIndex);
+        return { kind: 'reorder', index: before ? idx : idx + 1 };
+      }
+      if (d.dropRoot !== undefined) return source.kind === 'member' ? { kind: 'out' } : null;
+    }
+    return null;
+  };
+
+  const commitDrop = (source: DragSource, target: DropTarget) => {
+    if (!target) return;
+    if (source.kind === 'entry') {
+      if (target.kind === 'reorder') {
+        const at = entries.findIndex((e) => e.id === source.id);
+        let to = target.index;
+        if (at < to) to -= 1;
+        if (to !== at) act(() => moveEntryTo(manifest, source.id, to));
+      } else if (target.kind === 'into') {
+        act(() => (target.entryKind === 'group'
+          ? addPartToGroup(manifest, target.entryId, source.id)
+          : addPartToChoice(manifest, target.entryId, source.id)));
+      }
+      return;
+    }
+    const pullOut = (m: Manifest) => (source.parent.kind === 'group'
+      ? removePartFromGroup(m, source.parent.id, source.partId)
+      : removePartFromChoice(m, source.parent.id, source.partId));
+    if (target.kind === 'into' && target.entryId !== source.parent.id) {
+      // Moving between bundles is one edit (and one undo step).
+      act(() => (target.entryKind === 'group'
+        ? addPartToGroup(pullOut(manifest), target.entryId, source.partId)
+        : addPartToChoice(pullOut(manifest), target.entryId, source.partId)));
+    } else if (target.kind === 'out' || target.kind === 'reorder') {
+      act(() => pullOut(manifest));
+    }
+  };
+
+  const beginDrag = (source: DragSource) => (e: ReactPointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
+      moved = true;
+      setDrag(source);
+      setDrop(resolveDrop(source, ev.clientX, ev.clientY));
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setDrag(null);
+      setDrop(null);
+      if (moved) commitDrop(source, resolveDrop(source, ev.clientX, ev.clientY));
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  const handle = (source: DragSource, id: string) => (
+    <button
+      className="drag-dots" data-testid={`drag-${id}`}
+      aria-label="Drag to reorder, or drop onto an assembly / pick-one set"
+      onPointerDown={beginDrag(source)}
+    >{DOTS}</button>
+  );
+
+  const dropClass = (index: number, entryId?: string) => {
+    let cls = '';
+    if (drop?.kind === 'reorder') {
+      if (drop.index === index) cls += ' is-drop-before';
+      if (index === entries.length - 1 && drop.index === entries.length) cls += ' is-drop-after';
+    }
+    if (drop?.kind === 'into' && entryId && drop.entryId === entryId) cls += ' is-drop-into';
+    return cls;
+  };
+
+  // ── rows ───────────────────────────────────────────────────────────────────
+
   const confirmStructure = () => {
     const ids = manifest.parts.map((p) => p.id).filter((id) => checked.has(id));
     act(() => (pending === 'group'
@@ -84,16 +197,21 @@ export function PartsPanel(props: {
     setStructureLabel('');
   };
 
-  const partRow = (p: { id: string; label: string }, opts: { member?: boolean; live?: boolean; pickable?: boolean } = {}) => {
+  const partRow = (
+    p: { id: string; label: string },
+    opts: { member?: boolean; live?: boolean; pickable?: boolean; source?: DragSource } = {},
+  ) => {
     const hidden = isHidden(p.id);
-    const active = !editingGroup && p.id === part.id;
+    const active = !props.editingGroup && p.id === props.selectedPart;
+    const dragging = drag?.kind === 'member' && drag.partId === p.id;
     return (
-      <div key={p.id} className={`part-row${opts.member ? ' is-member' : ''}${active ? ' is-active' : ''}${hidden ? ' is-hidden' : ''}`}>
+      <div key={p.id} className={`part-row${opts.member ? ' is-member' : ''}${active ? ' is-active' : ''}${hidden ? ' is-hidden' : ''}${dragging ? ' is-dragging' : ''}`}>
+        {opts.source && handle(opts.source, p.id)}
         {opts.pickable && (
           <input
             type="checkbox" className="pick" data-testid={`pick-${p.id}`}
             checked={checked.has(p.id)} onChange={() => toggleChecked(p.id)}
-            aria-label={`Select ${p.label} for grouping`}
+            aria-label={`Select ${p.label} for combining`}
           />
         )}
         <button
@@ -114,7 +232,7 @@ export function PartsPanel(props: {
         ) : (
           <button
             className="part-name" role="option" aria-selected={active}
-            onClick={() => { setEditingGroup(null); props.onSelectPart(p.id); }}
+            onClick={() => { props.onEditGroup(null); props.onSelectPart(p.id); }}
             onDoubleClick={() => setRenaming(p.id)}
           >
             {opts.live !== undefined && <span className={`live-dot${opts.live ? ' is-live' : ''}`} title={opts.live ? 'Currently shown' : 'Hidden — click to show'} />}
@@ -129,23 +247,10 @@ export function PartsPanel(props: {
             act(() => removePart(manifest, p.id, props.project.raw));
             if (props.selectedPart === p.id) props.onSelectPart(null);
           }}
-        >🗑</button>
+        >✕</button>
       </div>
     );
   };
-
-  const moveButtons = (entry: ExplorerEntry, index: number) => (
-    <span className="entry-move">
-      <button
-        className="mini icon" data-testid={`move-up-${entry.id}`} aria-label="Move up"
-        disabled={index === 0} onClick={() => act(() => moveEntry(manifest, entry.id, -1))}
-      >▲</button>
-      <button
-        className="mini icon" data-testid={`move-down-${entry.id}`} aria-label="Move down"
-        disabled={index === entries.length - 1} onClick={() => act(() => moveEntry(manifest, entry.id, 1))}
-      >▼</button>
-    </span>
-  );
 
   const bundleRow = (entry: ExplorerEntry & { kind: 'group' | 'variant' }, index: number) => {
     const open = !collapsed.has(entry.id);
@@ -154,10 +259,14 @@ export function PartsPanel(props: {
     const option = entry.kind === 'variant'
       ? manifest.options.find((o): o is ChoiceOption => o.id === entry.id && o.type === 'choice')
       : undefined;
+    const dragging = drag?.kind === 'entry' && drag.id === entry.id;
     return (
-      <div key={entry.id} className="entry">
-        <div className={`part-row is-bundle${entry.kind === 'group' && editingGroup === entry.id ? ' is-active' : ''}`}>
-          {moveButtons(entry, index)}
+      <div key={entry.id} className={`entry${dropClass(index, entry.id)}`}>
+        <div
+          className={`part-row is-bundle${entry.kind === 'group' && props.editingGroup === entry.id ? ' is-active' : ''}${dragging ? ' is-dragging' : ''}`}
+          data-drop-into={entry.id} data-drop-index={index}
+        >
+          {handle({ kind: 'entry', id: entry.id }, entry.id)}
           <button
             className="mini icon" aria-label={open ? 'Collapse' : 'Expand'} aria-expanded={open}
             onClick={() => setCollapsed((old) => {
@@ -174,18 +283,18 @@ export function PartsPanel(props: {
           <button
             className="part-name"
             onClick={() => {
-              if (entry.kind === 'group') { props.onSelectPart(null); setEditingGroup(entry.id); }
+              if (entry.kind === 'group') { props.onSelectPart(null); props.onEditGroup(entry.id); }
               else setCollapsed((old) => { const next = new Set(old); next.delete(entry.id); return next; });
             }}
           >
             {entry.label}
-            <span className="tag">{entry.kind === 'group' ? 'group' : 'choice'}</span>
+            <span className="tag">{entry.kind === 'group' ? 'assembly' : 'pick one'}</span>
           </button>
           {entry.kind === 'group' ? (
             <button
-              className="mini" data-testid={`ungroup-${entry.id}`} title="Dissolve the group; parts stay put"
-              onClick={() => { setEditingGroup(null); act(() => ungroup(manifest, entry.id)); }}
-            >Ungroup</button>
+              className="mini" data-testid={`ungroup-${entry.id}`} title="Split the assembly up; parts stay put"
+              onClick={() => { props.onEditGroup(null); act(() => ungroup(manifest, entry.id)); }}
+            >Split</button>
           ) : (
             <button
               className="mini" data-testid={`dissolve-${entry.id}`} title="Remove the choice; all parts always included"
@@ -194,13 +303,14 @@ export function PartsPanel(props: {
           )}
         </div>
         {open && (
-          <div className="entry-members">
+          <div className="entry-members" data-drop-into={entry.id}>
             {entry.parts.map((id) => {
               const p = partsById.get(id);
               if (!p) return null;
               return partRow(p, {
                 member: true,
                 live: option ? props.selections[option.id] === id : undefined,
+                source: { kind: 'member', partId: id, parent: { kind: entry.kind, id: entry.id } },
               });
             })}
           </div>
@@ -210,46 +320,53 @@ export function PartsPanel(props: {
   };
 
   return (
-    <div className="panel-body">
+    <div className="panel-body" data-drop-root="">
       <div className="part-list-head">
         <span className="hint">Parts</span>
         <span className="spacer" />
         <button className="mini" data-testid="show-all" onClick={() => { props.onHideAll(false); props.onSolo(null); }}>Show all</button>
         <button className="mini" data-testid="hide-all" onClick={() => props.onHideAll(true)}>Hide all</button>
       </div>
-      <div className="part-rows" role="listbox" aria-label="Parts">
+      <div
+        className={`part-rows${drag ? ' is-drag-live' : ''}`} role="listbox" aria-label="Parts"
+        ref={listRef} data-drop-root=""
+      >
         {entries.map((entry, index) => {
           if (entry.kind !== 'part') return bundleRow(entry, index);
           const p = manifest.parts.find((x) => x.id === entry.id)!;
+          const dragging = drag?.kind === 'entry' && drag.id === entry.id;
           return (
-            <div key={entry.id} className="entry">
-              <div className="entry-line">
-                {moveButtons(entry, index)}
-                {partRow(p, { pickable: true })}
+            <div key={entry.id} className={`entry${dropClass(index)}`}>
+              <div className={`entry-line${dragging ? ' is-dragging' : ''}`} data-drop-index={index}>
+                {partRow(p, { pickable: true, source: { kind: 'entry', id: entry.id } })}
               </div>
             </div>
           );
         })}
       </div>
+      <p className="hint">
+        Drag the ⣿ handle to reorder. Drop a part onto an <strong>assembly</strong> or
+        <strong> pick-one set</strong> to add it; drag a part out to set it loose.
+      </p>
 
       {checked.size >= 2 && (
         <div className="structure-bar" data-testid="structure-bar">
           {pending === null ? (
             <>
               <span className="hint">{checked.size} parts selected —</span>
-              <button className="mini" data-testid="make-group" onClick={() => setPending('group')}>Group as one</button>
-              <button className="mini" data-testid="make-variant" onClick={() => setPending('variant')}>Customer choice</button>
+              <button className="mini" data-testid="make-group" title="Move and colour as one part" onClick={() => setPending('group')}>Assembly</button>
+              <button className="mini" data-testid="make-variant" title="Customers pick which one they get" onClick={() => setPending('variant')}>Pick-one set</button>
             </>
           ) : (
             <>
               <input
                 className="structure-name" autoFocus data-testid="structure-label"
-                placeholder={pending === 'group' ? 'Group name (e.g. Shell)' : 'Choice name — customers see it (e.g. Lid style)'}
+                placeholder={pending === 'group' ? 'Assembly name (e.g. Shell)' : 'Choice name — customers see it (e.g. Lid style)'}
                 value={structureLabel} onChange={(e) => setStructureLabel(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') confirmStructure(); if (e.key === 'Escape') setPending(null); }}
               />
               <button className="mini" data-testid="structure-confirm" onClick={confirmStructure}>
-                {pending === 'group' ? 'Group' : 'Create choice'}
+                {pending === 'group' ? 'Create assembly' : 'Create pick-one set'}
               </button>
               <button className="mini" onClick={() => { setPending(null); setStructureLabel(''); }}>✕</button>
             </>
@@ -257,324 +374,6 @@ export function PartsPanel(props: {
         </div>
       )}
       {error && <p className="error" role="alert">{error}</p>}
-
-      {group ? (
-        <GroupEditor
-          key={group.id} project={props.project} groupId={group.id}
-          onChange={props.onChange} onClose={() => setEditingGroup(null)}
-        />
-      ) : (
-        <PartEditor key={part.id} project={props.project} partId={part.id} onChange={props.onChange} />
-      )}
-    </div>
-  );
-}
-
-function GroupEditor(props: {
-  project: Project;
-  groupId: string;
-  onChange: (m: Manifest, opts?: SetManifestOptions) => void;
-  onClose: () => void;
-}) {
-  const { manifest } = props.project;
-  const group = manifest.groups?.find((g) => g.id === props.groupId);
-  const [error, setError] = useState<string | null>(null);
-  // Remount the nudge fields after each move so they read 0 again — they are
-  // deltas, not positions.
-  const [nudgeTick, setNudgeTick] = useState(0);
-  if (!group) return null;
-
-  const act = (fn: () => Manifest) => {
-    try { props.onChange(fn()); setError(null); }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-  };
-
-  return (
-    <div className="part-editor" data-testid={`group-editor-${group.id}`}>
-      <h3>{group.label} <span className="tag">group</span></h3>
-      <section>
-        <h4>Name</h4>
-        <label className="field wide">
-          <input
-            defaultValue={group.label} data-testid="group-name"
-            onBlur={(e) => { if (e.target.value.trim() && e.target.value !== group.label) act(() => renameGroup(manifest, group.id, e.target.value)); }}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          />
-        </label>
-      </section>
-      <section>
-        <h4>Move together</h4>
-        <p className="hint">Shifts every part in the group by the given distance. Parts anchored to each other keep their joints.</p>
-        <div className="field-row" key={nudgeTick}>
-          {UI_AXES.map(({ label, axis }) => (
-            <NumberField
-              key={label} label={label} value={0} suffix="mm"
-              testId={`nudge-${label.toLowerCase()}`}
-              onCommit={(mm) => {
-                if (!mm) return;
-                const deltas: [number, number, number] = [0, 0, 0];
-                deltas[axis] = mm;
-                act(() => nudgeGroup(manifest, group.id, deltas));
-                setNudgeTick((t) => t + 1);
-              }}
-            />
-          ))}
-        </div>
-      </section>
-      <section>
-        <h4>Group</h4>
-        <p className="hint">
-          Members share one colour control in the configurator. Ungrouping keeps
-          their positions and the shared colour option.
-        </p>
-        <div className="publish-actions">
-          <button className="ghost" onClick={() => { props.onClose(); act(() => ungroup(manifest, group.id)); }}>Ungroup</button>
-        </div>
-      </section>
-      {error && <p className="error" role="alert">{error}</p>}
-    </div>
-  );
-}
-
-function PartEditor(props: {
-  project: Project;
-  partId: string;
-  onChange: (m: Manifest, opts?: SetManifestOptions) => void;
-}) {
-  const { manifest, raw } = props.project;
-  const part = manifest.parts.find((p) => p.id === props.partId)!;
-  const bounds = raw.get(part.id);
-  const [lock, setLock] = useState(part.placement?.lockAspect ?? true);
-  const [matchFrom, setMatchFrom] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  if (!bounds) return <p className="empty">No geometry for this part.</p>;
-  const size = sizeMm(manifest, part.id, bounds);
-  const rotation = part.placement?.rotation ?? [0, 0, 0];
-
-  const colourOption = manifest.options.find(
-    (o): o is ColourOption => o.type === 'colour' && o.source !== 'used' && o.parts.includes(part.id));
-  const palette = manifest.palettes?.find((p) => p.id === colourOption?.palette);
-
-  const visibleOption = part.visibleWhen ? manifest.options.find((o) => o.id === part.visibleWhen!.option) : undefined;
-  // A variant member's visibility belongs to its choice option — the add-on
-  // toggle must not touch it, or unchecking would orphan the choice.
-  const variantOf = visibleOption?.type === 'choice' && (visibleOption as ChoiceOption).role === 'variant'
-    ? (visibleOption as ChoiceOption) : undefined;
-  const addon = !variantOf ? visibleOption : undefined;
-  const addonPrice = addon?.type === 'choice'
-    ? addon.choices.find((c) => c.id === 'yes')?.priceDelta ?? 0
-    : 0;
-
-  const act = (fn: () => Manifest) => {
-    try { props.onChange(fn()); setError(null); }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
-  };
-
-  return (
-    <div className="part-editor" data-testid={`editor-${part.id}`}>
-      <h3>{part.label}</h3>
-
-      <section>
-        <div className="section-head">
-          <h4>Size</h4>
-          <label className="lock">
-            <input
-              type="checkbox" checked={lock} data-testid="lock-aspect"
-              onChange={(e) => setLock(e.target.checked)}
-            />
-            Lock proportions
-          </label>
-        </div>
-        <div className="field-row">
-          {AXIS_LABELS.map((label, axis) => (
-            <NumberField
-              key={label} label={label} value={size[axis]} suffix="mm"
-              testId={`size-${label.toLowerCase()}`}
-              onCommit={(mm) => props.onChange(withSizeMm(manifest, part.id, axis as Axis, mm, bounds, lock))}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <h4>Position</h4>
-        {UI_AXES.map(({ label, axis }) => (
-          <AxisAnchorRow key={label} axis={axis} uiLabel={label} {...props} />
-        ))}
-        <div className="match-row">
-          <select
-            aria-label="Match position of" value={matchFrom} data-testid="match-select"
-            onChange={(e) => setMatchFrom(e.target.value)}
-          >
-            <option value="">Match position of…</option>
-            {manifest.parts.filter((p) => p.id !== part.id).map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-          <button
-            className="mini" data-testid="match-apply" disabled={!matchFrom}
-            onClick={() => { act(() => copyPlacement(manifest, matchFrom, part.id)); setMatchFrom(''); }}
-          >Apply</button>
-        </div>
-      </section>
-
-      <section>
-        <h4>Rotation</h4>
-        <div className="field-row">
-          {UI_AXES.map(({ label, axis }) => (
-            <NumberField
-              key={label} label={label} value={rotation[axis]} suffix="°" step={15}
-              testId={`rot-${label.toLowerCase()}`}
-              onCommit={(deg) => {
-                const next = [...rotation] as [number, number, number];
-                next[axis] = deg;
-                props.onChange(withRotation(manifest, part.id, next));
-              }}
-            />
-          ))}
-        </div>
-      </section>
-
-      {colourOption && palette && (
-        <section>
-          <h4>Colour</h4>
-          <label className="field wide">
-            <span className="field-label">Customers open with</span>
-            <span className="default-colour-row">
-              <span
-                className="chip"
-                style={{ background: palette.swatches.find((s) => s.id === colourOption.default)?.hex ?? '#ccc' }}
-              />
-              <select
-                aria-label="Default colour" data-testid="default-colour"
-                value={colourOption.default.startsWith('@') ? '' : colourOption.default}
-                onChange={(e) => { if (e.target.value) act(() => setDefaultSwatch(manifest, colourOption.id, e.target.value)); }}
-              >
-                {colourOption.default.startsWith('@') && <option value="">(follows another part)</option>}
-                {palette.swatches.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </span>
-          </label>
-          <label className="lock">
-            <input
-              type="checkbox" checked={colourOption.custom?.allowed ?? false}
-              data-testid={`custom-toggle-${colourOption.id}`}
-              onChange={(e) => act(() => setCustomColour(manifest, colourOption.id, {
-                allowed: e.target.checked,
-                priceDelta: e.target.checked ? colourOption.custom?.priceDelta ?? 0 : undefined,
-              }))}
-            />
-            Allow custom colour (any hex)
-          </label>
-          {(colourOption.custom?.allowed ?? false) && (
-            <NumberField
-              label="Custom colour surcharge" value={colourOption.custom?.priceDelta ?? 0}
-              suffix={manifest.pricing.currency} step={1}
-              testId={`custom-price-${colourOption.id}`}
-              onCommit={(v) => props.onChange(setCustomColour(manifest, colourOption.id, { allowed: true, priceDelta: v }))}
-            />
-          )}
-        </section>
-      )}
-
-      {variantOf ? (
-        <section>
-          <h4>Customer choice</h4>
-          <p className="hint">
-            This part is one of the “{variantOf.label}” choices — customers pick
-            which one they get. Set a surcharge for picking this part:
-          </p>
-          <NumberField
-            label="Extra when chosen" value={variantOf.choices.find((c) => c.id === part.id)?.priceDelta ?? 0}
-            suffix={manifest.pricing.currency} step={1}
-            testId="variant-price"
-            onCommit={(price) => props.onChange(setChoicePrice(manifest, variantOf.id, part.id, price || undefined))}
-          />
-        </section>
-      ) : (
-        <section>
-          <div className="section-head">
-            <h4>Optional add-on</h4>
-            <label className="lock">
-              <input
-                type="checkbox" checked={!!part.visibleWhen} data-testid="addon-toggle"
-                onChange={(e) => props.onChange(e.target.checked
-                  ? makePartOptional(manifest, part.id, 0)
-                  : makePartRequired(manifest, part.id))}
-              />
-              Customer selects this part
-            </label>
-          </div>
-          {addon && (
-            <NumberField
-              label="Extra when selected" value={addonPrice} suffix={manifest.pricing.currency} step={1}
-              testId="addon-price"
-              onCommit={(price) => props.onChange(setChoicePrice(manifest, addon.id, 'yes', price || undefined))}
-            />
-          )}
-        </section>
-      )}
-      {error && <p className="error" role="alert">{error}</p>}
-    </div>
-  );
-}
-
-function AxisAnchorRow(props: {
-  project: Project;
-  partId: string;
-  axis: Axis;
-  uiLabel: string;
-  onChange: (m: Manifest, opts?: SetManifestOptions) => void;
-}) {
-  const { manifest } = props.project;
-  const part = manifest.parts.find((p) => p.id === props.partId)!;
-  const placement = part.placement?.[AXIS_NAMES[props.axis]];
-  const anchored = placement?.to && placement.to !== 'origin';
-  const [ref, edge] = anchored ? placement!.to!.split(':') : ['', 'min'];
-  const others = manifest.parts.filter((p) => p.id !== part.id);
-
-  const commit = (next: { align: AnchorEdge; to: string; edge: AnchorEdge; offset: number } | { origin: true; offset?: number }) =>
-    props.onChange(withAnchor(manifest, part.id, props.axis, next));
-
-  return (
-    <div className="anchor-row" data-testid={`anchor-${AXIS_NAMES[props.axis]}`}>
-      <span className="axis-name">{props.uiLabel}</span>
-      <select
-        aria-label="anchor mode" value={anchored ? ref : 'origin'}
-        onChange={(e) => {
-          const to = e.target.value;
-          commit(to === 'origin'
-            ? { origin: true, offset: 0 }
-            : { align: (placement?.align ?? 'min') as AnchorEdge, to, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 });
-        }}
-      >
-        <option value="origin">as modelled</option>
-        {others.map((p) => <option key={p.id} value={p.id}>against {p.label}</option>)}
-      </select>
-      {anchored && (
-        <>
-          <select
-            aria-label="my edge" value={placement!.align ?? 'center'}
-            onChange={(e) => commit({ align: e.target.value as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 })}
-          >
-            {EDGES.map((ed) => <option key={ed} value={ed}>my {ed}</option>)}
-          </select>
-          <select
-            aria-label="their edge" value={edge}
-            onChange={(e) => commit({ align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: e.target.value as AnchorEdge, offset: placement?.offset ?? 0 })}
-          >
-            {EDGES.map((ed) => <option key={ed} value={ed}>their {ed}</option>)}
-          </select>
-        </>
-      )}
-      <NumberField
-        label="" value={placement?.offset ?? 0} suffix="mm"
-        testId={`offset-${AXIS_NAMES[props.axis]}`}
-        onCommit={(offset) => commit(anchored
-          ? { align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset }
-          : { origin: true, offset })}
-      />
     </div>
   );
 }

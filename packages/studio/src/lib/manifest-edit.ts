@@ -519,6 +519,67 @@ export function makeGroup(manifest: Manifest, partIds: string[], label: string):
   });
 }
 
+/** Drop a loose part into an existing assembly, merging its colour option. */
+export function addPartToGroup(manifest: Manifest, groupId: string, partId: string): Manifest {
+  const group = manifest.groups?.find((g) => g.id === groupId);
+  if (!group) throw new EditError(`no assembly "${groupId}"`);
+  partOf(manifest, partId);
+  if (group.parts.includes(partId)) return manifest;
+  if (manifest.groups!.some((g) => g.parts.includes(partId))) {
+    throw new EditError(`part "${partId}" is already in an assembly`);
+  }
+  return edit(manifest, (draft) => {
+    const g = draft.groups!.find((x) => x.id === groupId)!;
+    g.parts.push(partId);
+    const merged = draft.options.find(
+      (o): o is ColourOption => isColour(o) && o.id === `${groupId}-colour`);
+    if (!merged) return;
+    const solo = draft.options.find((o): o is ColourOption =>
+      isColour(o) && o.source !== 'used' && o.parts.length === 1 && o.parts[0] === partId);
+    if (solo && solo.id !== merged.id) {
+      draft.options = draft.options.filter((o) => o.id !== solo.id);
+      for (const option of draft.options) {
+        if (!isColour(option)) continue;
+        if (option.linkedTo === solo.id) option.linkedTo = merged.id;
+        if (option.default === `@${solo.id}`) option.default = `@${merged.id}`;
+      }
+      if (!merged.parts.includes(partId)) merged.parts.push(partId);
+    } else if (!draft.options.some((o) => isColour(o) && o.parts.includes(partId))) {
+      merged.parts.push(partId);
+    }
+  });
+}
+
+/**
+ * Pull one part out of an assembly. The part gets its own colour option back
+ * (split from the shared one); an assembly left with one member dissolves.
+ */
+export function removePartFromGroup(manifest: Manifest, groupId: string, partId: string): Manifest {
+  const group = manifest.groups?.find((g) => g.id === groupId);
+  if (!group || !group.parts.includes(partId)) {
+    throw new EditError(`"${partId}" is not in assembly "${groupId}"`);
+  }
+  return edit(manifest, (draft) => {
+    const g = draft.groups!.find((x) => x.id === groupId)!;
+    g.parts = g.parts.filter((p) => p !== partId);
+    if (g.parts.length < 2) {
+      draft.groups = draft.groups!.filter((x) => x.id !== groupId);
+      if (!draft.groups.length) delete draft.groups;
+    }
+    const merged = draft.options.find((o): o is ColourOption =>
+      isColour(o) && o.id === `${groupId}-colour` && o.parts.includes(partId));
+    if (merged && merged.parts.length > 1) {
+      merged.parts = merged.parts.filter((p) => p !== partId);
+      let soloId = `${partId}-colour`;
+      for (let n = 2; draft.options.some((o) => o.id === soloId); n++) soloId = `${partId}-colour-${n}`;
+      const solo: ColourOption = {
+        ...structuredClone(merged), id: soloId, label: partOf(draft, partId).label, parts: [partId],
+      };
+      draft.options.splice(draft.options.findIndex((o) => o.id === merged.id) + 1, 0, solo);
+    }
+  });
+}
+
 /** Dissolve a group. The merged colour option stays — it still makes sense. */
 export function ungroup(manifest: Manifest, groupId: string): Manifest {
   if (!manifest.groups?.some((g) => g.id === groupId)) throw new EditError(`no group "${groupId}"`);
@@ -561,17 +622,39 @@ export function nudgeGroup(manifest: Manifest, groupId: string, deltas: [number,
 }
 
 /**
+ * In a draft: drop a part's own optional-add-on gate. Joining a pick-one set
+ * supersedes being an add-on, and refusing over it was the failure merchants
+ * actually hit — the tiny error was easy to miss and the set silently never
+ * existed, so the preview had nothing to choose between.
+ */
+function absorbAddon(draft: Manifest, partId: string): void {
+  const part = partOf(draft, partId);
+  const rule = part.visibleWhen;
+  if (!rule || rule.option !== `${partId}-addon`) return;
+  const option = draft.options.find((o) => o.id === rule.option);
+  if (option && isChoice(option) && option.role !== 'variant') {
+    delete part.visibleWhen;
+    draft.options = draft.options.filter((o) => o.id !== rule.option);
+  }
+}
+
+/**
  * Turn parts into customer-selectable variants: a choice option where
- * exactly one of the parts is visible at a time.
+ * exactly one of the parts is visible at a time. A part that was an optional
+ * add-on sheds that (the choice replaces it); a part in someone else's
+ * choice is refused.
  */
 export function makeVariantChoice(manifest: Manifest, partIds: string[], label: string): Manifest {
   if (partIds.length < 2) throw new EditError('a choice needs at least two parts');
   if (!label.trim()) throw new EditError('the choice needs a name — customers see it');
   for (const id of partIds) {
     const part = partOf(manifest, id);
-    if (part.visibleWhen) throw new EditError(`part "${id}" is already an add-on or variant`);
+    if (part.visibleWhen && part.visibleWhen.option !== `${id}-addon`) {
+      throw new EditError(`part "${id}" is already part of another choice`);
+    }
   }
   return edit(manifest, (draft) => {
+    for (const id of partIds) absorbAddon(draft, id);
     let optionId = slug(label);
     for (let n = 2; draft.options.some((o) => o.id === optionId); n++) optionId = `${slug(label)}-${n}`;
     draft.options.push({
@@ -584,6 +667,52 @@ export function makeVariantChoice(manifest: Manifest, partIds: string[], label: 
     });
     for (const id of partIds) {
       partOf(draft, id).visibleWhen = { option: optionId, equals: [id] };
+    }
+  });
+}
+
+/** Drop a loose part into an existing pick-one set. */
+export function addPartToChoice(manifest: Manifest, optionId: string, partId: string): Manifest {
+  const option = optionOf(manifest, optionId);
+  if (!isChoice(option) || option.role !== 'variant') throw new EditError(`"${optionId}" is not a pick-one set`);
+  if (option.choices.some((c) => c.id === partId)) return manifest;
+  const part = partOf(manifest, partId);
+  if (part.visibleWhen && part.visibleWhen.option !== `${partId}-addon`) {
+    throw new EditError(`part "${partId}" already belongs to another choice`);
+  }
+  if (manifest.groups?.some((g) => g.parts.includes(partId))) {
+    throw new EditError(`part "${partId}" is in an assembly — take it out first`);
+  }
+  return edit(manifest, (draft) => {
+    absorbAddon(draft, partId);
+    const o = draft.options.find((x) => x.id === optionId) as ChoiceOption;
+    o.choices.push({ id: partId, label: partOf(draft, partId).label });
+    partOf(draft, partId).visibleWhen = { option: optionId, equals: [partId] };
+  });
+}
+
+/**
+ * Pull one part out of a pick-one set: the part is always included again.
+ * Below two remaining choices the set dissolves — "pick one of one" is not a
+ * choice.
+ */
+export function removePartFromChoice(manifest: Manifest, optionId: string, partId: string): Manifest {
+  const option = optionOf(manifest, optionId);
+  if (!isChoice(option) || option.role !== 'variant' || !option.choices.some((c) => c.id === partId)) {
+    throw new EditError(`"${partId}" is not one of the choices in "${optionId}"`);
+  }
+  return edit(manifest, (draft) => {
+    const o = draft.options.find((x) => x.id === optionId) as ChoiceOption;
+    o.choices = o.choices.filter((c) => c.id !== partId);
+    const part = draft.parts.find((p) => p.id === partId);
+    if (part?.visibleWhen?.option === optionId) delete part.visibleWhen;
+    if (o.choices.length < 2) {
+      draft.options = draft.options.filter((x) => x.id !== optionId);
+      for (const p of draft.parts) {
+        if (p.visibleWhen?.option === optionId) delete p.visibleWhen;
+      }
+    } else if (o.default === partId) {
+      o.default = o.choices[0].id;
     }
   });
 }
@@ -642,16 +771,17 @@ export function entriesOf(manifest: Manifest): ExplorerEntry[] {
 }
 
 /**
- * Move an explorer entry up or down. Rebuilds the parts array from the new
- * entry order (an entry's parts travel together) and re-sorts options to
- * follow — options order is what the customer panel renders.
+ * Move an explorer entry to a specific position (what a drag drop commits).
+ * Rebuilds the parts array from the new entry order (an entry's parts travel
+ * together) and re-sorts options to follow — options order is what the
+ * customer panel renders.
  */
-export function moveEntry(manifest: Manifest, entryId: string, direction: -1 | 1): Manifest {
+export function moveEntryTo(manifest: Manifest, entryId: string, toIndex: number): Manifest {
   const entries = entriesOf(manifest);
   const at = entries.findIndex((e) => e.id === entryId);
   if (at === -1) throw new EditError(`no explorer entry "${entryId}"`);
-  const to = at + direction;
-  if (to < 0 || to >= entries.length) return manifest;
+  const to = Math.max(0, Math.min(entries.length - 1, toIndex));
+  if (to === at) return manifest;
   const reordered = [...entries];
   const [entry] = reordered.splice(at, 1);
   reordered.splice(to, 0, entry);
@@ -676,6 +806,16 @@ export function moveEntry(manifest: Manifest, entryId: string, direction: -1 | 1
       .sort((a, b) => a.key - b.key || a.i - b.i)
       .map((x) => x.o);
   });
+}
+
+/** Move an explorer entry one step up or down. */
+export function moveEntry(manifest: Manifest, entryId: string, direction: -1 | 1): Manifest {
+  const entries = entriesOf(manifest);
+  const at = entries.findIndex((e) => e.id === entryId);
+  if (at === -1) throw new EditError(`no explorer entry "${entryId}"`);
+  const to = at + direction;
+  if (to < 0 || to >= entries.length) return manifest;
+  return moveEntryTo(manifest, entryId, to);
 }
 
 // ── camera ──────────────────────────────────────────────────────────────────

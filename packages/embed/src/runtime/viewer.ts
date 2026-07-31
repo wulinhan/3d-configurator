@@ -17,10 +17,12 @@ import { partColours, visibleParts, type Selections } from './state.ts';
 /**
  * three.js r155 switched to physically-based light units: a directional
  * light's contribution is now divided by pi where it previously wasn't.
- * The intensities below are the ones the shipped r128 configurators use, so
- * they're scaled back up to match — measured against the live page, a Jade
- * White body renders at 150/255 without this and 240-255 with it, and
- * customers are looking at the brighter one today.
+ * The intensities below started as the shipped r128 configurators' values
+ * scaled back up to match (LIGHT_SCALE), then the ambient share was pulled
+ * down: at the legacy balance the ambient term alone exceeded 1.0, so every
+ * face of a white part clipped to the same flat 255 and the model read as a
+ * silhouette. Filmic tone mapping plus a smaller ambient keeps whites bright
+ * (~235) while letting the key light and environment carve visible form.
  */
 const LIGHT_SCALE = Math.PI;
 
@@ -129,6 +131,7 @@ export class Viewer {
   private rafId = 0;
   private viewTween = 0;
   private hiddenParts = new Set<string>();
+  private shadowCatcher?: THREE.Mesh;
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
   private rawBoxes = new Map<string, Box>();
@@ -146,6 +149,11 @@ export class Viewer {
     this.renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio ?? 1, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Highlight rolloff instead of hard clipping — the reason white parts
+    // show their chamfers and logos rather than rendering as a flat sheet.
+    // The clear colour bypasses tone mapping, so the background is unchanged.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.25;
     this.renderer.setClearColor(new THREE.Color(cam.background ?? '#F8F6F1'));
 
     this.camera = new THREE.PerspectiveCamera(cam.fov ?? 38, 1, 0.1, 5000);
@@ -170,15 +178,15 @@ export class Viewer {
     // stray-wound faces, oddly translucent.
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.35;
+    this.scene.environmentIntensity = 0.5;
     pmrem.dispose();
     this.bindPicking(opts.canvas);
   }
 
   private addLights() {
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55 * LIGHT_SCALE));
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.2 * LIGHT_SCALE));
 
-    const key = new THREE.DirectionalLight(0xffffff, 0.65 * LIGHT_SCALE);
+    const key = new THREE.DirectionalLight(0xffffff, 0.7 * LIGHT_SCALE);
     key.position.set(80, 140, 120);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -270,6 +278,21 @@ export class Viewer {
       this.group.add(mesh);
     }
 
+    // A contact shadow under the model. Without it a white product's lit top
+    // faces sit within a few units of the pale page background and the
+    // silhouette dissolves — the shadow is what separates white-on-white.
+    // ShadowMaterial renders nothing but the received shadow, and the plane
+    // is not in `meshes`, so picking and layout maths never see it.
+    const catcher = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 48),
+      new THREE.ShadowMaterial({ opacity: 0.2 }),
+    );
+    catcher.rotation.x = -Math.PI / 2;
+    catcher.receiveShadow = true;
+    this.scene.add(catcher);
+    this.shadowCatcher = catcher;
+    this.fitShadowCatcher();
+
     // Only frame the model automatically when the manifest didn't say where to
     // look — a merchant's chosen angle must survive.
     if (!this.manifest.camera?.target) {
@@ -307,6 +330,20 @@ export class Viewer {
         material.metalness = part.material?.metalness ?? 0;
       }
     }
+    this.fitShadowCatcher();
+  }
+
+  /** Keep the contact shadow under the model as edits move and resize it. */
+  private fitShadowCatcher(): void {
+    const catcher = this.shadowCatcher;
+    if (!catcher) return;
+    const b = modelBounds(this.layout);
+    if (!Number.isFinite(b.min[0])) { catcher.visible = false; return; }
+    const span = Math.max(b.max[0] - b.min[0], b.max[2] - b.min[2], 1);
+    catcher.visible = true;
+    catcher.scale.setScalar(span * 1.4);
+    // A hair below the ground plane so coplanar bottom faces don't z-fight.
+    catcher.position.set((b.min[0] + b.max[0]) / 2, Math.min(b.min[1], 0) - 0.05, (b.min[2] + b.max[2]) / 2);
   }
 
   /** Where the laid-out model currently sits, in mm. */

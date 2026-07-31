@@ -41,6 +41,13 @@ test/                      unit tests, plus a browser smoke test of the demo
 The demo storefront the tests drive lives in `apps/demo/` at the repo root —
 a hand-authored manifest, its model, and a mock cart.
 
+Rendering uses filmic (ACES) tone mapping with the ambient share pulled well
+below the key light: at the old balance the ambient term alone clipped every
+face of a white part to the same flat 255, so white products rendered as
+silhouettes. A soft contact shadow under the model does the other half of the
+job — a lit white top face sits within a few units of the pale page
+background, and the shadow is what keeps the silhouette readable.
+
 ## Canonical space
 
 Everything downstream assumes **millimetres, Y-up, X/Z centred on the model,
@@ -116,13 +123,15 @@ the host's cart own base price, currency, tax and discounts. A merchant's store
 is the authority on money; a second copy here would go stale.
 
 Two structural notions sit on top of parts. `groups` marks a set of parts the
-Studio treats as one (moved together, one shared colour option) — the runtime
-ignores it beyond validation, because by the time a manifest ships, the merge
-has already happened in the options. A `choice` option with `role: "variant"`
-makes its parts mutually exclusive: each carries `visibleWhen` on that option,
-so customers pick which part they get and exactly one renders. `role` is
-advisory (the Studio's construction note); visibility itself flows through the
-same `visibleWhen` machinery add-ons use.
+Studio treats as one — an *assembly*: moved together, one shared colour
+option. The runtime ignores it beyond validation, because by the time a
+manifest ships, the merge has already happened in the options. A `choice`
+option with `role: "variant"` is a *pick-one set*: its parts are mutually
+exclusive, each carries `visibleWhen` on that option, so customers pick which
+part they get and exactly one renders. `role` is advisory (the Studio's
+construction note); visibility itself flows through the same `visibleWhen`
+machinery add-ons use. Clicking a part whose visibility hangs on a choice
+opens that choice in the panel.
 
 ## Trying it
 

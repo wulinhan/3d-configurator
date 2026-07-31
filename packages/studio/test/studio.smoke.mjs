@@ -111,15 +111,21 @@ const measureCoverage = () => page.evaluate(() => {
   const d = x.getImageData(0, 0, 120, 90).data;
   // Compare against the manifest's background colour, not pixel (0,0) — after
   // a camera failure the corner pixel can be model, poisoning the reference.
+  // The tolerance is tight (12) because tone mapping renders a white part
+  // only ~25 units below the background — form, not glare.
   const bg = [0xF8, 0xF6, 0xF1];
   let n = 0;
   for (let i = 0; i < d.length; i += 4) {
-    if (Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 24) n++;
+    if (Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 12) n++;
   }
   return n / (120 * 90);
 });
 const coverage = await measureCoverage();
-check('model renders in the viewer', coverage > 0.04, coverage.toFixed(4));
+// The fixture's base is white, and a tone-mapped white top face sits within
+// the ±12 band of the background — what registers is the dark cap, the front
+// faces and the contact shadow, ~2% of the stage. The failure this guards
+// against (camera never framed, model microscopic) measures under 0.1%.
+check('model renders in the viewer', coverage > 0.012, coverage.toFixed(4));
 
 // ── 2. size panel shows real mm (3MF was Z-up: 10 tall becomes H) ───────────
 const sizeOf = async (id) => ({
@@ -338,8 +344,10 @@ await shoot('2-anchored.png');
     const r = document.querySelector('.stage canvas').getBoundingClientRect();
     // Grid-scan for background, keeping clear of the toolbar (top-left) and
     // the view cube (top-right).
+    // Stay left of the floating properties panel (right ~350px of the stage):
+    // a click there lands on the panel, not the canvas.
     for (let fy = 0.15; fy < 0.95; fy += 0.1) {
-      for (let fx = 0.05; fx < 0.95; fx += 0.08) {
+      for (let fx = 0.05; fx < 0.6; fx += 0.08) {
         if (fy < 0.25 && (fx < 0.35 || fx > 0.75)) continue;
         const x = r.left + r.width * fx, y = r.top + r.height * fy;
         if (!window.__studioViewer.pickFaceAt(x, y)) return [x, y];
@@ -355,8 +363,12 @@ await shoot('2-anchored.png');
     selected: (window).__studio?.manifest && document.querySelector('.part-row.is-active') !== null,
   }));
   check('clicking empty space deselects and hides the gizmo', detached.object === false, detached);
+  check('…and the floating properties panel slides away', await page.evaluate(
+    () => !document.querySelector('[data-testid="props-float"]')?.classList.contains('is-open')), '');
   await page.click('.part-name:has-text("Cap")');
   await page.waitForTimeout(700);
+  check('selecting a part slides the properties panel in', await page.evaluate(
+    () => document.querySelector('[data-testid="props-float"]')?.classList.contains('is-open') === true), '');
   await page.click('[data-testid="gizmo-off"]');
 }
 
@@ -601,32 +613,43 @@ await shoot('4-publish.png');
   w = Number(await page.inputValue('[data-testid="size-w"]'));
   check('Undo button rewinds again', near(w, 80), w);
 
-  // 11b. release the cap from its add-on so it can join structures
-  await page.click('.part-name:has-text("Cap")');
-  await page.waitForTimeout(150);
-  await page.uncheck('[data-testid="addon-toggle"]');
-  await page.waitForTimeout(200);
-  m = await manifest();
-  check('cap back to always-included',
-    !m.parts[1].visibleWhen && !m.options.some((o) => o.id === 'cap-addon'),
-    { visibleWhen: m.parts[1].visibleWhen, options: m.options.map((o) => o.id) });
+  // A pointer drag from a six-dot handle to a target element. `place` picks
+  // the drop band: above/below a row reorders, centre of a bundle joins it.
+  const dragTo = async (handleSel, targetSel, place) => {
+    const h = await page.locator(handleSel).boundingBox();
+    const t = await page.locator(targetSel).boundingBox();
+    const from = [h.x + h.width / 2, h.y + h.height / 2];
+    const to = [
+      t.x + t.width / 2,
+      place === 'above' ? t.y + 2 : place === 'below' ? t.y + t.height - 2 : t.y + t.height / 2,
+    ];
+    await page.mouse.move(...from);
+    await page.mouse.down();
+    for (let i = 1; i <= 6; i++) {
+      await page.mouse.move(from[0] + (to[0] - from[0]) * i / 6, from[1] + (to[1] - from[1]) * i / 6);
+      await page.waitForTimeout(30);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+  };
 
-  // 11c. reorder entries — parts order, option order and the explorer follow
-  await page.click('[data-testid="move-down-base"]');
-  await page.waitForTimeout(200);
+  // 11b. reorder by dragging the handle — parts order, option order and the
+  // explorer all follow
+  await dragTo('[data-testid="drag-base"]', '.entry-line:has([data-testid="drag-cap"])', 'below');
   m = await manifest();
-  check('move-down reorders manifest parts and drags the options along',
+  check('dragging a row below another reorders manifest parts and drags the options along',
     m.parts.map((p) => p.id).join(',') === 'cap,base'
     && m.options.findIndex((o) => o.id === 'cap-colour') < m.options.findIndex((o) => o.id === 'base-colour'),
     { parts: m.parts.map((p) => p.id), options: m.options.map((o) => o.id) });
   check('explorer lists the new order', (await page.textContent('.part-rows .part-name'))?.includes('Cap'),
     await page.textContent('.part-rows .part-name'));
-  await page.click('[data-testid="move-up-base"]');
-  await page.waitForTimeout(200);
+  await dragTo('[data-testid="drag-base"]', '.entry-line:has([data-testid="drag-cap"])', 'above');
   m = await manifest();
-  check('move-up restores the order', m.parts.map((p) => p.id).join(',') === 'base,cap', m.parts.map((p) => p.id));
+  check('dragging back above restores the order', m.parts.map((p) => p.id).join(',') === 'base,cap', m.parts.map((p) => p.id));
 
-  // 11d. multi-select → customer choice: mutually exclusive variants
+  // 11c. multi-select → pick-one set. The cap is still an optional add-on
+  // from section 9 — creating the set must absorb that, not silently refuse
+  // (the exact failure a real merchant hit).
   await page.check('[data-testid="pick-base"]');
   await page.check('[data-testid="pick-cap"]');
   await page.click('[data-testid="make-variant"]');
@@ -635,29 +658,46 @@ await shoot('4-publish.png');
   await page.waitForTimeout(300);
   m = await manifest();
   const variant = m.options.find((o) => o.id === 'body-style');
-  check('customer choice created from the selection',
+  check('pick-one set created — and it absorbed the cap\'s add-on state',
     variant?.role === 'variant' && variant?.choices?.map((c) => c.id).join(',') === 'base,cap'
     && variant?.default === 'base'
+    && !m.options.some((o) => o.id === 'cap-addon')
     && m.parts.every((p) => p.visibleWhen?.option === 'body-style'),
-    variant);
-  check('variants are mutually exclusive — only the default shows',
+    { variant, options: m.options.map((o) => o.id) });
+  check('choices are mutually exclusive — only the default shows',
     (await visible('base')) === true && (await visible('cap')) === false, '');
   await page.click('.entry-members .part-name:has-text("Cap")');
   await page.waitForTimeout(300);
-  check('clicking the hidden variant swaps which one shows',
+  check('clicking the hidden choice swaps which one shows',
     (await visible('base')) === false && (await visible('cap')) === true, '');
-  check('variant member editor prices the choice — no add-on toggle to corrupt it',
+  check('a member\'s editor prices the choice — no add-on toggle to corrupt it',
     (await page.isVisible('[data-testid="variant-price"]'))
     && !(await page.isVisible('[data-testid="addon-toggle"]')), '');
+
+  // 11d. the preview must let customers actually choose between them
+  await page.click('[data-testid="preview-open"]');
+  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
+  await page.waitForTimeout(400);
+  await page.click('.preview-overlay .cfg-tab:has-text("Body style")');
+  await page.waitForTimeout(200);
+  await page.click('.preview-overlay .cfg-choice:has-text("Cap")');
+  await page.waitForTimeout(300);
+  check('customers can switch the pick-one set in the preview',
+    await page.evaluate(() => (window).__previewPayload?.selections?.['body-style'] === 'cap'),
+    await page.evaluate(() => (window).__previewPayload?.selections));
+  await page.click('[data-testid="preview-close"]');
+  await page.waitForTimeout(200);
+
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(300);
   m = await manifest();
-  check('undo dissolves the choice; both parts always visible again',
-    !m.options.some((o) => o.id === 'body-style') && m.parts.every((p) => !p.visibleWhen)
+  check('one undo removes the set and restores the cap\'s add-on state',
+    !m.options.some((o) => o.id === 'body-style') && m.options.some((o) => o.id === 'cap-addon')
+    && m.parts[1].visibleWhen?.option === 'cap-addon'
     && (await visible('base')) === true && (await visible('cap')) === true,
     m.options.map((o) => o.id));
 
-  // 11e. multi-select → group: one entry, one merged colour control
+  // 11e. multi-select → assembly: one entry, one merged colour control
   await page.check('[data-testid="pick-base"]');
   await page.check('[data-testid="pick-cap"]');
   await page.click('[data-testid="make-group"]');
@@ -666,26 +706,57 @@ await shoot('4-publish.png');
   await page.waitForTimeout(300);
   m = await manifest();
   const shellColour = m.options.find((o) => o.id === 'shell-colour');
-  check('group recorded; member colour options merged into one',
+  check('assembly recorded; member colour options merged into one',
     m.groups?.[0]?.id === 'shell' && m.groups[0].parts.join(',') === 'base,cap'
     && shellColour?.parts?.length === 2
     && !m.options.some((o) => o.id === 'base-colour' || o.id === 'cap-colour'),
     { groups: m.groups, options: m.options.map((o) => o.id) });
   await page.click('[data-testid="eye-shell"]');
   await page.waitForTimeout(200);
-  check('group eyeball hides every member',
+  check('assembly eyeball hides every member',
     (await visible('base')) === false && (await visible('cap')) === false, '');
   await page.click('[data-testid="eye-shell"]');
   await page.waitForTimeout(200);
   check('…and shows them again',
     (await visible('base')) === true && (await visible('cap')) === true, '');
-  await page.keyboard.press('Control+z');
-  await page.waitForTimeout(300);
+
+  // Drag a member OUT: below two members the assembly dissolves, and the
+  // departing part paints alone again.
+  await dragTo('[data-testid="drag-cap"]', '.part-list-head', 'centre');
   m = await manifest();
-  check('undo ungroups and restores the per-part colour options',
+  check('dragging a member out dissolves the two-part assembly and splits its colour back',
+    !m.groups && m.options.some((o) => o.id === 'cap-colour'),
+    { groups: m.groups, options: m.options.map((o) => o.id) });
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  check('undo re-forms the assembly', m.groups?.[0]?.id === 'shell', m.groups);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  check('a second undo unwinds the assembly itself',
     !m.groups && m.options.some((o) => o.id === 'base-colour') && m.options.some((o) => o.id === 'cap-colour'),
     { groups: m.groups, options: m.options.map((o) => o.id) });
   await shoot('5-structure.png');
+
+  // 11e². the explorer panel resizes and collapses at its divider
+  const panelWidth = () => page.evaluate(() => document.querySelector('.panel').getBoundingClientRect().width);
+  {
+    const divider = await page.locator('[data-testid="panel-divider"]').boundingBox();
+    await page.mouse.move(divider.x + divider.width / 2, divider.y + divider.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 5; i++) await page.mouse.move(divider.x + i * 24, divider.y + divider.height / 2);
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+    const widened = await panelWidth();
+    check('dragging the divider widens the explorer', widened > 420, widened);
+    await page.click('[data-testid="panel-divider"]');
+    await page.waitForTimeout(350);
+    check('clicking the divider collapses it', (await panelWidth()) < 10, await panelWidth());
+    await page.click('[data-testid="panel-divider"]');
+    await page.waitForTimeout(350);
+    check('…and expands it again', (await panelWidth()) > 420, await panelWidth());
+  }
 
   // 11f. the customer preview is the real embed
   await page.click('[data-testid="preview-open"]');

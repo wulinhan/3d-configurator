@@ -79,7 +79,9 @@ const read = () => page.evaluate(() => ({
     const bg = [d[0], d[1], d[2]];
     let n = 0;
     for (let i = 0; i < d.length; i += 4) {
-      if (Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 24) n++;
+      // Tight tolerance: tone mapping renders a white body only ~25 units
+      // below the pale background — that's form, and it must still count.
+      if (Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 12) n++;
     }
     return n / (120 * 90);
   })(),

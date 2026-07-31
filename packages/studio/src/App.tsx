@@ -6,8 +6,13 @@
 // validated manifest, so history is just a stack of past manifests — no
 // command objects, no inverse operations. Gizmo drags stream transient
 // commits (which replace instead of push), so a whole drag is one undo step.
+//
+// Layout: a resizable explorer on the left (drag the divider; click its pill
+// to collapse), the stage in the middle, and a floating properties panel
+// that slides in over the stage's right edge whenever a part or assembly is
+// selected — the stage keeps its full width, the properties come to you.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Manifest, ChoiceOption } from '../../embed/src/manifest/types.ts';
 import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
@@ -16,6 +21,7 @@ import { initManifest, boundsOf, boundsByPartId, type PartBounds } from './lib/m
 import { ImportError } from './lib/types.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
+import { PartEditor, GroupEditor } from './ui/PartEditor.tsx';
 import { PalettePanel } from './ui/PalettePanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
 import { PreviewOverlay } from './ui/PreviewOverlay.tsx';
@@ -38,22 +44,40 @@ export interface SetManifestOptions {
 const TABS = ['Parts', 'Palette', 'Publish'] as const;
 type Tab = typeof TABS[number];
 const HISTORY_LIMIT = 100;
+const PANEL_MIN = 280;
+const PANEL_MAX = 560;
 
 const isVariantOption = (m: Manifest, optionId: string): boolean => {
   const o = m.options.find((x) => x.id === optionId);
   return o?.type === 'choice' && (o as ChoiceOption).role === 'variant';
 };
 
+const UNDO_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4.5 9.5A 8.5 8.5 0 1 1 3.5 15" />
+    <polyline points="4.5 4.5 4.5 9.5 9.5 9.5" />
+  </svg>
+);
+const REDO_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M19.5 9.5A 8.5 8.5 0 1 0 20.5 15" />
+    <polyline points="19.5 4.5 19.5 9.5 14.5 9.5" />
+  </svg>
+);
+
 export function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('Parts');
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
+  const [editingGroup, setEditingGroup] = useState<string | null>(null);
   const [hiddenParts, setHiddenParts] = useState<Set<string>>(new Set());
   const [solo, setSolo] = useState<string | null>(null);
   const [axes, setAxes] = useState<string>(AXIS_PRESETS[1].axes); // 3D-print files dominate
   const [previewing, setPreviewing] = useState(false);
-  // Which choice each variant option shows while authoring — the merchant's
+  const [panelWidth, setPanelWidth] = useState(380);
+  const [panelOpen, setPanelOpen] = useState(true);
+  // Which choice each pick-one option shows while authoring — the merchant's
   // temporary pick, never written to the manifest.
   const [variantPreview, setVariantPreview] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
@@ -84,6 +108,7 @@ export function App() {
       pastRef.current = [];
       futureRef.current = [];
       setSelectedPart(manifest.parts[0]?.id ?? null);
+      setEditingGroup(null);
       setHiddenParts(new Set());
       setSolo(null);
       setVariantPreview({});
@@ -138,10 +163,11 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [undo, redo]);
 
-  // Selecting a hidden variant switches the preview to it — "only one can be
-  // visible and edited at once" means clicking the other one shows it.
+  // Selecting a hidden pick-one member switches the preview to it — "only one
+  // can be visible and edited at once" means clicking the other one shows it.
   const selectPart = useCallback((id: string | null) => {
     setSelectedPart(id);
+    if (id) setEditingGroup(null);
     if (!id) return;
     const m = projectRef.current?.manifest;
     const rule = m?.parts.find((p) => p.id === id)?.visibleWhen;
@@ -158,10 +184,10 @@ export function App() {
     for (const part of m.parts) {
       const rule = part.visibleWhen;
       if (!rule?.equals?.length) continue;
-      // Variants keep their exclusivity — that's the point of them. Optional
-      // add-ons are forced visible while authoring: a customer's default is
-      // "not selected", and honouring that made a part vanish the moment it
-      // was marked optional.
+      // Pick-one sets keep their exclusivity — that's the point of them.
+      // Optional add-ons are forced visible while authoring: a customer's
+      // default is "not selected", and honouring that made a part vanish the
+      // moment it was marked optional.
       if (!isVariantOption(m, rule.option)) s[rule.option] = rule.equals[0];
     }
     for (const [optionId, choiceId] of Object.entries(variantPreview)) {
@@ -189,6 +215,30 @@ export function App() {
     });
   }, []);
 
+  // Divider: drag resizes the explorer, a click (no meaningful movement)
+  // collapses/expands it.
+  const onDividerDown = useCallback((e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+    const wasOpen = panelOpen;
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      if (!moved && Math.abs(dx) < 4) return;
+      moved = true;
+      if (!wasOpen) setPanelOpen(true);
+      setPanelWidth(Math.min(PANEL_MAX, Math.max(PANEL_MIN, (wasOpen ? startWidth : 0) + dx)));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      if (!moved) setPanelOpen((o) => !o);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }, [panelWidth, panelOpen]);
+
   // The browser test reads and drives the app through this handle; it costs
   // nothing in production and makes "did the feature actually work" checkable.
   useEffect(() => {
@@ -201,6 +251,18 @@ export function App() {
       historyDepth: () => ({ past: pastRef.current.length, future: futureRef.current.length }),
     } : null;
   }, [project, setManifest, undo, redo]);
+
+  // The floating properties panel: slides in when something is selected,
+  // slides out (keeping its last content while it goes) when nothing is.
+  const floatContent = project && tab === 'Parts'
+    ? (editingGroup
+      ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onClose={() => setEditingGroup(null)} />
+      : selectedPart
+        ? <PartEditor key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} />
+        : null)
+    : null;
+  const lastFloatRef = useRef<ReactNode>(null);
+  if (floatContent) lastFloatRef.current = floatContent;
 
   if (!project) {
     return (
@@ -246,13 +308,13 @@ export function App() {
         />
         <span className="spacer" />
         <button
-          className="ghost" data-testid="undo" title="Undo (Ctrl+Z)"
+          className="ghost icon-btn" data-testid="undo" title="Undo (Ctrl+Z)" aria-label="Undo"
           disabled={pastRef.current.length === 0} onClick={undo}
-        >↩ Undo</button>
+        >{UNDO_ICON}</button>
         <button
-          className="ghost" data-testid="redo" title="Redo (Ctrl+Shift+Z)"
+          className="ghost icon-btn" data-testid="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"
           disabled={futureRef.current.length === 0} onClick={redo}
-        >↪ Redo</button>
+        >{REDO_ICON}</button>
         <button className="ghost preview-btn" data-testid="preview-open" onClick={() => setPreviewing(true)}>
           Preview
         </button>
@@ -262,7 +324,7 @@ export function App() {
       </header>
 
       <div className="workspace">
-        <aside className="panel">
+        <aside className="panel" style={{ width: panelOpen ? panelWidth : 0 }} aria-hidden={!panelOpen}>
           <nav className="tabs" role="tablist">
             {TABS.map((t) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'is-active' : ''} onClick={() => setTab(t)}>
@@ -275,7 +337,9 @@ export function App() {
               project={project} selectedPart={selectedPart}
               hiddenParts={hiddenParts} solo={solo}
               selections={selections}
+              editingGroup={editingGroup}
               onSelectPart={selectPart}
+              onEditGroup={setEditingGroup}
               onSetHidden={setHidden}
               onSolo={setSolo}
               onHideAll={(hide) => { setSolo(null); setHiddenParts(hide ? new Set(project.manifest.parts.map((p) => p.id)) : new Set()); }}
@@ -286,12 +350,25 @@ export function App() {
           {tab === 'Publish' && <PublishPanel project={project} onChange={setManifest} />}
         </aside>
 
-        <ViewerPane
-          project={project} selections={selections} selectedPart={selectedPart}
-          hiddenParts={effectiveHidden}
-          onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
-          onChange={setManifest}
-        />
+        <div
+          className="panel-divider" data-testid="panel-divider" role="separator"
+          aria-label={panelOpen ? 'Drag to resize the explorer; click to collapse' : 'Click to expand the explorer'}
+          onPointerDown={onDividerDown}
+        >
+          <span className="divider-pill" data-testid="panel-toggle">{panelOpen ? '◂' : '▸'}</span>
+        </div>
+
+        <div className="stage-wrap">
+          <ViewerPane
+            project={project} selections={selections} selectedPart={selectedPart}
+            hiddenParts={effectiveHidden}
+            onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
+            onChange={setManifest}
+          />
+          <div className={`props-float${floatContent ? ' is-open' : ''}`} data-testid="props-float" aria-hidden={!floatContent}>
+            {floatContent ?? lastFloatRef.current}
+          </div>
+        </div>
       </div>
       {previewing && <PreviewOverlay project={project} onClose={() => setPreviewing(false)} />}
     </div>
