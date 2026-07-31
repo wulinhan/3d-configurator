@@ -1,8 +1,15 @@
 // 3MF import — the format our own products (and most slicer workflows) start
-// life in. A 3MF is a zip; the geometry lives in an XML "model" entry as
+// life in. A 3MF is a zip; the geometry lives in XML "model" entries as
 // <object> elements holding meshes, composed via <component> references and
 // placed by <build><item> entries, each optionally carrying a 3×4 affine
 // transform.
+//
+// Two dialects matter in practice. PrusaSlicer writes everything into one
+// model file. Bambu Studio and Orca Slicer use the Production Extension:
+// the root file holds only references (`<component p:path="/3D/Objects/…"
+// objectid="1"/>`), and the meshes live in separate sub-model files inside
+// the zip. Objects are therefore keyed by (file, id), and every reference
+// resolves within its own file unless it carries a path.
 //
 // The XML is parsed with regexes rather than a DOM. That is a deliberate
 // trade: these files are machine-written (Bambu Studio, PrusaSlicer, Fusion,
@@ -49,6 +56,11 @@ const apply = (m: Affine, x: number, y: number, z: number): [number, number, num
 const attr = (tag: string, name: string): string | undefined =>
   tag.match(new RegExp(`(?:^|\\s)${name}="([^"]*)"`))?.[1];
 
+// The Production Extension's path attribute arrives under whatever namespace
+// prefix the writer chose (`p:path` from Bambu/Orca) — accept any prefix.
+const pathAttr = (tag: string): string | undefined =>
+  tag.match(/(?:^|\s)(?:\w+:)?path="([^"]*)"/)?.[1];
+
 const parseTransform = (spec: string | undefined): Affine => {
   if (!spec) return IDENTITY;
   const nums = spec.trim().split(/\s+/).map(Number);
@@ -61,7 +73,7 @@ const parseTransform = (spec: string | undefined): Affine => {
 interface ObjectDef {
   name?: string;
   mesh?: { positions: Float32Array; indices: Uint32Array };
-  components: Array<{ objectId: string; transform: Affine }>;
+  components: Array<{ objectId: string; path?: string; transform: Affine }>;
 }
 
 export function import3mf(bytes: Uint8Array): ImportedModel {
@@ -72,57 +84,74 @@ export function import3mf(bytes: Uint8Array): ImportedModel {
     throw new ImportError('not a 3MF file (zip container failed to open)');
   }
 
-  // The payload is conventionally 3D/3dmodel.model, but the spec only fixes
-  // the extension, so fall back to any .model entry.
-  const modelPath = entries['3D/3dmodel.model']
+  // Parse EVERY model entry, not just the root: production-extension files
+  // (Bambu Studio, Orca) spread objects across 3D/Objects/*.model sub-files.
+  const modelFiles = Object.keys(entries).filter((k) => k.endsWith('.model'));
+  if (!modelFiles.length) throw new ImportError('no 3D model payload inside the 3MF');
+  const rootPath = entries['3D/3dmodel.model']
     ? '3D/3dmodel.model'
-    : Object.keys(entries).find((k) => k.endsWith('.model'));
-  if (!modelPath) throw new ImportError('no 3D model payload inside the 3MF');
-  const xml = new TextDecoder().decode(entries[modelPath]);
+    : modelFiles.find((k) => new TextDecoder().decode(entries[k]).includes('<build')) ?? modelFiles[0];
+  const rootXml = new TextDecoder().decode(entries[rootPath]);
 
-  const unit = xml.match(/<model[^>]*\sunit="([^"]*)"/)?.[1] ?? 'millimeter';
+  const unit = rootXml.match(/<model[^>]*\sunit="([^"]*)"/)?.[1] ?? 'millimeter';
   const unitToMm = UNIT_TO_MM[unit];
   if (!unitToMm) throw new ImportError(`unknown 3MF unit "${unit}"`);
 
-  // ── objects ───────────────────────────────────────────────────────────────
-  const objects = new Map<string, ObjectDef>();
-  for (const m of xml.matchAll(/<object\b([^>]*)>([\s\S]*?)<\/object>/g)) {
-    const [, tag, body] = m;
-    const id = attr(tag, 'id');
-    if (!id) continue;
-    const def: ObjectDef = { name: attr(tag, 'name'), components: [] };
+  // Package paths are absolute ("/3D/Objects/x.model"); zip keys are not.
+  const normalizePath = (p: string): string => decodeURIComponent(p).replace(/^\/+/, '');
 
-    const meshBody = body.match(/<mesh\b[^>]*>([\s\S]*?)<\/mesh>/)?.[1];
-    if (meshBody) {
-      const positions: number[] = [];
-      for (const v of meshBody.matchAll(/<vertex\b([^>]*)\/>/g)) {
-        positions.push(Number(attr(v[1], 'x') ?? 0), Number(attr(v[1], 'y') ?? 0), Number(attr(v[1], 'z') ?? 0));
-      }
-      const indices: number[] = [];
-      for (const t of meshBody.matchAll(/<triangle\b([^>]*)\/>/g)) {
-        indices.push(Number(attr(t[1], 'v1')), Number(attr(t[1], 'v2')), Number(attr(t[1], 'v3')));
-      }
-      const count = positions.length / 3;
-      if (indices.some((i) => !Number.isInteger(i) || i < 0 || i >= count)) {
-        throw new ImportError(`object ${id}: triangle index out of range (${count} vertices)`);
-      }
-      def.mesh = { positions: Float32Array.from(positions), indices: Uint32Array.from(indices) };
-    }
+  // ── objects, keyed by (file, id) ──────────────────────────────────────────
+  const files = new Map<string, Map<string, ObjectDef>>();
+  for (const filePath of modelFiles) {
+    const xml = new TextDecoder().decode(entries[filePath]);
+    const objects = new Map<string, ObjectDef>();
+    for (const m of xml.matchAll(/<object\b([^>]*)>([\s\S]*?)<\/object>/g)) {
+      const [, tag, body] = m;
+      const id = attr(tag, 'id');
+      if (!id) continue;
+      const def: ObjectDef = { name: attr(tag, 'name'), components: [] };
 
-    for (const c of body.matchAll(/<component\b([^>]*)\/>/g)) {
-      const objectId = attr(c[1], 'objectid');
-      if (!objectId) throw new ImportError(`object ${id}: component without objectid`);
-      def.components.push({ objectId, transform: parseTransform(attr(c[1], 'transform')) });
+      const meshBody = body.match(/<mesh\b[^>]*>([\s\S]*?)<\/mesh>/)?.[1];
+      if (meshBody) {
+        const positions: number[] = [];
+        for (const v of meshBody.matchAll(/<vertex\b([^>]*)\/>/g)) {
+          positions.push(Number(attr(v[1], 'x') ?? 0), Number(attr(v[1], 'y') ?? 0), Number(attr(v[1], 'z') ?? 0));
+        }
+        const indices: number[] = [];
+        for (const t of meshBody.matchAll(/<triangle\b([^>]*)\/>/g)) {
+          indices.push(Number(attr(t[1], 'v1')), Number(attr(t[1], 'v2')), Number(attr(t[1], 'v3')));
+        }
+        const count = positions.length / 3;
+        if (indices.some((i) => !Number.isInteger(i) || i < 0 || i >= count)) {
+          throw new ImportError(`${filePath}, object ${id}: triangle index out of range (${count} vertices)`);
+        }
+        def.mesh = { positions: Float32Array.from(positions), indices: Uint32Array.from(indices) };
+      }
+
+      for (const c of body.matchAll(/<component\b([^>]*)\/>/g)) {
+        const objectId = attr(c[1], 'objectid');
+        if (!objectId) throw new ImportError(`${filePath}, object ${id}: component without objectid`);
+        def.components.push({ objectId, path: pathAttr(c[1]), transform: parseTransform(attr(c[1], 'transform')) });
+      }
+      objects.set(id, def);
     }
-    objects.set(id, def);
+    files.set(filePath, objects);
   }
-  if (!objects.size) throw new ImportError('3MF contains no objects');
+  if (![...files.values()].some((m) => m.size)) throw new ImportError('3MF contains no objects');
+
+  const lookup = (filePath: string, id: string): ObjectDef => {
+    const def = files.get(filePath)?.get(id);
+    if (!def) {
+      throw new ImportError(
+        `reference to missing object "${id}" in ${filePath} — the file may use a 3MF feature this importer doesn't know; please report it with the file`);
+    }
+    return def;
+  };
 
   // ── flatten: every leaf mesh under an object, transforms composed ─────────
-  const collect = (id: string, into: Array<{ positions: Float32Array; indices: Uint32Array }>, m: Affine, depth: number) => {
+  const collect = (filePath: string, id: string, into: Array<{ positions: Float32Array; indices: Uint32Array }>, m: Affine, depth: number) => {
     if (depth > 32) throw new ImportError('3MF component nesting too deep — probably a reference cycle');
-    const def = objects.get(id);
-    if (!def) throw new ImportError(`reference to missing object "${id}"`);
+    const def = lookup(filePath, id);
     if (def.mesh) {
       const src = def.mesh.positions;
       const positions = new Float32Array(src.length);
@@ -132,20 +161,25 @@ export function import3mf(bytes: Uint8Array): ImportedModel {
       }
       into.push({ positions, indices: def.mesh.indices });
     }
-    for (const c of def.components) collect(c.objectId, into, compose(m, c.transform), depth + 1);
+    for (const c of def.components) {
+      // A pathless reference stays in the component's own file — ids are only
+      // unique per file, which is why the key is the pair.
+      collect(c.path ? normalizePath(c.path) : filePath, c.objectId, into, compose(m, c.transform), depth + 1);
+    }
   };
 
-  // ── build items: one part per item ────────────────────────────────────────
-  const items = [...xml.matchAll(/<item\b([^>]*?)\/?>(?:<\/item>)?/g)]
-    .map((m) => ({ objectId: attr(m[1], 'objectid'), transform: parseTransform(attr(m[1], 'transform')) }))
-    .filter((i): i is { objectId: string; transform: Affine } => !!i.objectId);
+  // ── build items: one part per item (build lives in the root file) ─────────
+  const items = [...rootXml.matchAll(/<item\b([^>]*?)\/?>(?:<\/item>)?/g)]
+    .map((m) => ({ objectId: attr(m[1], 'objectid'), path: pathAttr(m[1]), transform: parseTransform(attr(m[1], 'transform')) }))
+    .filter((i): i is { objectId: string; path?: string; transform: Affine } => !!i.objectId);
   if (!items.length) throw new ImportError('3MF has no <build> items — nothing is placed in the scene');
 
   const parts: ImportedPart[] = [];
   const seenNames = new Map<string, number>();
   for (const item of items) {
+    const itemFile = item.path ? normalizePath(item.path) : rootPath;
     const pieces: Array<{ positions: Float32Array; indices: Uint32Array }> = [];
-    collect(item.objectId, pieces, item.transform, 0);
+    collect(itemFile, item.objectId, pieces, item.transform, 0);
     if (!pieces.length) continue;
 
     // An item that fans out to several leaf meshes is a printed assembly —
@@ -162,7 +196,13 @@ export function import3mf(bytes: Uint8Array): ImportedModel {
       iAt += p.indices.length;
     }
 
-    const base = objects.get(item.objectId)?.name || `part-${parts.length + 1}`;
+    // Prefer the item object's own name; a nameless single-reference wrapper
+    // (Bambu's usual root shape) borrows the name of what it points at.
+    const itemDef = files.get(itemFile)?.get(item.objectId);
+    const soleRef = itemDef?.components.length === 1 && !itemDef.mesh ? itemDef.components[0] : undefined;
+    const base = itemDef?.name
+      || (soleRef ? files.get(soleRef.path ? normalizePath(soleRef.path) : itemFile)?.get(soleRef.objectId)?.name : undefined)
+      || `part-${parts.length + 1}`;
     const n = (seenNames.get(base) ?? 0) + 1;
     seenNames.set(base, n);
     parts.push({ name: n === 1 ? base : `${base}-${n}`, positions, indices });

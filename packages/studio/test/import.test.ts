@@ -346,3 +346,56 @@ test('importModel applies a manual unit override', () => {
   const size = inches.bounds.max.map((v: number, i: number) => v - inches.bounds.min[i]);
   near(size[0], 25.4); near(size[1], 25.4); near(size[2], 25.4);
 });
+
+test('3MF production extension: meshes in sub-model files (Bambu/Orca shape)', () => {
+  // Root file holds only wrappers referencing 3D/Objects/*.model via p:path —
+  // the layout that produced "reference to missing object" before multi-file
+  // support existed.
+  const sub = (name: string, w: number) => `<?xml version="1.0"?>
+   <model unit="millimeter" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">
+    <resources>
+     <object id="1" name="${name}" type="model"><mesh>
+      <vertices><vertex x="0" y="0" z="0"/><vertex x="${w}" y="0" z="0"/><vertex x="0" y="${w}" z="0"/></vertices>
+      <triangles><triangle v1="0" v2="1" v3="2"/></triangles>
+     </mesh></object>
+    </resources>
+    <build/>
+   </model>`;
+  const root = `<?xml version="1.0"?>
+   <model unit="millimeter" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">
+    <resources>
+     <object id="2" type="model">
+      <components><component p:path="/3D/Objects/object_1.model" objectid="1"/></components>
+     </object>
+     <object id="3" type="model">
+      <components><component p:path="/3D/Objects/object_2.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 5 0 0"/></components>
+     </object>
+    </resources>
+    <build>
+     <item objectid="2"/>
+     <item objectid="3" transform="1 0 0 0 1 0 0 0 1 0 50 0"/>
+    </build>
+   </model>`;
+  const bytes = zipSync({
+    '3D/3dmodel.model': new TextEncoder().encode(root),
+    '3D/Objects/object_1.model': new TextEncoder().encode(sub('Bar Body', 40)),
+    '3D/Objects/object_2.model': new TextEncoder().encode(sub('Bar Cap', 10)),
+  });
+
+  const m = import3mf(bytes);
+  // Wrapper objects are nameless; the part name comes from the sub-file mesh.
+  assert.deepEqual(m.parts.map((p) => p.name), ['Bar Body', 'Bar Cap']);
+  // Component transform (+5x) composes with the build item transform (+50y).
+  near(m.parts[1].positions[0], 5);
+  near(m.parts[1].positions[1], 50);
+});
+
+test('3MF: a genuinely dangling reference names the file and asks for a report', () => {
+  const root = `<model unit="millimeter">
+   <resources>
+    <object id="2"><components><component objectid="99"/></components></object>
+   </resources>
+   <build><item objectid="2"/></build>
+  </model>`;
+  assert.throws(() => import3mf(make3mf(root)), /missing object "99" in 3D\/3dmodel\.model.*report/);
+});
