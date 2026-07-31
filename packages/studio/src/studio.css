@@ -64,23 +64,28 @@ input, select { font: inherit; }
 .stage-wrap { flex: 1; min-width: 0; position: relative; }
 .stage { position: relative; background: var(--surface); min-height: 0; height: 100%; }
 .stage canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+/* The tool row sits top-right, exactly as wide as the properties panel that
+ * slides in beneath it — one column of UI on the stage's right edge. The
+ * view cube keeps the top-left corner. */
 .gizmo-bar {
-  position: absolute; top: 12px; left: 12px;
+  position: absolute; top: 12px; right: 14px; width: 358px;
   display: flex; gap: 2px; padding: 3px;
   background: #fff; border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, .06);
+  z-index: 5;
 }
 .gizmo-bar button {
   border: none; background: none; border-radius: 7px;
-  padding: 6px 11px; font-size: 12px; color: var(--ink2);
+  padding: 6px 4px; font-size: 12px; color: var(--ink2);
+  flex: 1; min-width: 0; white-space: nowrap;
 }
 .gizmo-bar button:hover { background: var(--surface); }
 .gizmo-bar button.is-active { background: var(--accent); color: #fff; font-weight: 600; }
-.gizmo-sep { width: 1px; align-self: stretch; margin: 4px 3px; background: var(--line); }
+.gizmo-sep { width: 1px; flex: none; align-self: stretch; margin: 4px 3px; background: var(--line); }
 /* Must out-rank `.stage canvas`'s 100% sizing or the overlay swallows the
  * whole stage — and with it, every pointer event the gizmo needs. */
 .stage canvas.viewcube {
-  position: absolute; top: 12px; right: 12px;
+  position: absolute; top: 12px; left: 12px;
   width: 92px; height: 92px; cursor: default;
 }
 
@@ -132,7 +137,11 @@ input, select { font: inherit; }
   padding: 4px 9px; font-size: 11px; color: var(--ink2);
 }
 .mini:hover { border-color: #c5c2bb; color: var(--ink); }
-.mini.icon { padding: 4px 6px; line-height: 1; display: inline-flex; align-items: center; }
+.mini.icon {
+  width: 26px; height: 26px; flex: none; padding: 0; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.mini.danger { color: var(--danger); border-color: #e5c8c2; }
 .mini.icon.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .mini.danger:hover { color: var(--danger); border-color: var(--danger); }
 .mini:disabled { opacity: .4; }
@@ -282,7 +291,7 @@ input, select { font: inherit; }
 
 /* ── floating properties panel ── */
 .props-float {
-  position: absolute; top: 116px; right: 14px; bottom: 14px;
+  position: absolute; top: 58px; right: 14px; bottom: 14px;
   width: 358px; max-width: calc(100% - 28px);
   background: #fff; border: 1px solid var(--line); border-radius: 12px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, .1);
@@ -296,6 +305,57 @@ input, select { font: inherit; }
 
 .icon-btn { padding: 7px 9px; display: inline-flex; align-items: center; }
 .icon-btn:disabled { opacity: .35; }
+
+/* ── custom select (listbox pattern) ── */
+.ui-select { position: relative; flex: 1; min-width: 0; }
+.ui-select-btn {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  border: 1.5px solid var(--line); border-radius: 8px; background: #fff;
+  padding: 7px 9px; font-size: 12px; color: var(--ink); text-align: left;
+}
+.ui-select.compact .ui-select-btn { padding: 6px 7px; font-size: 11px; gap: 5px; }
+.ui-select-btn:hover { border-color: #c5c2bb; }
+.ui-select-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ui-select-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-select-caret { flex: none; color: var(--ink2); }
+.ui-select-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  max-height: 240px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .14);
+  padding: 4px; display: flex; flex-direction: column; gap: 1px;
+}
+.ui-select-opt {
+  display: flex; align-items: center; gap: 8px;
+  border: none; background: none; border-radius: 7px;
+  padding: 7px 8px; font-size: 12px; color: var(--ink); text-align: left;
+}
+.ui-select-opt.is-active { background: var(--surface); }
+.ui-select-opt.is-selected { font-weight: 600; }
+.ui-select-tick { flex: none; font-size: 11px; color: var(--ink2); }
+.chip.small { width: 15px; height: 15px; border-radius: 4px; flex: none; }
+
+/* ── confirm dialog (alert-dialog pattern) ── */
+.dialog-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(29, 29, 31, .35);
+  display: grid; place-items: center; padding: 24px;
+}
+.dialog-card {
+  width: min(420px, 100%);
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .22);
+  padding: 20px;
+}
+.dialog-card h3 { margin: 0 0 8px; font-size: 15px; }
+.dialog-body { font-size: 13px; line-height: 1.55; color: var(--ink2); }
+.dialog-body p { margin: 0; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.danger-btn {
+  border: none; border-radius: 8px; background: var(--danger); color: #fff;
+  padding: 9px 14px; font-size: 13px; font-weight: 600;
+}
+.danger-btn:hover { background: #9d3626; }
 
 /* ── customer preview overlay ── */
 .preview-overlay {

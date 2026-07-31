@@ -14,6 +14,7 @@ import {
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
 import { NumberField } from './fields.tsx';
+import { Select } from './controls.tsx';
 
 const AXIS_LABELS = ['W', 'H', 'D'] as const; // x, y, z in canonical space
 const EDGES: AnchorEdge[] = ['min', 'center', 'max'];
@@ -161,15 +162,12 @@ export function PartEditor(props: {
           <AxisAnchorRow key={label} axis={axis} uiLabel={label} {...props} />
         ))}
         <div className="match-row">
-          <select
-            aria-label="Match position of" value={matchFrom} data-testid="match-select"
-            onChange={(e) => setMatchFrom(e.target.value)}
-          >
-            <option value="">Match position of…</option>
-            {manifest.parts.filter((p) => p.id !== part.id).map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
+          <Select
+            ariaLabel="Match position of" testId="match-select"
+            value={matchFrom} placeholder="Match position of…"
+            options={manifest.parts.filter((p) => p.id !== part.id).map((p) => ({ value: p.id, label: p.label }))}
+            onChange={setMatchFrom}
+          />
           <button
             className="mini" data-testid="match-apply" disabled={!matchFrom}
             onClick={() => { act(() => copyPlacement(manifest, matchFrom, part.id)); setMatchFrom(''); }}
@@ -199,20 +197,13 @@ export function PartEditor(props: {
           <h4>Colour</h4>
           <label className="field wide">
             <span className="field-label">Customers open with</span>
-            <span className="default-colour-row">
-              <span
-                className="chip"
-                style={{ background: palette.swatches.find((s) => s.id === colourOption.default)?.hex ?? '#ccc' }}
-              />
-              <select
-                aria-label="Default colour" data-testid="default-colour"
-                value={colourOption.default.startsWith('@') ? '' : colourOption.default}
-                onChange={(e) => { if (e.target.value) act(() => setDefaultSwatch(manifest, colourOption.id, e.target.value)); }}
-              >
-                {colourOption.default.startsWith('@') && <option value="">(follows another part)</option>}
-                {palette.swatches.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </span>
+            <Select
+              ariaLabel="Default colour" testId="default-colour"
+              value={colourOption.default.startsWith('@') ? '' : colourOption.default}
+              placeholder="(follows another part)"
+              options={palette.swatches.map((s) => ({ value: s.id, label: s.name, chip: s.hex }))}
+              onChange={(v) => act(() => setDefaultSwatch(manifest, colourOption.id, v))}
+            />
           </label>
           <label className="lock">
             <input
@@ -295,35 +286,35 @@ function AxisAnchorRow(props: {
   const commit = (next: { align: AnchorEdge; to: string; edge: AnchorEdge; offset: number } | { origin: true; offset?: number }) =>
     props.onChange(withAnchor(manifest, part.id, props.axis, next));
 
+  const axisName = AXIS_NAMES[props.axis];
   return (
-    <div className="anchor-row" data-testid={`anchor-${AXIS_NAMES[props.axis]}`}>
+    <div className="anchor-row" data-testid={`anchor-${axisName}`}>
       <span className="axis-name">{props.uiLabel}</span>
-      <select
-        aria-label="anchor mode" value={anchored ? ref : 'origin'}
-        onChange={(e) => {
-          const to = e.target.value;
-          commit(to === 'origin'
-            ? { origin: true, offset: 0 }
-            : { align: (placement?.align ?? 'min') as AnchorEdge, to, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 });
-        }}
-      >
-        <option value="origin">as modelled</option>
-        {others.map((p) => <option key={p.id} value={p.id}>against {p.label}</option>)}
-      </select>
+      <Select
+        ariaLabel="anchor mode" testId={`anchor-mode-${axisName}`} compact
+        value={anchored ? ref : 'origin'}
+        options={[
+          { value: 'origin', label: 'as modelled' },
+          ...others.map((p) => ({ value: p.id, label: `against ${p.label}` })),
+        ]}
+        onChange={(to) => commit(to === 'origin'
+          ? { origin: true, offset: 0 }
+          : { align: (placement?.align ?? 'min') as AnchorEdge, to, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 })}
+      />
       {anchored && (
         <>
-          <select
-            aria-label="my edge" value={placement!.align ?? 'center'}
-            onChange={(e) => commit({ align: e.target.value as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 })}
-          >
-            {EDGES.map((ed) => <option key={ed} value={ed}>my {ed}</option>)}
-          </select>
-          <select
-            aria-label="their edge" value={edge}
-            onChange={(e) => commit({ align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: e.target.value as AnchorEdge, offset: placement?.offset ?? 0 })}
-          >
-            {EDGES.map((ed) => <option key={ed} value={ed}>their {ed}</option>)}
-          </select>
+          <Select
+            ariaLabel="my edge" testId={`anchor-my-${axisName}`} compact
+            value={placement!.align ?? 'center'}
+            options={EDGES.map((ed) => ({ value: ed, label: `my ${ed}` }))}
+            onChange={(v) => commit({ align: v as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 })}
+          />
+          <Select
+            ariaLabel="their edge" testId={`anchor-their-${axisName}`} compact
+            value={edge}
+            options={EDGES.map((ed) => ({ value: ed, label: `their ${ed}` }))}
+            onChange={(v) => commit({ align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: v as AnchorEdge, offset: placement?.offset ?? 0 })}
+          />
         </>
       )}
       <NumberField

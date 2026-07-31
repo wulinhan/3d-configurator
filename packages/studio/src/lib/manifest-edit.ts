@@ -460,9 +460,20 @@ export function snapFaces(
   }
   const movingEdge: AnchorEdge = moving.normal[axis] > 0 ? 'max' : 'min';
   const targetEdge: AnchorEdge = target.normal[axis] > 0 ? 'max' : 'min';
-  return withAnchor(manifest, moving.partId, axis, {
+  let next = withAnchor(manifest, moving.partId, axis, {
     align: movingEdge, to: target.partId, edge: targetEdge, offset: 0,
   });
+  // The faces must actually MEET, not merely share a plane: a part left at
+  // its old lateral position "snaps" into empty air beside the target. The
+  // two in-plane axes centre onto the target — all three anchors are live,
+  // and the merchant can slide the offsets afterwards.
+  for (const lateral of [0, 1, 2] as Axis[]) {
+    if (lateral === axis) continue;
+    next = withAnchor(next, moving.partId, lateral, {
+      align: 'center', to: target.partId, edge: 'center', offset: 0,
+    });
+  }
+  return next;
 }
 
 // ── groups & variants ───────────────────────────────────────────────────────

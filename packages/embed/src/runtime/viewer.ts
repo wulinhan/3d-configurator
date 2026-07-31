@@ -108,6 +108,15 @@ function bakeGeometry(mesh: THREE.Mesh, scaleToMm: number): THREE.BufferGeometry
   return geo;
 }
 
+/** A flat continuous surface on a part — what the snap tool picks and paints. */
+export interface SurfaceHit {
+  partId: string;
+  /** World-space normal of the clicked face, flipped toward the viewer. */
+  normal: [number, number, number];
+  /** Triangle indices of the coplanar region, for highlighting. */
+  faces: number[];
+}
+
 export interface ViewerOptions {
   canvas: HTMLCanvasElement;
   manifest: Manifest;
@@ -132,6 +141,8 @@ export class Viewer {
   private viewTween = 0;
   private hiddenParts = new Set<string>();
   private shadowCatcher?: THREE.Mesh;
+  private surfaceOverlays = new Map<'hover' | 'first', THREE.Mesh>();
+  private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
   private rawBoxes = new Map<string, Box>();
@@ -473,6 +484,14 @@ export class Viewer {
    * face-snapping tool asks. Normal comes back in world space, unit length.
    */
   pickFaceAt(clientX: number, clientY: number): { partId: string; normal: [number, number, number] } | null {
+    const hit = this.castAt(clientX, clientY);
+    if (!hit) return null;
+    return { partId: hit.partId, normal: hit.normal };
+  }
+
+  private castAt(clientX: number, clientY: number): {
+    partId: string; normal: [number, number, number]; mesh: THREE.Mesh; faceIndex: number;
+  } | null {
     const canvas = this.renderer.domElement;
     const r = canvas.getBoundingClientRect();
     const pointer = new THREE.Vector2(
@@ -482,13 +501,146 @@ export class Viewer {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(pointer, this.camera);
     const hit = raycaster.intersectObjects([...this.meshes.values()].filter((m) => m.visible))[0];
-    if (!hit?.face) return null;
+    if (!hit?.face || hit.faceIndex == null) return null;
     const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
     // Rendering is double-sided, so the nearest face may be wound inward.
     // The caller asked "which way does the surface I clicked face" — that is
     // toward the viewer, whatever the triangle's winding says.
     if (normal.dot(raycaster.ray.direction) > 0) normal.negate();
-    return { partId: hit.object.userData.part as string, normal: [normal.x, normal.y, normal.z] };
+    return {
+      partId: hit.object.userData.part as string,
+      normal: [normal.x, normal.y, normal.z],
+      mesh: hit.object as THREE.Mesh,
+      faceIndex: hit.faceIndex,
+    };
+  }
+
+  /**
+   * The flat continuous surface under a point: the hit triangle grown across
+   * shared edges while the triangles stay coplanar. What the snap tool
+   * highlights, so the merchant sees the whole face they are about to mate,
+   * not an invisible single triangle.
+   */
+  surfaceAt(clientX: number, clientY: number): SurfaceHit | null {
+    const hit = this.castAt(clientX, clientY);
+    if (!hit) return null;
+    const geo = hit.mesh.geometry as THREE.BufferGeometry;
+    const index = geo.index;
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const tri = (f: number, corner: number) => (index ? index.getX(f * 3 + corner) : f * 3 + corner);
+    const triCount = (index ? index.count : pos.count) / 3;
+
+    // Adjacency over shared edges, built once per geometry and cached.
+    let adjacency = this.surfaceAdjacency.get(geo);
+    if (!adjacency) {
+      const byEdge = new Map<string, number[]>();
+      for (let f = 0; f < triCount; f++) {
+        for (let c = 0; c < 3; c++) {
+          const a = tri(f, c), b = tri(f, (c + 1) % 3);
+          const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+          let list = byEdge.get(key);
+          if (!list) byEdge.set(key, list = []);
+          list.push(f);
+        }
+      }
+      adjacency = Array.from({ length: triCount }, () => [] as number[]);
+      for (const faces of byEdge.values()) {
+        for (const a of faces) for (const b of faces) if (a !== b) adjacency[a].push(b);
+      }
+      this.surfaceAdjacency.set(geo, adjacency);
+    }
+
+    const v = new THREE.Vector3();
+    const e1 = new THREE.Vector3();
+    const e2 = new THREE.Vector3();
+    const localNormal = (f: number, out: THREE.Vector3) => {
+      out.fromBufferAttribute(pos, tri(f, 0));
+      e1.fromBufferAttribute(pos, tri(f, 1)).sub(out);
+      e2.fromBufferAttribute(pos, tri(f, 2)).sub(out);
+      return out.copy(e1.cross(e2)).normalize();
+    };
+
+    const seedNormal = localNormal(hit.faceIndex, new THREE.Vector3());
+    const seedPoint = v.fromBufferAttribute(pos, tri(hit.faceIndex, 0)).clone();
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox!;
+    const span = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z, 1);
+    const planeTolerance = span * 1e-3 + 1e-3;
+
+    // Grow the region: same plane (|normal·seed| ≈ 1 — winding may flip on
+    // welded double-sided meshes — and vertices on the seed plane).
+    const faces: number[] = [];
+    const seen = new Set<number>([hit.faceIndex]);
+    const queue = [hit.faceIndex];
+    const n = new THREE.Vector3();
+    while (queue.length) {
+      const f = queue.pop()!;
+      faces.push(f);
+      for (const next of adjacency[f]) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        if (Math.abs(localNormal(next, n).dot(seedNormal)) < 0.995) continue;
+        let coplanar = true;
+        for (let c = 0; c < 3 && coplanar; c++) {
+          v.fromBufferAttribute(pos, tri(next, c)).sub(seedPoint);
+          if (Math.abs(v.dot(seedNormal)) > planeTolerance) coplanar = false;
+        }
+        if (coplanar) queue.push(next);
+      }
+    }
+    return { partId: hit.partId, normal: hit.normal, faces };
+  }
+
+  /**
+   * Paint (or clear, with null) a picked surface. 'hover' tracks the pointer;
+   * 'first' persists on the already-chosen face while the second is picked.
+   * Overlays are parented to the part's mesh so they ride its transforms, and
+   * they never participate in raycasts.
+   */
+  showSurfaceHighlight(slot: 'hover' | 'first', surface: SurfaceHit | null): void {
+    const existing = this.surfaceOverlays.get(slot);
+    if (existing) {
+      existing.removeFromParent();
+      existing.geometry.dispose();
+      (existing.material as THREE.Material).dispose();
+      this.surfaceOverlays.delete(slot);
+    }
+    if (!surface) return;
+    const source = this.meshes.get(surface.partId);
+    if (!source) return;
+    const geo = source.geometry as THREE.BufferGeometry;
+    const index = geo.index;
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const positions = new Float32Array(surface.faces.length * 9);
+    let o = 0;
+    for (const f of surface.faces) {
+      for (let c = 0; c < 3; c++) {
+        const i = index ? index.getX(f * 3 + c) : f * 3 + c;
+        positions[o++] = pos.getX(i);
+        positions[o++] = pos.getY(i);
+        positions[o++] = pos.getZ(i);
+      }
+    }
+    const sub = new THREE.BufferGeometry();
+    sub.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const overlay = new THREE.Mesh(sub, new THREE.MeshBasicMaterial({
+      color: slot === 'first' ? 0xd97a2b : 0x3a6fd4,
+      transparent: true,
+      opacity: 0.45,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }));
+    overlay.name = `surface-highlight-${slot}`;
+    overlay.raycast = () => {};
+    source.add(overlay);
+    this.surfaceOverlays.set(slot, overlay);
+  }
+
+  clearSurfaceHighlights(): void {
+    this.showSurfaceHighlight('hover', null);
+    this.showSurfaceHighlight('first', null);
   }
 
   /** The mesh rendering a part — the object a Studio gizmo attaches to. */

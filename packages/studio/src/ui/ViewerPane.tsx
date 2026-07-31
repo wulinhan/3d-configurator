@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
-import { Viewer } from '../../../embed/src/runtime/viewer.ts';
+import { Viewer, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
 import { applyGizmoPose, setCameraView, snapFaces, type GizmoPose } from '../lib/manifest-edit.ts';
 import { Gizmo, type GizmoMode, type CommitPhase } from './gizmo.ts';
 import { ViewCube } from './view-cube.ts';
@@ -39,9 +39,10 @@ export function ViewerPane(props: {
   const viewerRef = useRef<Viewer | null>(null);
   const gizmoRef = useRef<Gizmo | null>(null);
   const [mode, setMode] = useState<GizmoMode>('off');
-  // Face-snap: null = off; 'first' = waiting for the face that moves;
-  // {…} = waiting for the face it should meet.
-  const [snapArm, setSnapArm] = useState<null | 'first' | { partId: string; normal: [number, number, number] }>(null);
+  // Face-snap: null = off; 'first' = waiting for the surface that moves;
+  // a SurfaceHit = that surface is chosen (and stays highlighted) while the
+  // merchant picks the one it should meet.
+  const [snapArm, setSnapArm] = useState<null | 'first' | SurfaceHit>(null);
   const [snapError, setSnapError] = useState<string | null>(null);
   // Span of the model when last framed — the baseline the refit compares to.
   // Set when load() resolves: initialising it lazily in the edit effect
@@ -204,14 +205,28 @@ export function ViewerPane(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  // Face snapping: two picks, first names the mover.
+  // Face snapping: two picks, first names the mover. The whole flat surface
+  // under the pointer glows as a preview; the first pick keeps its glow (in
+  // the accent colour) while the second is chosen.
   useEffect(() => {
-    if (snapArm === null) return;
+    if (snapArm === null) {
+      viewerRef.current?.clearSurfaceHighlights();
+      return;
+    }
     const canvas = canvasRef.current!;
+    let lastHover = 0;
+    const onMove = (e: PointerEvent) => {
+      const now = performance.now();
+      if (now - lastHover < 40) return;
+      lastHover = now;
+      viewerRef.current?.showSurfaceHighlight('hover', viewerRef.current.surfaceAt(e.clientX, e.clientY));
+    };
     const onClick = (e: PointerEvent) => {
-      const hit = viewerRef.current?.pickFaceAt(e.clientX, e.clientY);
-      if (!hit) return;
+      const viewer = viewerRef.current;
+      const hit = viewer?.surfaceAt(e.clientX, e.clientY);
+      if (!hit || !viewer) return;
       if (snapRef.current === 'first') {
+        viewer.showSurfaceHighlight('first', hit);
         setSnapArm(hit);
         return;
       }
@@ -222,13 +237,18 @@ export function ViewerPane(props: {
         } catch (err) {
           setSnapError(err instanceof Error ? err.message : String(err));
         }
+        viewer.clearSurfaceHighlights();
         setSnapArm(null);
       }
     };
+    canvas.addEventListener('pointermove', onMove);
     canvas.addEventListener('pointerup', onClick);
-    return () => canvas.removeEventListener('pointerup', onClick);
+    return () => {
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerup', onClick);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapArm !== null]);
+  }, [snapArm]);
 
   const saveView = () => {
     const viewer = viewerRef.current;

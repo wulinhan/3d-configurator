@@ -20,6 +20,7 @@ import {
   type ExplorerEntry,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
+import { ConfirmDialog } from './controls.tsx';
 
 const EYE = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>;
 const EYE_OFF = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
@@ -62,6 +63,7 @@ export function PartsPanel(props: {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [drag, setDrag] = useState<DragSource | null>(null);
   const [drop, setDrop] = useState<DropTarget>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const entries = entriesOf(manifest);
@@ -239,14 +241,9 @@ export function PartsPanel(props: {
             {p.label}
           </button>
         )}
-        <button className="mini icon" data-testid={`rename-${p.id}`} aria-label={`Rename ${p.label}`} onClick={() => setRenaming(p.id)}>✎</button>
         <button
           className="mini icon danger" data-testid={`delete-${p.id}`} aria-label={`Delete ${p.label}`}
-          onClick={() => {
-            if (!confirm(`Delete ${p.label}? Parts anchored to it keep their position.`)) return;
-            act(() => removePart(manifest, p.id, props.project.raw));
-            if (props.selectedPart === p.id) props.onSelectPart(null);
-          }}
+          onClick={() => setConfirmDelete([p.id])}
         >✕</button>
       </div>
     );
@@ -349,13 +346,21 @@ export function PartsPanel(props: {
         <strong> pick-one set</strong> to add it; drag a part out to set it loose.
       </p>
 
-      {checked.size >= 2 && (
+      {checked.size >= 1 && (
         <div className="structure-bar" data-testid="structure-bar">
           {pending === null ? (
             <>
-              <span className="hint">{checked.size} parts selected —</span>
-              <button className="mini" data-testid="make-group" title="Move and colour as one part" onClick={() => setPending('group')}>Assembly</button>
-              <button className="mini" data-testid="make-variant" title="Customers pick which one they get" onClick={() => setPending('variant')}>Pick-one set</button>
+              <span className="hint">{checked.size} selected —</span>
+              {checked.size >= 2 && (
+                <>
+                  <button className="mini" data-testid="make-group" title="Move and colour as one part" onClick={() => setPending('group')}>Assembly</button>
+                  <button className="mini" data-testid="make-variant" title="Customers pick which one they get" onClick={() => setPending('variant')}>Pick-one set</button>
+                </>
+              )}
+              <button
+                className="mini danger" data-testid="delete-selected"
+                onClick={() => setConfirmDelete(manifest.parts.map((p) => p.id).filter((id) => checked.has(id)))}
+              >Delete</button>
             </>
           ) : (
             <>
@@ -374,6 +379,29 @@ export function PartsPanel(props: {
         </div>
       )}
       {error && <p className="error" role="alert">{error}</p>}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          testId="confirm-delete"
+          title={confirmDelete.length === 1
+            ? `Delete ${manifest.parts.find((p) => p.id === confirmDelete[0])?.label ?? confirmDelete[0]}?`
+            : `Delete ${confirmDelete.length} parts?`}
+          body={<p>Parts anchored to deleted ones keep their position. Colour options and pricing tied to them are removed. This can be undone with Ctrl+Z.</p>}
+          confirmLabel={confirmDelete.length === 1 ? 'Delete part' : `Delete ${confirmDelete.length} parts`}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            const ids = confirmDelete;
+            setConfirmDelete(null);
+            act(() => ids.reduce((mm, id) => removePart(mm, id, props.project.raw), manifest));
+            setChecked((old) => {
+              const next = new Set(old);
+              for (const id of ids) next.delete(id);
+              return next;
+            });
+            if (props.selectedPart && ids.includes(props.selectedPart)) props.onSelectPart(null);
+          }}
+        />
+      )}
     </div>
   );
 }

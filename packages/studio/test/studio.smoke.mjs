@@ -165,9 +165,15 @@ check('and the value snaps back', near(size.w, 80), size.w);
 // ── 6. anchor the cap against the base ──────────────────────────────────────
 await page.click('.part-name:has-text("Cap")');
 await page.waitForTimeout(150);
-await page.selectOption('[data-testid="anchor-y"] select >> nth=0', 'base');
-await page.selectOption('[data-testid="anchor-y"] select >> nth=1', 'min');
-await page.selectOption('[data-testid="anchor-y"] select >> nth=2', 'max');
+// The anchor dropdowns are the Studio's own listbox, not native <select>s.
+const pick = async (selectId, optionValue) => {
+  await page.click(`[data-testid="${selectId}"]`);
+  await page.click(`[data-testid="${selectId}-opt-${optionValue}"]`);
+  await page.waitForTimeout(120);
+};
+await pick('anchor-mode-y', 'base');
+await pick('anchor-my-y', 'min');
+await pick('anchor-their-y', 'max');
 await page.fill('[data-testid="offset-y"]', '2');
 await page.press('[data-testid="offset-y"]', 'Enter');
 await page.waitForTimeout(300);
@@ -369,6 +375,21 @@ await shoot('2-anchored.png');
   await page.waitForTimeout(700);
   check('selecting a part slides the properties panel in', await page.evaluate(
     () => document.querySelector('[data-testid="props-float"]')?.classList.contains('is-open') === true), '');
+  const chrome = await page.evaluate(() => {
+    const bar = document.querySelector('.gizmo-bar').getBoundingClientRect();
+    const panel = document.querySelector('[data-testid="props-float"]').getBoundingClientRect();
+    const cube = document.querySelector('.viewcube').getBoundingClientRect();
+    const stage = document.querySelector('.stage').getBoundingClientRect();
+    return {
+      widthDiff: Math.abs(bar.width - panel.width),
+      rightDiff: Math.abs(bar.right - panel.right),
+      stacked: bar.bottom <= panel.top,
+      cubeFromLeft: cube.left - stage.left,
+    };
+  });
+  check('tool row sits right above the properties panel, same width and edge',
+    chrome.widthDiff < 2 && chrome.rightDiff < 2 && chrome.stacked, chrome);
+  check('view cube lives in the top-left corner', chrome.cubeFromLeft < 120, chrome.cubeFromLeft);
   await page.click('[data-testid="gizmo-off"]');
 }
 
@@ -451,21 +472,26 @@ await shoot('2-anchored.png');
   await page.click('[data-testid="show-all"]');
   await page.waitForTimeout(150);
 
-  await page.click('[data-testid="rename-cap"]');
+  // Rename is double-click on the name — no pencil button.
+  await page.dblclick('.part-name:has-text("Cap")');
   await page.fill('[data-testid="rename-input-cap"]', 'Lid');
   await page.press('[data-testid="rename-input-cap"]', 'Enter');
   await page.waitForTimeout(150);
   m = await manifest();
-  check('rename changes the label, not the id',
+  check('double-click rename changes the label, not the id',
     m.parts[1].label === 'Lid' && m.parts[1].id === 'cap', m.parts[1]);
-  await page.click('[data-testid="rename-cap"]');
+  await page.dblclick('.part-name:has-text("Lid")');
   await page.fill('[data-testid="rename-input-cap"]', 'Cap');
   await page.press('[data-testid="rename-input-cap"]', 'Enter');
   await page.waitForTimeout(150);
 
   await page.click('.part-name:has-text("Base")');
   await page.waitForTimeout(150);
-  await page.selectOption('[data-testid="default-colour"]', 'red');
+  // The colour dropdown is the Studio's own swatch listbox.
+  await page.click('[data-testid="default-colour"]');
+  check('colour dropdown lists swatch chips, not a native menu',
+    await page.evaluate(() => document.querySelectorAll('.ui-select-pop .chip.small').length > 3), '');
+  await page.click('[data-testid="default-colour-opt-red"]');
   await page.waitForTimeout(250);
   m = await manifest();
   const baseHex = await page.evaluate(() => window.__studioViewer.meshOf('base')?.material.color.getHexString());
@@ -495,16 +521,33 @@ await shoot('2-anchored.png');
     const r = document.querySelector('.stage canvas').getBoundingClientRect();
     return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height];
   }, id);
+  const overlay = (slot) => page.evaluate(
+    (s) => !!window.__studioViewer.scene.getObjectByName(`surface-highlight-${s}`), slot);
+
+  // Hovering pre-highlights the whole flat surface under the pointer…
   const capAt = await screenPos('cap');
+  await page.mouse.move(capAt[0], capAt[1]);
+  await page.waitForTimeout(200);
+  check('hovering pre-highlights the flat surface before picking', await overlay('hover'), '');
+
+  // …and the first pick keeps its glow while the second is chosen.
   await page.mouse.click(capAt[0], capAt[1]);
   await page.waitForTimeout(200);
+  check('the chosen surface stays highlighted', await overlay('first'), '');
+
   const baseAt = await screenPos('base');
   await page.mouse.click(baseAt[0], baseAt[1]);
   await page.waitForTimeout(300);
   m = await manifest();
-  check('snapping mates the two clicked faces as a live anchor',
+  check('snap mates the faces flush along the clicked axis',
     JSON.stringify(m.parts[1].placement?.z) === JSON.stringify({ align: 'max', to: 'base:max', offset: 0 }),
     m.parts[1].placement?.z);
+  check('…and centres the part onto the target, so the faces actually meet',
+    JSON.stringify(m.parts[1].placement?.x) === JSON.stringify({ align: 'center', to: 'base:center', offset: 0 })
+    && JSON.stringify(m.parts[1].placement?.y) === JSON.stringify({ align: 'center', to: 'base:center', offset: 0 }),
+    { x: m.parts[1].placement?.x, y: m.parts[1].placement?.y });
+  check('highlights clear once the snap lands',
+    !(await overlay('first')) && !(await overlay('hover')), '');
   const snapVerdict = validateManifest(m);
   check('manifest still valid after the snap', snapVerdict.ok, snapVerdict.errors);
 }
@@ -775,13 +818,28 @@ await shoot('4-publish.png');
     await page.evaluate(() => !document.querySelector('.preview-overlay')), '');
 }
 
-// ── 12. delete a part ──────────────────────────────────────────────────────
+// ── 12. delete: our own dialog, mass delete from the selection bar ─────────
 {
   await page.click('.tabs button:has-text("Parts")');
+
+  // Mass delete: checking parts offers Delete; cancelling keeps everything.
+  await page.check('[data-testid="pick-base"]');
+  await page.check('[data-testid="pick-cap"]');
+  await page.click('[data-testid="delete-selected"]');
+  check('mass delete asks with the Studio\'s own dialog, not the browser prompt',
+    await page.isVisible('[data-testid="confirm-delete"]'), '');
+  await page.click('[data-testid="confirm-delete-cancel"]');
+  await page.waitForTimeout(150);
+  m = await manifest();
+  check('cancelling the dialog keeps every part', m.parts.length === 2, m.parts.length);
+  await page.uncheck('[data-testid="pick-base"]');
+  await page.uncheck('[data-testid="pick-cap"]');
+
   await page.click('[data-testid="delete-cap"]');
+  await page.click('[data-testid="confirm-delete-confirm"]');
   await page.waitForTimeout(300);
   m = await manifest();
-  check('deleting a part removes it and its options',
+  check('confirming deletes the part and its options',
     m.parts.length === 1 && !m.options.some((o) => o.id === 'cap-colour' || o.id === 'cap-addon'),
     { parts: m.parts.length, options: m.options.map((o) => o.id) });
   const afterDelete = validateManifest(m);

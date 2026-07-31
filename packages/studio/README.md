@@ -113,20 +113,44 @@ offers both structures as buttons:
   instead of showing the add-on toggle, which would otherwise orphan the
   option. In the embed, clicking a visible member opens its choice.
 
-Each part row keeps an eyeball (hide/show — an assembly's eyeball hides
-every member), a solo toggle, rename (✎ or double-click), and ✕ delete.
-Deleting repairs every reference: parts anchored to the deleted one keep
-their world position, its options are pruned, dangling colour links
-re-point, and a pick-one set sheds the deleted member (dissolving entirely
-below two). Hide/solo are authoring aids only — never part of the manifest.
-Selecting a part slides a floating properties panel in from the stage's
-right edge (size, position anchors, rotation, colour, pricing,
-match-position); deselecting slides it away. The explorer panel itself
-resizes by dragging the divider, and the divider's pill collapses/expands
-it. The Snap tool mates two clicked faces as a live anchor — the
-first-clicked part moves, the joint holds when the target later moves. An
-origin grid and axes mark 0,0,0; selecting a part eases the orbit centre
-onto it, deselecting eases back over the origin.
+Each part row keeps uniform square controls: an eyeball (hide/show — an
+assembly's eyeball hides every member), a solo toggle, and ✕ delete; rename
+is double-click on the name. Deleting asks with the Studio's own dialog
+(never the browser prompt), and checking rows in the explorer offers a mass
+delete — one confirm, one undo step. Delete repairs every reference: parts
+anchored to the deleted one keep their world position, its options are
+pruned, dangling colour links re-point, and a pick-one set sheds the
+deleted member (dissolving entirely below two). Hide/solo are authoring
+aids only — never part of the manifest. Selecting a part slides a floating
+properties panel in from the stage's right edge (size, position anchors,
+rotation, colour, pricing, match-position); deselecting slides it away.
+The tool row (Orbit / Transform / Snap / Save view) sits directly above
+that panel at the same width; the view cube keeps the top-left corner. The
+explorer panel itself resizes by dragging the divider, and the divider's
+pill collapses/expands it. An origin grid and axes mark 0,0,0; selecting a
+part eases the orbit centre onto it, deselecting eases back over the
+origin.
+
+## Snapping surfaces
+
+The Snap tool works on SURFACES, not invisible triangles: hovering grows
+the hit triangle across shared edges while they stay coplanar and glows the
+whole flat face; the first pick keeps its glow (accent colour) while the
+second is chosen. The commit mates the two faces flush along the clicked
+axis AND centres the moving part onto the target in the face plane — a snap
+that only shared a plane left the part hanging in empty air beside its
+target, which read as "it just moved up". All three axes land as live
+anchors, so the joint holds when the target moves and the merchant can
+slide the offsets afterwards.
+
+## Controls
+
+`ui/controls.tsx` replaces the browser-default widgets whose popups can't
+be styled: `Select` follows the react-aria ListBox pattern (21st.dev
+reference) — combobox/listbox roles, arrow-key navigation, typeahead,
+swatch chips for colour options — and `ConfirmDialog` follows the shadcn
+Alert Dialog pattern: backdrop, focus lands on Cancel, destructive action
+loudest. Both are dependency-free and match the Studio's design language.
 
 ## Undo / redo
 
@@ -205,7 +229,7 @@ test/structure.test.ts 19 — assemblies merge colours without double-painting,
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
                       deletes repair both structures
-test/studio.smoke.mjs 81 browser assertions — the full merchant journey
+test/studio.smoke.mjs 90 browser assertions — the full merchant journey
                       against the production build, including a real pointer
                       drag on the combined gizmo (and that one Ctrl+Z rewinds
                       the whole drag), view-cube navigation, the saved view
@@ -213,7 +237,9 @@ test/studio.smoke.mjs 81 browser assertions — the full merchant journey
                       drag-handle reordering and drag-out-of-assembly, the
                       customer preview mounting the real embed and switching
                       a pick-one set, the resizable/collapsible explorer,
-                      and the compressed download
+                      surface-glow snapping (hover, sticky first pick, flush
+                      + centred landing), the Studio's own dialogs and
+                      listboxes, and the compressed download
 ```
 
 The browser test exists because two real defects passed every unit test: the

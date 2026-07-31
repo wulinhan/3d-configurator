@@ -124,17 +124,23 @@ test('copyPlacement does not copy scale — position only', () => {
 
 // ── snapping ────────────────────────────────────────────────────────────────
 
-test('snapFaces mates the clicked faces flush, as a live anchor', () => {
+test('snapFaces mates the clicked faces flush and centres them onto each other', () => {
   // Merchant clicks the cap's bottom (−y), then the body's top (+y):
-  // cap min-y anchors to body max-y, offset 0 — touching.
+  // cap min-y anchors to body max-y, offset 0 — touching — and the two
+  // in-plane axes centre onto the body, so the faces actually meet instead
+  // of sharing a plane in empty air.
   const m = snapFaces(fresh(), { partId: 'cap', normal: [0, -1, 0] }, { partId: 'body', normal: [0, 1, 0] });
   valid(m);
-  assert.deepEqual(m.parts.find((p) => p.id === 'cap')!.placement!.y,
-    { align: 'min', to: 'body:max', offset: 0 });
+  const cap = m.parts.find((p) => p.id === 'cap')!.placement!;
+  assert.deepEqual(cap.y, { align: 'min', to: 'body:max', offset: 0 });
+  assert.deepEqual(cap.x, { align: 'center', to: 'body:center', offset: 0 });
+  assert.deepEqual(cap.z, { align: 'center', to: 'body:center', offset: 0 });
   // The joint is an anchor, so moving the body carries the cap.
   const moved = nudge(m, 'body', [0, 5, 0]);
-  const capY = resolveLayout(moved, RAW).get('cap')!;
-  near(capY.box.min[1], resolveLayout(moved, RAW).get('body')!.box.max[1]);
+  const layout = resolveLayout(moved, RAW);
+  near(layout.get('cap')!.box.min[1], layout.get('body')!.box.max[1]);
+  near((layout.get('cap')!.box.min[0] + layout.get('cap')!.box.max[0]) / 2,
+    (layout.get('body')!.box.min[0] + layout.get('body')!.box.max[0]) / 2);
 });
 
 test('snapFaces rejects same part, angled faces, and mismatched axes', () => {
