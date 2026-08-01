@@ -9,7 +9,7 @@ import { validateManifest } from './manifest/validate.ts';
 import { Viewer } from './runtime/viewer.ts';
 import {
   defaultSelections, resolveValue, resolveColour, coloursInUse, buildPayload,
-  visibleParts, isOptionActive,
+  visibleParts, isOptionActive, applySelection,
   type Selections,
 } from './runtime/state.ts';
 
@@ -94,9 +94,9 @@ export async function mount(opts: MountOptions) {
   const select = (optionId: string) => { active = optionId; render(); };
 
   const change = (optionId: string, value: string) => {
-    selections[optionId] = value;
-    // A linked option follows until the customer picks for it directly, so
-    // changing the target refreshes the follower for free.
+    // applySelection also carries a variant set's colour to the incoming
+    // member; a linked option follows until the customer picks directly.
+    applySelection(manifest, selections, optionId, value);
     viewer.apply(selections);
     render();
     post();
@@ -232,7 +232,7 @@ export async function mount(opts: MountOptions) {
     const folds = new Map<string, { colour?: ColourOption; memberLabel: string }>();
     for (const v of manifest.options) {
       if (!isChoice(v) || v.role !== 'variant') continue;
-      const memberIds = new Set(v.choices.map((c) => c.id));
+      const memberIds = new Set(manifest.parts.filter((p) => p.visibleWhen?.option === v.id).map((p) => p.id));
       const current = resolveValue(manifest, selections, v.id);
       const memberLabel = v.choices.find((c) => c.id === current)?.label ?? '';
       let colour: ColourOption | undefined;

@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import {
   defaultSelections, resolveValue, resolveColour, partColours, visibleParts,
   coloursInUse, priceDeltas, buildPayload, isCustomColour, isOptionActive,
+  applySelection,
 } from '../src/runtime/state.ts';
 import type { Manifest, ColourOption } from '../src/manifest/types.ts';
 
@@ -200,6 +201,29 @@ test('an option whose parts are all hidden is inert — no panel slot, no charge
   assert.equal(isOptionActive(m, s, bodyOpt), true);
   assert.ok(priceDeltas(m, s).some((d) => d.optionId.includes('body-colour')),
     'and charges again once picked');
+});
+
+test('switching a variant set carries the chosen colour to the incoming member', () => {
+  const m = load();
+  // body and sleeves become a two-member variant set, each with its own
+  // colour option (they already have body-colour / sleeve-colour).
+  const bodyParts = colourOption(m, 'body-colour').parts;
+  const sleeveParts = colourOption(m, 'sleeve-colour').parts;
+  m.options.push({
+    id: 'style', type: 'choice', role: 'variant', label: 'Style',
+    choices: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], default: 'a',
+  });
+  for (const part of m.parts) {
+    if (bodyParts.includes(part.id)) part.visibleWhen = { option: 'style', equals: ['a'] };
+    if (sleeveParts.includes(part.id)) part.visibleWhen = { option: 'style', equals: ['b'] };
+  }
+  const s = defaultSelections(m);
+  applySelection(m, s, 'body-colour', 'red');
+  applySelection(m, s, 'style', 'b');
+  assert.equal(s['sleeve-colour'], 'red', 'the colour followed the switch');
+  applySelection(m, s, 'sleeve-colour', 'teal');
+  applySelection(m, s, 'style', 'a');
+  assert.equal(s['body-colour'], 'teal', 'and follows back the other way');
 });
 
 test('the payload carries resolved values, names and an itemised total', () => {

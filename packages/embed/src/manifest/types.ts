@@ -77,6 +77,20 @@ export interface PartMaterial {
   fixedColour?: Hex;
 }
 
+/**
+ * Scene-wide rendering knobs, tuned in the Studio's Finish tab and honoured
+ * by every viewer of the manifest — the storefront lights the product the
+ * way the merchant staged it.
+ */
+export interface SceneSettings {
+  /** Tone-mapping exposure, 0.25–3. Default 1.25. */
+  exposure?: number;
+  /** Studio-environment (image-based light) intensity, 0–2. Default 0.5. */
+  environmentIntensity?: number;
+  /** Contact-shadow opacity under the model, 0–1. Default 0.2. */
+  shadowOpacity?: number;
+}
+
 export interface Part {
   id: string;
   label: string;
@@ -238,6 +252,7 @@ export interface Manifest {
   version?: string;
   units: 'mm';
   brand?: Branding;
+  scene?: SceneSettings;
   models: ModelSource[];
   parts: Part[];
   groups?: PartGroup[];

@@ -9,14 +9,16 @@ import { validateManifest } from '../../embed/src/manifest/validate.ts';
 import { resolveLayout } from '../../embed/src/runtime/layout.ts';
 import { defaultSelections, visibleParts } from '../../embed/src/runtime/state.ts';
 import type { Manifest, ColourOption, ChoiceOption } from '../../embed/src/manifest/types.ts';
-import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
+import { initManifest, boundsOf, boundsByPartId, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
   makeGroup, ungroup, renameGroup, nudgeGroup,
   makeVariantChoice, dissolveVariantChoice,
   addPartToGroup, removePartFromGroup, addPartToChoice, removePartFromChoice,
   entriesOf, moveEntry, moveEntryTo, withAnchor, makePartOptional, EditError,
   partToOrigin, groupToOrigin, nudge, renamePart, setPartMaterial,
+  duplicateEntry, nudgeVariant, variantToOrigin, renameVariantSet, setScene,
 } from '../src/lib/manifest-edit.ts';
+import { mergeModel } from '../src/lib/manifest-init.ts';
 
 const near = (a: number, b: number, tol = 1e-6) => assert.ok(Math.abs(a - b) < tol, `${a} !== ${b}`);
 const tri = (positions: number[]) => ({
@@ -229,6 +231,97 @@ test('setPartMaterial merges finish knobs and rejects out-of-range values', () =
     { roughness: 0.2, metalness: 0.6, flatShading: false });
   assert.throws(() => setPartMaterial(m, 'body', { roughness: 1.4 }), EditError);
   assert.throws(() => setPartMaterial(m, 'body', { metalness: -0.1 }), EditError);
+});
+
+test('duplicateEntry copies an assembly: parts, internal anchors, merged colour, offset aside', () => {
+  let m = withAnchor(fresh(), 'badge', 1, { align: 'min', to: 'body', edge: 'max', offset: 1 });
+  m = makeGroup(m, ['body', 'badge'], 'Shell');
+  const before = resolveLayout(m, RAW);
+  m = duplicateEntry(m, 'shell', RAW);
+  valid(m);
+  assert.equal(m.groups!.length, 2);
+  const copy = m.groups!.find((g) => g.id !== 'shell')!;
+  assert.deepEqual(copy.parts, ['body-copy', 'badge-copy']);
+  assert.equal(copy.label, 'Shell copy');
+  // The cloned badge rides the cloned body, not the original.
+  assert.equal(m.parts.find((p) => p.id === 'badge-copy')!.placement!.y!.to, 'body-copy:max');
+  assert.ok(m.options.some((o) => o.id === 'shell-colour-copy'));
+  // Offset aside, and rigid: the clone pair keeps the badge-on-body gap.
+  // Clones share their source's mesh, so bounds re-derive through it.
+  const after = resolveLayout(m, boundsByPartId(m, RAW));
+  assert.ok(after.get('body-copy')!.box.min[0] > before.get('body')!.box.max[0] - 1e-6, 'copy sits beside the original');
+  near(after.get('badge-copy')!.box.min[1] - after.get('body-copy')!.box.max[1],
+    before.get('badge')!.box.min[1] - before.get('body')!.box.max[1]);
+});
+
+test('duplicateEntry copies a variant set with its own exclusive choice option', () => {
+  let m = makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid style');
+  m = duplicateEntry(m, 'lid-style', RAW);
+  valid(m);
+  const copy = m.options.find((o) => o.id === 'lid-style-copy') as ChoiceOption;
+  assert.equal(copy.role, 'variant');
+  assert.deepEqual(copy.choices.map((c) => c.id), ['lid-copy', 'flat-lid-copy']);
+  assert.equal(copy.default, 'lid-copy');
+  const visible = visibleParts(m, defaultSelections(m));
+  assert.ok(visible.has('lid') && visible.has('lid-copy'), 'both sets show their default');
+  assert.ok(!visible.has('flat-lid') && !visible.has('flat-lid-copy'), 'both stay exclusive');
+});
+
+test('nudgeVariant and variantToOrigin move every member as one rigid thing', () => {
+  let m = makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid style');
+  m = nudgeVariant(m, 'lid-style', [10, 0, 4]);
+  valid(m);
+  m = variantToOrigin(m, 'lid-style', RAW);
+  valid(m);
+  const layout = resolveLayout(m, RAW);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const id of ['lid', 'flat-lid']) {
+    const box = layout.get(id)!.box;
+    for (const a of [0, 1, 2]) {
+      min[a] = Math.min(min[a], box.min[a]);
+      max[a] = Math.max(max[a], box.max[a]);
+    }
+  }
+  near((min[0] + max[0]) / 2, 0);
+  near(min[1], 0);
+  assert.throws(() => nudgeVariant(m, 'body-colour', [1, 0, 0]), EditError);
+});
+
+test('renameVariantSet renames the customer-facing label only', () => {
+  const m = renameVariantSet(makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid style'), 'lid-style', 'Tile');
+  const option = m.options.find((o) => o.id === 'lid-style') as ChoiceOption;
+  assert.equal(option.label, 'Tile');
+  assert.throws(() => renameVariantSet(m, 'lid-style', '  '), EditError);
+});
+
+test('setScene merges knobs and the validator holds the ranges', () => {
+  let m = setScene(fresh(), { exposure: 1.6 });
+  m = setScene(m, { shadowOpacity: 0.4 });
+  valid(m);
+  assert.deepEqual(m.scene, { exposure: 1.6, shadowOpacity: 0.4 });
+  assert.throws(() => setScene(m, { exposure: 9 }), EditError);
+  assert.throws(() => setScene(m, { shadowOpacity: -1 }), EditError);
+});
+
+test('mergeModel adds a second file: names deduped, parts grounded, options on the palette', () => {
+  const base = fresh();
+  const incoming = [
+    { name: 'body', ...tri([-4, 0, -4, 4, 0, -4, 4, 6, 4, -4, 6, 4, -4, 0, 4, 4, 0, 4]) },
+    { name: 'hook', ...tri([-1, 0, -1, 1, 0, -1, 1, 2, 1, -1, 2, 1, -1, 0, 1, 1, 0, 1]) },
+  ];
+  const merged = mergeModel({ parts: PARTS, manifest: base }, incoming);
+  valid(merged.manifest);
+  assert.equal(merged.manifest.parts.length, 6);
+  assert.ok(merged.manifest.parts.some((p) => p.id === 'body-2'), 'colliding name deduped');
+  assert.ok(merged.manifest.options.some((o) => o.id === 'body-2-colour'));
+  assert.equal(merged.parts.length, 6);
+  // The incoming parts stayed in canonical space: resolvable layout, on the ground.
+  const raw = boundsOf(merged.parts) as Map<string, PartBounds>;
+  const layout = resolveLayout(merged.manifest, boundsOf(merged.parts) as Map<string, PartBounds>);
+  assert.equal(layout.size, 6);
+  near(layout.get('body-2')!.box.min[1], 0);
+  void raw;
 });
 
 test('moveEntryTo lands an entry at an arbitrary position and clamps', () => {

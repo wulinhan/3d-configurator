@@ -238,9 +238,18 @@ export class Viewer {
       });
     }
 
+    // Each PART gets its own copy of its geometry: two parts may share one
+    // mesh (a duplicated variant set), and the re-centring below mutates the
+    // buffer — sharing would re-centre it once per part.
+    const partGeometry = new Map<string, THREE.BufferGeometry>();
+    for (const part of this.manifest.parts) {
+      const source = geometries.get(part.mesh);
+      if (source) partGeometry.set(part.id, source.clone());
+    }
+
     const boxes = new Map<string, Box>();
     for (const part of this.manifest.parts) {
-      const geo = geometries.get(part.mesh);
+      const geo = partGeometry.get(part.id);
       if (!geo) {
         console.warn(`[configurator] part "${part.id}" references missing mesh ${part.mesh}`);
         continue;
@@ -255,7 +264,7 @@ export class Viewer {
     this.layout = layout;
 
     for (const part of this.manifest.parts) {
-      const geo = geometries.get(part.mesh);
+      const geo = partGeometry.get(part.id);
       const t = layout.get(part.id);
       const box = boxes.get(part.id);
       if (!geo || !t || !box) continue;
@@ -307,6 +316,7 @@ export class Viewer {
     this.scene.add(catcher);
     this.shadowCatcher = catcher;
     this.fitShadowCatcher();
+    this.applyScene();
 
     // Only frame the model automatically when the manifest didn't say where to
     // look — a merchant's chosen angle must survive.
@@ -351,6 +361,17 @@ export class Viewer {
       }
     }
     this.fitShadowCatcher();
+    this.applyScene();
+  }
+
+  /** Manifest scene knobs → renderer state. Safe to call any time. */
+  private applyScene(): void {
+    const s = this.manifest.scene ?? {};
+    this.renderer.toneMappingExposure = s.exposure ?? 1.25;
+    this.scene.environmentIntensity = s.environmentIntensity ?? 0.5;
+    if (this.shadowCatcher) {
+      (this.shadowCatcher.material as THREE.ShadowMaterial).opacity = s.shadowOpacity ?? 0.2;
+    }
   }
 
   /** Keep the contact shadow under the model as edits move and resize it. */

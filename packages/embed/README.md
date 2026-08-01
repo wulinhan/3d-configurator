@@ -139,6 +139,14 @@ colour pricing). The choice option itself always stays live — it is how the
 customer switches back. In the panel, a variant set and its members' colours
 render as ONE tab named "Set (Member)" — colour options that only paint
 members fold into it, so which part and what colour are a single decision.
+Switching members carries the chosen colour to the incoming member
+(`applySelection`): the customer picked "a red tile", and swapping which
+tile it is must not silently un-pick red.
+
+`manifest.scene` carries staging: tone-mapping exposure, environment
+intensity, and contact-shadow opacity, all range-validated and applied live
+by the viewer — the Studio's Scene sliders and the storefront read the same
+fields.
 
 ## Trying it
 
@@ -162,7 +170,7 @@ styles, manifest and models into `apps/demo/standalone.html` — one file, no ex
 
 ```
 npm test                # unit + browser
-npm run test:unit       # validator, layout, pricing — 55 tests
+npm run test:unit       # validator, layout, pricing — 57 tests
 npm run test:browser    # drives the demo in Chromium — 14 assertions
 npm run check:manifest    # validates apps/demo/tap-bar-3.manifest.json
 ```

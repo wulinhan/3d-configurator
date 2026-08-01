@@ -56,6 +56,17 @@ const FIXTURE_3MF = zipSync({
      <build><item objectid="1"/><item objectid="2" transform="1 0 0 0 1 0 0 0 1 15 5 10"/></build>
     </model>`),
 });
+// A second file to ADD to the project mid-session — authored far from the
+// origin on purpose, so landing centred-and-grounded proves normalisation.
+const SECOND_3MF = zipSync({
+  '3D/3dmodel.model': new TextEncoder().encode(
+    `<?xml version="1.0"?><model unit="millimeter">
+     <resources>
+      <object id="1" name="Hook" type="model"><mesh>${boxGeom(8, 8, 8)}</mesh></object>
+     </resources>
+     <build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 70 40 25"/></build>
+    </model>`),
+});
 
 // ── serve dist ──────────────────────────────────────────────────────────────
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
@@ -609,6 +620,23 @@ await shoot('2-anchored.png');
   m = await manifest();
   check('finish edits undo like everything else',
     (m.parts[0].material?.roughness ?? undefined) === (before ?? undefined), m.parts[0].material);
+
+  // Scene sliders: staging knobs land in the manifest AND on the renderer.
+  await page.locator('[data-testid="scene-exposure"]').evaluate((el) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, '1.8');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForTimeout(250);
+  m = await manifest();
+  check('the light slider writes scene.exposure',
+    near(m.scene?.exposure ?? -1, 1.8), m.scene);
+  check('…and the renderer follows live', await page.evaluate(() =>
+    Math.abs(window.__studioViewer.renderer.toneMappingExposure - 1.8) < 1e-6), '');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(200);
+  check('undo returns the default staging', await page.evaluate(() =>
+    Math.abs(window.__studioViewer.renderer.toneMappingExposure - 1.25) < 1e-6), '');
   await page.click('.tabs button:has-text("Parts")');
   await page.waitForTimeout(150);
 }
@@ -784,12 +812,18 @@ await shoot('4-publish.png');
   m = await manifest();
   check('dragging back above restores the order', m.parts.map((p) => p.id).join(',') === 'base,cap', m.parts.map((p) => p.id));
 
-  // 11c. multi-select → pick-one set. The cap is still an optional add-on
-  // from section 9 — creating the set must absorb that, not silently refuse
-  // (the exact failure a real merchant hit).
+  // 11c. variant set via the up-front button (no checkboxes ticked yet): the
+  // flow guides the merchant to tick parts. The cap is still an optional
+  // add-on from section 9 — creating the set must absorb that, not silently
+  // refuse (the exact failure a real merchant hit).
+  check('creating a variant set is offered up-front, before anything is selected',
+    await page.isVisible('[data-testid="new-variant"]'), '');
+  await page.click('[data-testid="new-variant"]');
+  check('the flow guides: tick parts first, confirm disabled until two',
+    (await page.isVisible('[data-testid="structure-guide"]'))
+    && await page.evaluate(() => document.querySelector('[data-testid="structure-confirm"]')?.disabled === true), '');
   await page.check('[data-testid="pick-base"]');
   await page.check('[data-testid="pick-cap"]');
-  await page.click('[data-testid="make-variant"]');
   await page.fill('[data-testid="structure-label"]', 'Body style');
   await page.click('[data-testid="structure-confirm"]');
   await page.waitForTimeout(300);
@@ -811,6 +845,29 @@ await shoot('4-publish.png');
     (await page.isVisible('[data-testid="variant-price"]'))
     && !(await page.isVisible('[data-testid="addon-toggle"]')), '');
 
+  // Duplicate the whole set from its editor: parts, joints, colours and
+  // exclusivity all copied; the viewer rebuilds so the copies render.
+  await page.click('.part-name:has-text("Body style")');
+  await page.waitForTimeout(200);
+  check('the set header opens the variant editor',
+    await page.isVisible('[data-testid="variant-editor-body-style"]'), '');
+  await page.click('[data-testid="duplicate-entry"]');
+  await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 4, { timeout: 20000 });
+  await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  m = await manifest();
+  check('duplicating a variant set copies parts and its exclusive choice',
+    m.parts.length === 4
+    && m.parts.some((p) => p.id === 'base-copy') && m.parts.some((p) => p.id === 'cap-copy')
+    && m.options.some((o) => o.id === 'body-style-copy')
+    && m.parts.find((p) => p.id === 'base-copy')?.visibleWhen?.option === 'body-style-copy',
+    { parts: m.parts.map((p) => p.id), options: m.options.map((o) => o.id) });
+  const copyVerdict = validateManifest(m);
+  check('manifest still valid after the duplicate', copyVerdict.ok, copyVerdict.errors);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  m = await manifest();
+  check('one undo removes the whole copy', m.parts.length === 2, m.parts.map((p) => p.id));
+
   // 11d. the preview must let customers actually choose between them — and
   // the panel is either-or too: the hidden side has no colour tab or row.
   await page.click('[data-testid="preview-open"]');
@@ -826,10 +883,20 @@ await shoot('4-publish.png');
   check('the member choice and its colour swatches are picked together in that tab',
     await page.evaluate(() => document.querySelectorAll('.preview-overlay .cfg-choice').length >= 2
       && document.querySelectorAll('.preview-overlay .cfg-swatch').length > 0), '');
+  // Pick a NON-default colour, then switch member: the colour must follow.
+  // (Base's default is already red from the default-colour test upstream.)
+  await page.click('.preview-overlay .cfg-swatch[aria-label="Sky Blue"]');
+  await page.waitForTimeout(200);
+  check('a swatch picked in the folded tab lands on the visible member',
+    await page.evaluate(() => (window).__previewPayload?.selections?.['base-colour'] === 'blue'),
+    await page.evaluate(() => (window).__previewPayload?.selections));
   await page.click('.preview-overlay .cfg-choice:has-text("Cap")');
   await page.waitForTimeout(300);
   check('customers can switch the variant set in the preview',
     await page.evaluate(() => (window).__previewPayload?.selections?.['body-style'] === 'cap'),
+    await page.evaluate(() => (window).__previewPayload?.selections));
+  check('…and the chosen colour carried over to the incoming member',
+    await page.evaluate(() => (window).__previewPayload?.selections?.['cap-colour'] === 'blue'),
     await page.evaluate(() => (window).__previewPayload?.selections));
   previewTabs = await tabTexts();
   check('switching renames the tab to the new member — either-or in the panel as well',
@@ -955,6 +1022,28 @@ await shoot('4-publish.png');
     { parts: m.parts.length, options: m.options.map((o) => o.id) });
   const afterDelete = validateManifest(m);
   check('manifest still valid after the delete', afterDelete.ok, afterDelete.errors);
+}
+
+// ── 13. add parts from a second file ───────────────────────────────────────
+{
+  await page.setInputFiles('[data-testid="add-model-input"]', {
+    name: 'hooks.3mf', mimeType: 'application/octet-stream', buffer: Buffer.from(SECOND_3MF),
+  });
+  await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 2, { timeout: 20000 });
+  await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  m = await manifest();
+  check('a second file adds its parts to the project',
+    m.parts.length === 2 && m.parts.some((p) => p.id === 'hook')
+    && m.options.some((o) => o.id === 'hook-colour'),
+    { parts: m.parts.map((p) => p.id), options: m.options.map((o) => o.id) });
+  const addVerdict = validateManifest(m);
+  check('manifest still valid after adding parts', addVerdict.ok, addVerdict.errors);
+  const hookBox = await page.evaluate(() => window.__studioViewer.partBox('hook'));
+  check('added parts land centred on the flat axes, sitting on the ground',
+    Math.abs((hookBox.min[0] + hookBox.max[0]) / 2) < 1e-3
+    && Math.abs(hookBox.min[1]) < 1e-3
+    && Math.abs((hookBox.min[2] + hookBox.max[2]) / 2) < 1e-3,
+    hookBox);
 }
 
 check('material has the studio environment (dull-gloss plastic)',

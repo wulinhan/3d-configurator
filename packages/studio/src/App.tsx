@@ -17,11 +17,12 @@ import type { Manifest, ChoiceOption } from '../../embed/src/manifest/types.ts';
 import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
 import { writeGlb } from './lib/write-glb.ts';
-import { initManifest, boundsOf, boundsByPartId, type PartBounds } from './lib/manifest-init.ts';
+import { initManifest, boundsOf, boundsByPartId, mergeModel, type PartBounds } from './lib/manifest-init.ts';
+import { duplicateEntry } from './lib/manifest-edit.ts';
 import { ImportError } from './lib/types.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
-import { PartEditor, GroupEditor } from './ui/PartEditor.tsx';
+import { PartEditor, GroupEditor, VariantEditor } from './ui/PartEditor.tsx';
 import { PalettePanel } from './ui/PalettePanel.tsx';
 import { FinishPanel } from './ui/FinishPanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
@@ -72,6 +73,7 @@ export function App() {
   const [tab, setTab] = useState<Tab>('Parts');
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
   const [editingGroup, setEditingGroup] = useState<string | null>(null);
+  const [editingVariant, setEditingVariant] = useState<string | null>(null);
   const [hiddenParts, setHiddenParts] = useState<Set<string>>(new Set());
   const [solo, setSolo] = useState<string | null>(null);
   const [axes, setAxes] = useState<string>(AXIS_PRESETS[1].axes); // 3D-print files dominate
@@ -110,6 +112,7 @@ export function App() {
       futureRef.current = [];
       setSelectedPart(manifest.parts[0]?.id ?? null);
       setEditingGroup(null);
+      setEditingVariant(null);
       setHiddenParts(new Set());
       setSolo(null);
       setVariantPreview({});
@@ -168,7 +171,7 @@ export function App() {
   // can be visible and edited at once" means clicking the other one shows it.
   const selectPart = useCallback((id: string | null) => {
     setSelectedPart(id);
-    if (id) setEditingGroup(null);
+    if (id) { setEditingGroup(null); setEditingVariant(null); }
     if (!id) return;
     const m = projectRef.current?.manifest;
     const rule = m?.parts.find((p) => p.id === id)?.visibleWhen;
@@ -216,6 +219,45 @@ export function App() {
     });
   }, []);
 
+  // Duplicating an entry adds PARTS, and new parts need meshes — the viewer
+  // binds geometry at load, so the model URL is re-minted (same GLB bytes)
+  // to remount the viewer, and raw bounds re-derive through the shared mesh.
+  const duplicateEntryInApp = useCallback((entryId: string) => {
+    const old = projectRef.current;
+    if (!old) return;
+    const manifest = duplicateEntry(old.manifest, entryId, old.raw);
+    pastRef.current.push(old.manifest);
+    if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
+    futureRef.current = [];
+    URL.revokeObjectURL(old.modelUrl);
+    const modelUrl = URL.createObjectURL(new Blob([writeGlb(old.model.parts)], { type: 'model/gltf-binary' }));
+    const raw = boundsByPartId(manifest, boundsOf(old.model.parts));
+    setProject({ ...old, manifest, raw, modelUrl });
+  }, []);
+
+  // Add a second model file to the project: parts renamed clear of clashes,
+  // manifest extended, one GLB rebuilt from the union. The incoming file is
+  // normalised like any import — centred on the flat axes, sat on the ground.
+  const addModelParts = useCallback(async (file: File) => {
+    const old = projectRef.current;
+    if (!old) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const incoming = importModel(bytes, { axes });
+    const merged = mergeModel({ parts: old.model.parts, manifest: old.manifest }, incoming.parts);
+    pastRef.current.push(old.manifest);
+    if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
+    futureRef.current = [];
+    URL.revokeObjectURL(old.modelUrl);
+    const bounds = {
+      min: old.model.bounds.min.map((v, i) => Math.min(v, incoming.bounds.min[i])) as [number, number, number],
+      max: old.model.bounds.max.map((v, i) => Math.max(v, incoming.bounds.max[i])) as [number, number, number],
+    };
+    const model = { ...old.model, parts: merged.parts, bounds };
+    const modelUrl = URL.createObjectURL(new Blob([writeGlb(merged.parts)], { type: 'model/gltf-binary' }));
+    const raw = boundsByPartId(merged.manifest, boundsOf(merged.parts));
+    setProject({ ...old, model, manifest: merged.manifest, raw, modelUrl });
+  }, [axes]);
+
   // Divider: drag resizes the explorer, a click (no meaningful movement)
   // collapses/expands it.
   const onDividerDown = useCallback((e: ReactPointerEvent) => {
@@ -256,11 +298,13 @@ export function App() {
   // The floating properties panel: slides in when something is selected,
   // slides out (keeping its last content while it goes) when nothing is.
   const floatContent = project && tab === 'Parts'
-    ? (editingGroup
-      ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onClose={() => setEditingGroup(null)} />
-      : selectedPart
-        ? <PartEditor key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} />
-        : null)
+    ? (editingVariant
+      ? <VariantEditor key={editingVariant} project={project} optionId={editingVariant} onChange={setManifest} onDuplicate={duplicateEntryInApp} onClose={() => setEditingVariant(null)} />
+      : editingGroup
+        ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onDuplicate={duplicateEntryInApp} onClose={() => setEditingGroup(null)} />
+        : selectedPart
+          ? <PartEditor key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} />
+          : null)
     : null;
   const lastFloatRef = useRef<ReactNode>(null);
   if (floatContent) lastFloatRef.current = floatContent;
@@ -345,8 +389,11 @@ export function App() {
               hiddenParts={hiddenParts} solo={solo}
               selections={selections}
               editingGroup={editingGroup}
+              editingVariant={editingVariant}
               onSelectPart={selectPart}
-              onEditGroup={setEditingGroup}
+              onEditGroup={(id) => { setEditingGroup(id); if (id) setEditingVariant(null); }}
+              onEditVariant={(id) => { setEditingVariant(id); if (id) { setEditingGroup(null); setSelectedPart(null); } }}
+              onAddModel={addModelParts}
               onSetHidden={setHidden}
               onSolo={setSolo}
               onHideAll={(hide) => { setSolo(null); setHiddenParts(hide ? new Set(project.manifest.parts.map((p) => p.id)) : new Set()); }}
@@ -368,6 +415,10 @@ export function App() {
 
         <div className="stage-wrap">
           <ViewerPane
+            // Keyed by model: a rebuilt model needs a FRESH canvas. Dispose
+            // force-loses the old canvas's WebGL context, and a reused DOM
+            // node hands the new renderer that same dead context back.
+            key={project.modelUrl}
             project={project} selections={selections} selectedPart={selectedPart}
             hiddenParts={effectiveHidden}
             onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}

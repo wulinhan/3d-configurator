@@ -5,7 +5,7 @@
 // the same finish the merchant tuned.
 
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
-import { setPartMaterial } from '../lib/manifest-edit.ts';
+import { setPartMaterial, setScene } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
 
 const DEFAULT_ROUGHNESS = 0.55; // the viewer's dull-gloss plastic default
@@ -16,8 +16,33 @@ export function FinishPanel(props: {
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
   const { manifest } = props.project;
+  const scene = manifest.scene ?? {};
+  const sceneSlider = (
+    label: string, key: 'exposure' | 'environmentIntensity' | 'shadowOpacity',
+    value: number, min: number, max: number, testId: string,
+  ) => (
+    <label className="slider-row">
+      <span className="field-label">{label}</span>
+      <input
+        type="range" min={min} max={max} step={0.05} value={value} data-testid={testId}
+        onChange={(e) => props.onChange(setScene(manifest, { [key]: Number(e.target.value) }))}
+      />
+      <span className="slider-value">{value.toFixed(2)}</span>
+    </label>
+  );
   return (
     <div className="panel-body">
+      <section className="finish-row">
+        <h4>Scene &amp; lighting</h4>
+        <p className="hint">
+          Staging for the whole product — brightness, the studio environment's
+          reflections, and how strongly it sits on its shadow. Ships with the
+          manifest; the storefront lights it exactly this way.
+        </p>
+        {sceneSlider('Light', 'exposure', scene.exposure ?? 1.25, 0.3, 2.5, 'scene-exposure')}
+        {sceneSlider('Reflect', 'environmentIntensity', scene.environmentIntensity ?? 0.5, 0, 1.5, 'scene-env')}
+        {sceneSlider('Shadow', 'shadowOpacity', scene.shadowOpacity ?? 0.2, 0, 1, 'scene-shadow')}
+      </section>
       <p className="hint">
         How each part's surface catches light. Finish ships with the manifest —
         customers see exactly this.

@@ -125,6 +125,41 @@ export function coloursInUse(manifest: Manifest, selections: Selections): Array<
   return [...seen.values()];
 }
 
+/**
+ * Apply a customer's change to the selections. Switching a variant set
+ * carries the set's current colour to the incoming member: the customer
+ * picked "red tile", not "red LinkedIn tile" — swapping which tile it is
+ * should not silently un-pick the colour.
+ */
+export function applySelection(manifest: Manifest, selections: Selections, optionId: string, value: string): void {
+  const option = manifest.options.find((o) => o.id === optionId);
+  const memberColour = (): ColourOption | undefined => {
+    if (!option || !isChoice(option) || option.role !== 'variant') return undefined;
+    // The set's member parts are the ones whose visibility hangs on it — not
+    // the choice ids, which only coincide with part ids in the simple case.
+    const memberIds = new Set(manifest.parts.filter((p) => p.visibleWhen?.option === option.id).map((p) => p.id));
+    const visible = visibleParts(manifest, selections);
+    return manifest.options.find((o): o is ColourOption =>
+      isColour(o) && o.parts.length > 0
+      && o.parts.every((p) => memberIds.has(p)) && o.parts.some((p) => visible.has(p)));
+  };
+
+  const before = memberColour();
+  const carried = before ? resolveValue(manifest, selections, before.id) : '';
+  selections[optionId] = value;
+  const after = memberColour();
+  if (!before || !after || before.id === after.id || !carried) return;
+
+  if (isCustomColour(carried)) {
+    if (after.custom?.allowed) selections[after.id] = carried;
+    return;
+  }
+  const palette = manifest.palettes?.find((p) => p.id === after.palette);
+  if (palette?.swatches.some((s) => s.id === carried && s.available !== false)) {
+    selections[after.id] = carried;
+  }
+}
+
 export interface PriceDelta {
   optionId: string;
   label: string;

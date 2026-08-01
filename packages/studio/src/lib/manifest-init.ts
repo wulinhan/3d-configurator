@@ -124,3 +124,52 @@ export function initManifest(rawParts: ImportedPart[], opts: InitOptions): Manif
 
 const titleCase = (s: string): string =>
   s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).trim() || 'Part';
+
+/**
+ * Merge a second imported model into an existing project: parts are renamed
+ * clear of collisions, appended to the mesh list, and added to the manifest
+ * with their own colour options on the existing palette. The incoming file
+ * was normalised by importModel, so its parts arrive centred on X/Z with
+ * their combined bottom on the ground — exactly where added parts should
+ * appear.
+ */
+export function mergeModel(
+  current: { parts: ImportedPart[]; manifest: Manifest },
+  incoming: ImportedPart[],
+): { parts: ImportedPart[]; manifest: Manifest } {
+  const usedNames = new Set(current.parts.map((p) => p.name));
+  const renamed = normalizeParts(incoming).map((part) => {
+    let name = part.name;
+    for (let n = 2; usedNames.has(name); n++) name = `${part.name}-${n}`;
+    usedNames.add(name);
+    return { ...part, name };
+  });
+
+  const manifest = structuredClone(current.manifest);
+  const usedIds = new Set(manifest.parts.map((p) => p.id));
+  const usedOptions = new Set(manifest.options.map((o) => o.id));
+  const paletteId = manifest.palettes?.[0]?.id ?? 'default';
+  const firstSwatch = manifest.palettes?.[0]?.swatches[0]?.id ?? 'white';
+  const modelId = manifest.models[0]?.id ?? 'model';
+
+  for (const part of renamed) {
+    let id = slug(part.name);
+    for (let n = 2; usedIds.has(id); n++) id = `${slug(part.name)}-${n}`;
+    usedIds.add(id);
+    manifest.parts.push({ id, label: titleCase(part.name), mesh: `${modelId}#${part.name}` });
+    let optionId = `${id}-colour`;
+    for (let n = 2; usedOptions.has(optionId); n++) optionId = `${id}-colour-${n}`;
+    usedOptions.add(optionId);
+    manifest.options.push({
+      id: optionId,
+      type: 'colour',
+      label: titleCase(part.name),
+      parts: [id],
+      palette: paletteId,
+      default: firstSwatch,
+      custom: { allowed: false },
+    });
+  }
+
+  return { parts: [...current.parts, ...renamed], manifest };
+}

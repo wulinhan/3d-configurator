@@ -11,6 +11,7 @@ import {
   setDefaultSwatch, setCustomColour,
   ungroup, renameGroup, nudgeGroup, partToOrigin, groupToOrigin,
   matchPose, partCentreMm, setPartCentre,
+  nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -33,6 +34,7 @@ export function GroupEditor(props: {
   project: Project;
   groupId: string;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
+  onDuplicate: (entryId: string) => void;
   onClose: () => void;
 }) {
   const { manifest } = props.project;
@@ -94,7 +96,89 @@ export function GroupEditor(props: {
           Splitting it up keeps their positions and the shared colour option.
         </p>
         <div className="publish-actions">
+          <button
+            className="ghost" data-testid="duplicate-entry"
+            title="Copy every part, joint and colour; the copy lands beside the original"
+            onClick={() => { try { props.onDuplicate(group.id); setError(null); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } }}
+          >Duplicate</button>
           <button className="ghost" onClick={() => { props.onClose(); act(() => ungroup(manifest, group.id)); }}>Split up</button>
+        </div>
+      </section>
+      {error && <p className="error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+export function VariantEditor(props: {
+  project: Project;
+  optionId: string;
+  onChange: (m: Manifest, opts?: SetManifestOptions) => void;
+  onDuplicate: (entryId: string) => void;
+  onClose: () => void;
+}) {
+  const { manifest } = props.project;
+  const option = manifest.options.find((o): o is ChoiceOption => o.id === props.optionId && o.type === 'choice');
+  const [error, setError] = useState<string | null>(null);
+  const [nudgeTick, setNudgeTick] = useState(0);
+  if (!option || option.role !== 'variant') return null;
+
+  const act = (fn: () => Manifest) => {
+    try { props.onChange(fn()); setError(null); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+  };
+
+  return (
+    <div className="part-editor" data-testid={`variant-editor-${option.id}`}>
+      <h3>{option.label} <span className="tag">variants</span></h3>
+      <section>
+        <h4>Name</h4>
+        <label className="field wide">
+          <input
+            defaultValue={option.label} data-testid="variant-name"
+            onBlur={(e) => { if (e.target.value.trim() && e.target.value !== option.label) act(() => renameVariantSet(manifest, option.id, e.target.value)); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          />
+        </label>
+      </section>
+      <section>
+        <h4>Move together</h4>
+        <p className="hint">Shifts every variant by the given distance — they usually share one spot, so they travel as one.</p>
+        <div className="match-row">
+          <button
+            className="mini" data-testid="variant-to-origin"
+            title="Centre the whole set on X/Y, sit it on the ground at Z 0"
+            onClick={() => act(() => variantToOrigin(manifest, option.id, props.project.raw))}
+          >Bring set to origin</button>
+        </div>
+        <div className="field-row" key={nudgeTick}>
+          {UI_AXES.map(({ label, axis }) => (
+            <NumberField
+              key={label} label={label} value={0} suffix="mm"
+              testId={`vnudge-${label.toLowerCase()}`}
+              onCommit={(mm) => {
+                if (!mm) return;
+                const deltas: [number, number, number] = [0, 0, 0];
+                deltas[axis] = mm;
+                act(() => nudgeVariant(manifest, option.id, deltas));
+                setNudgeTick((t) => t + 1);
+              }}
+            />
+          ))}
+        </div>
+      </section>
+      <section>
+        <h4>Variant set</h4>
+        <p className="hint">
+          Customers pick exactly one of these parts; its colour carries over
+          when they switch. Dissolving keeps every part, always included.
+        </p>
+        <div className="publish-actions">
+          <button
+            className="ghost" data-testid="duplicate-entry"
+            title="Copy the whole set — parts, joints, colours, exclusivity"
+            onClick={() => { try { props.onDuplicate(option.id); setError(null); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } }}
+          >Duplicate</button>
+          <button className="ghost" onClick={() => { props.onClose(); act(() => dissolveVariantChoice(manifest, option.id)); }}>Dissolve</button>
         </div>
       </section>
       {error && <p className="error" role="alert">{error}</p>}

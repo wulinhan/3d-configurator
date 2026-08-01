@@ -212,6 +212,9 @@ input, select { font: inherit; }
   border: 1.5px solid var(--ink2); background: transparent;
 }
 .live-dot.is-live { background: var(--accent); border-color: var(--accent); }
+.structure-new { display: flex; align-items: center; gap: 6px; }
+.structure-new .mini { border-color: var(--accent); color: var(--ink); font-weight: 600; }
+.structure-new .hint { flex: 1; min-width: 0; }
 .structure-bar {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   border: 1.5px solid var(--accent); border-radius: 8px; padding: 8px 10px;

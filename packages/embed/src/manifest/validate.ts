@@ -75,6 +75,19 @@ export function validateManifest(input: unknown): ValidationResult {
     if (!s?.url) err(`models[${i}].url`, 'required');
   });
 
+  // ── scene ─────────────────────────────────────────────────────────────────
+  if (m.scene) {
+    const range = (key: 'exposure' | 'environmentIntensity' | 'shadowOpacity', lo: number, hi: number) => {
+      const v = m.scene![key];
+      if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi)) {
+        err(`scene.${key}`, `must be a number between ${lo} and ${hi}`);
+      }
+    };
+    range('exposure', 0.25, 3);
+    range('environmentIntensity', 0, 2);
+    range('shadowOpacity', 0, 1);
+  }
+
   // ── parts ─────────────────────────────────────────────────────────────────
   const anchorTargets = new Map<string, string[]>(); // partId → parts it anchors to
 

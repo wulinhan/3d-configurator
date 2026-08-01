@@ -47,8 +47,11 @@ export function PartsPanel(props: {
   /** What the viewer currently shows — tells variant rows which member is live. */
   selections: Selections;
   editingGroup: string | null;
+  editingVariant: string | null;
   onSelectPart: (id: string | null) => void;
   onEditGroup: (id: string | null) => void;
+  onEditVariant: (id: string | null) => void;
+  onAddModel: (file: File) => Promise<void>;
   onSetHidden: (ids: string[], hidden: boolean) => void;
   onSolo: (id: string | null) => void;
   onHideAll: (hide: boolean) => void;
@@ -66,6 +69,7 @@ export function PartsPanel(props: {
   const [drop, setDrop] = useState<DropTarget>(null);
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const addInputRef = useRef<HTMLInputElement>(null);
 
   const entries = entriesOf(manifest);
   if (!manifest.parts.length) return <p className="empty">No parts in this model.</p>;
@@ -263,7 +267,7 @@ export function PartsPanel(props: {
     return (
       <div key={entry.id} className={`entry${dropClass(index, entry.id)}`}>
         <div
-          className={`part-row is-bundle${entry.kind === 'group' && props.editingGroup === entry.id ? ' is-active' : ''}${dragging ? ' is-dragging' : ''}`}
+          className={`part-row is-bundle${(entry.kind === 'group' ? props.editingGroup : props.editingVariant) === entry.id ? ' is-active' : ''}${dragging ? ' is-dragging' : ''}`}
           data-drop-into={entry.id} data-drop-index={index}
         >
           {handle({ kind: 'entry', id: entry.id }, entry.id)}
@@ -287,8 +291,9 @@ export function PartsPanel(props: {
           <button
             className="part-name"
             onClick={() => {
-              if (entry.kind === 'group') { props.onSelectPart(null); props.onEditGroup(entry.id); }
-              else setCollapsed((old) => { const next = new Set(old); next.delete(entry.id); return next; });
+              props.onSelectPart(null);
+              if (entry.kind === 'group') props.onEditGroup(entry.id);
+              else props.onEditVariant(entry.id);
             }}
           >
             {entry.label}
@@ -323,13 +328,40 @@ export function PartsPanel(props: {
     );
   };
 
+  const addFromFile = (file: File) => {
+    props.onAddModel(file)
+      .then(() => setError(null))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  };
+
   return (
-    <div className="panel-body" data-drop-root="">
+    <div
+      className="panel-body" data-drop-root=""
+      // Dropping a model FILE adds its parts; the row-drag machinery above is
+      // pointer-based, so the two drags never collide.
+      onDragOver={(e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); }}
+      onDrop={(e) => {
+        const file = e.dataTransfer?.files?.[0];
+        if (!file) return;
+        e.preventDefault();
+        addFromFile(file);
+      }}
+    >
       <div className="part-list-head">
         <span className="hint">Parts</span>
         <span className="spacer" />
+        <button
+          className="mini" data-testid="add-model"
+          title="Add parts from another 3MF / STL / GLB — or drop the file anywhere on this panel"
+          onClick={() => addInputRef.current?.click()}
+        >＋ Add parts</button>
         <button className="mini" data-testid="show-all" onClick={() => { props.onHideAll(false); props.onSolo(null); }}>Show all</button>
         <button className="mini" data-testid="hide-all" onClick={() => props.onHideAll(true)}>Hide all</button>
+        <input
+          ref={addInputRef} type="file" hidden data-testid="add-model-input"
+          accept=".3mf,.stl,.glb,model/gltf-binary"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) addFromFile(f); e.target.value = ''; }}
+        />
       </div>
       <div
         className={`part-rows${drag ? ' is-drag-live' : ''}`} role="listbox" aria-label="Parts"
@@ -348,12 +380,23 @@ export function PartsPanel(props: {
           );
         })}
       </div>
-      <p className="hint">
-        Drag the ⣿ handle to reorder. Drop a part onto an <strong>assembly</strong> or
-        <strong> variant set</strong> to add it; drag a part out to set it loose.
-      </p>
+      <div className="structure-new">
+        <button
+          className="mini" data-testid="new-variant"
+          title="Customers pick exactly one of the chosen parts"
+          onClick={() => setPending('variant')}
+        >＋ Variant set</button>
+        <button
+          className="mini" data-testid="new-group"
+          title="The chosen parts move and colour as one"
+          onClick={() => setPending('group')}
+        >＋ Assembly</button>
+        <span className="hint">
+          Drag the ⣿ handle to reorder, or drop a part onto a set to add it.
+        </span>
+      </div>
 
-      {checked.size >= 1 && (
+      {(pending !== null || checked.size >= 1) && (
         <div className="structure-bar" data-testid="structure-bar">
           {pending === null ? (
             <>
@@ -371,13 +414,22 @@ export function PartsPanel(props: {
             </>
           ) : (
             <>
+              {checked.size < 2 && (
+                <span className="hint" data-testid="structure-guide">
+                  Tick the ☐ boxes on at least two parts to include them, then name the {pending === 'group' ? 'assembly' : 'set'}:
+                </span>
+              )}
               <input
                 className="structure-name" autoFocus data-testid="structure-label"
                 placeholder={pending === 'group' ? 'Assembly name (e.g. Shell)' : 'Choice name — customers see it (e.g. Lid style)'}
                 value={structureLabel} onChange={(e) => setStructureLabel(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') confirmStructure(); if (e.key === 'Escape') setPending(null); }}
               />
-              <button className="mini" data-testid="structure-confirm" onClick={confirmStructure}>
+              <button
+                className="mini" data-testid="structure-confirm"
+                disabled={checked.size < 2}
+                onClick={confirmStructure}
+              >
                 {pending === 'group' ? 'Create assembly' : 'Create variant set'}
               </button>
               <button className="mini" onClick={() => { setPending(null); setStructureLabel(''); }}>✕</button>

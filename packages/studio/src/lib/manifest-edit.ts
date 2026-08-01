@@ -293,25 +293,9 @@ export function partToOrigin(manifest: Manifest, partId: string, raw: Map<string
 export function groupToOrigin(manifest: Manifest, groupId: string, raw: Map<string, PartBounds>): Manifest {
   const group = manifest.groups?.find((g) => g.id === groupId);
   if (!group) throw new EditError(`no assembly "${groupId}"`);
-  const layout = resolveLayout(manifest, raw);
-  const min = [Infinity, Infinity, Infinity];
-  const max = [-Infinity, -Infinity, -Infinity];
-  for (const partId of group.parts) {
-    const box = layout.get(partId)?.box;
-    if (!box) continue;
-    for (const a of [0, 1, 2]) {
-      min[a] = Math.min(min[a], box.min[a]);
-      max[a] = Math.max(max[a], box.max[a]);
-    }
-  }
-  if (!Number.isFinite(min[0])) throw new EditError(`assembly "${groupId}" has no geometry`);
-  const deltas: [number, number, number] = [
-    -(min[0] + max[0]) / 2,
-    -min[1],
-    -(min[2] + max[2]) / 2,
-  ];
+  const deltas = toOriginDeltas(manifest, group.parts, raw);
   if (deltas.every((d) => Math.abs(d) < 1e-9)) return manifest;
-  return nudgeGroup(manifest, groupId, deltas);
+  return nudgePartsTogether(manifest, group.parts, deltas);
 }
 
 export interface GizmoPose {
@@ -726,24 +710,76 @@ export function renameGroup(manifest: Manifest, groupId: string, label: string):
 }
 
 /**
- * Move a whole group by millimetre deltas. Members anchored to another
- * member are carried by the anchor already — nudging them too would move
- * them twice.
+ * Move a set of parts together by millimetre deltas. Parts anchored to
+ * another part IN the set are carried by the anchor already — nudging them
+ * too would move them twice.
  */
-export function nudgeGroup(manifest: Manifest, groupId: string, deltas: [number, number, number]): Manifest {
-  const group = manifest.groups?.find((g) => g.id === groupId);
-  if (!group) throw new EditError(`no group "${groupId}"`);
+function nudgePartsTogether(manifest: Manifest, partIds: string[], deltas: [number, number, number]): Manifest {
+  const setIds = new Set(partIds);
   let next = manifest;
-  for (const partId of group.parts) {
+  for (const partId of partIds) {
     const part = partOf(manifest, partId);
     const effective: [number, number, number] = [...deltas];
     (['x', 'y', 'z'] as const).forEach((name, axis) => {
       const to = part.placement?.[name]?.to;
-      if (to && to !== 'origin' && group.parts.includes(to.split(':')[0])) effective[axis] = 0;
+      if (to && to !== 'origin' && setIds.has(to.split(':')[0])) effective[axis] = 0;
     });
     if (effective.some((d) => d !== 0)) next = nudge(next, partId, effective);
   }
   return next;
+}
+
+/** The union box of a set of parts, then deltas that land it at the origin. */
+function toOriginDeltas(manifest: Manifest, partIds: string[], raw: Map<string, PartBounds>): [number, number, number] {
+  const layout = resolveLayout(manifest, raw);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const partId of partIds) {
+    const box = layout.get(partId)?.box;
+    if (!box) continue;
+    for (const a of [0, 1, 2]) {
+      min[a] = Math.min(min[a], box.min[a]);
+      max[a] = Math.max(max[a], box.max[a]);
+    }
+  }
+  if (!Number.isFinite(min[0])) throw new EditError('no geometry to move');
+  return [-(min[0] + max[0]) / 2, -min[1], -(min[2] + max[2]) / 2];
+}
+
+/** Move a whole assembly by millimetre deltas. */
+export function nudgeGroup(manifest: Manifest, groupId: string, deltas: [number, number, number]): Manifest {
+  const group = manifest.groups?.find((g) => g.id === groupId);
+  if (!group) throw new EditError(`no group "${groupId}"`);
+  return nudgePartsTogether(manifest, group.parts, deltas);
+}
+
+/** Move every member of a variant set by millimetre deltas. */
+export function nudgeVariant(manifest: Manifest, optionId: string, deltas: [number, number, number]): Manifest {
+  const option = optionOf(manifest, optionId);
+  if (!isChoice(option) || option.role !== 'variant') throw new EditError(`"${optionId}" is not a variant set`);
+  return nudgePartsTogether(manifest, option.choices.map((c) => c.id), deltas);
+}
+
+/** Bring a variant set to the origin, moving all members as one rigid thing. */
+export function variantToOrigin(manifest: Manifest, optionId: string, raw: Map<string, PartBounds>): Manifest {
+  const option = optionOf(manifest, optionId);
+  if (!isChoice(option) || option.role !== 'variant') throw new EditError(`"${optionId}" is not a variant set`);
+  const ids = option.choices.map((c) => c.id);
+  const deltas = toOriginDeltas(manifest, ids, raw);
+  if (deltas.every((d) => Math.abs(d) < 1e-9)) return manifest;
+  return nudgePartsTogether(manifest, ids, deltas);
+}
+
+/** Rename a variant set — the label customers see on its panel tab. */
+export function renameVariantSet(manifest: Manifest, optionId: string, label: string): Manifest {
+  if (!label.trim()) throw new EditError('the set needs a name — customers see it');
+  return edit(manifest, (draft) => {
+    const option = draft.options.find((o) => o.id === optionId);
+    if (!option || !isChoice(option) || option.role !== 'variant') {
+      throw new EditError(`"${optionId}" is not a variant set`);
+    }
+    option.label = label.trim();
+  });
 }
 
 /**
@@ -853,6 +889,121 @@ export function dissolveVariantChoice(manifest: Manifest, optionId: string): Man
     for (const part of draft.parts) {
       if (part.visibleWhen?.option === optionId) delete part.visibleWhen;
     }
+  });
+}
+
+/**
+ * Duplicate an explorer entry — a loose part, an assembly, or a variant set —
+ * parts, internal anchors, colour options and structure included. The copy
+ * lands beside the original (offset by its own width), anchors between
+ * members are remapped to the cloned members, and anchors to outside parts
+ * stay pointing outside, so the copy is immediately repositionable as one
+ * thing. NOTE: the caller must rebuild the viewer's model after this — new
+ * parts need meshes.
+ */
+export function duplicateEntry(manifest: Manifest, entryId: string, raw: Map<string, PartBounds>): Manifest {
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  const sourceIds = entry.parts;
+
+  const next = edit(manifest, (draft) => {
+    const usedPartIds = new Set(draft.parts.map((p) => p.id));
+    const usedOptionIds = new Set(draft.options.map((o) => o.id));
+    const dedupe = (base: string, used: Set<string>) => {
+      let id = base;
+      for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+      used.add(id);
+      return id;
+    };
+
+    const idMap = new Map<string, string>();
+    for (const oldId of sourceIds) idMap.set(oldId, dedupe(`${oldId}-copy`, usedPartIds));
+
+    // Clone the parts. Internal anchors follow the clones; visibility rules
+    // are stripped (the variant case re-adds its own below — an add-on's
+    // yes/no option shouldn't silently gate two parts).
+    const lastIndex = Math.max(...sourceIds.map((id) => draft.parts.findIndex((p) => p.id === id)));
+    const clones: Part[] = sourceIds.map((oldId) => {
+      const source = draft.parts.find((p) => p.id === oldId)!;
+      const clone = structuredClone(source);
+      clone.id = idMap.get(oldId)!;
+      clone.label = `${source.label} copy`;
+      delete clone.visibleWhen;
+      for (const name of ['x', 'y', 'z'] as const) {
+        const a = clone.placement?.[name];
+        if (a?.to && a.to !== 'origin') {
+          const [ref, edge] = a.to.split(':');
+          if (idMap.has(ref)) a.to = `${idMap.get(ref)}:${edge}`;
+        }
+      }
+      return clone;
+    });
+    draft.parts.splice(lastIndex + 1, 0, ...clones);
+
+    // Clone colour options that paint only entry members.
+    const sourceSet = new Set(sourceIds);
+    const colourClones: ColourOption[] = [];
+    const colourIdMap = new Map<string, string>();
+    for (const option of draft.options) {
+      if (!isColour(option) || !option.parts.length || !option.parts.every((p) => sourceSet.has(p))) continue;
+      const clone = structuredClone(option);
+      clone.id = dedupe(`${option.id}-copy`, usedOptionIds);
+      colourIdMap.set(option.id, clone.id);
+      clone.label = `${option.label} copy`;
+      clone.parts = option.parts.map((p) => idMap.get(p)!);
+      colourClones.push(clone);
+    }
+    for (const clone of colourClones) {
+      if (clone.linkedTo && colourIdMap.has(clone.linkedTo)) clone.linkedTo = colourIdMap.get(clone.linkedTo);
+      if (clone.default.startsWith('@') && colourIdMap.has(clone.default.slice(1))) {
+        clone.default = `@${colourIdMap.get(clone.default.slice(1))}`;
+      }
+    }
+    draft.options.push(...colourClones);
+
+    if (entry.kind === 'group') {
+      const source = draft.groups!.find((g) => g.id === entry.id)!;
+      const usedGroupIds = new Set(draft.groups!.map((g) => g.id));
+      draft.groups!.push({
+        id: dedupe(`${entry.id}-copy`, usedGroupIds),
+        label: `${source.label} copy`,
+        parts: sourceIds.map((p) => idMap.get(p)!),
+      });
+    } else if (entry.kind === 'variant') {
+      const source = draft.options.find((o) => o.id === entry.id) as ChoiceOption;
+      const newOptionId = dedupe(`${entry.id}-copy`, usedOptionIds);
+      draft.options.push({
+        ...structuredClone(source),
+        id: newOptionId,
+        label: `${source.label} copy`,
+        choices: source.choices.map((c) => ({ ...structuredClone(c), id: idMap.get(c.id)! })),
+        default: idMap.get(source.default) ?? idMap.get(source.choices[0].id)!,
+      });
+      for (const oldId of sourceIds) {
+        const clone = draft.parts.find((p) => p.id === idMap.get(oldId))!;
+        clone.visibleWhen = { option: newOptionId, equals: [idMap.get(oldId)!] };
+      }
+    }
+  });
+
+  // Sit the copy beside the original, offset by the entry's own width.
+  const layout = resolveLayout(manifest, raw);
+  let width = 0;
+  for (const id of sourceIds) {
+    const box = layout.get(id)?.box;
+    if (box) width = Math.max(width, box.max[0] - box.min[0]);
+  }
+  const newIds = next.parts.filter((p) => !manifest.parts.some((q) => q.id === p.id)).map((p) => p.id);
+  return nudgePartsTogether(next, newIds, [Math.max(width * 1.1, width + 5), 0, 0]);
+}
+
+/** Merge scene-rendering knobs — what the Finish tab's Scene sliders edit. */
+export function setScene(
+  manifest: Manifest,
+  scene: { exposure?: number; environmentIntensity?: number; shadowOpacity?: number },
+): Manifest {
+  return edit(manifest, (draft) => {
+    draft.scene = { ...draft.scene, ...scene };
   });
 }
 

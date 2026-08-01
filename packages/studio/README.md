@@ -144,13 +144,32 @@ onto it, deselecting eases back over the origin. While dragging explorer
 rows, a card copy of the row rides the cursor (the dnd-kit DragOverlay
 pattern) and the row dims in place.
 
-## Finish
+## Finish & staging
 
 A Finish tab (after Palette) surfaces the material knobs the manifest
 already carries per part — gloss (inverse roughness), metalness, and
-faceted-vs-smooth shading — as sliders that apply live in the viewer and
-ship with the published manifest, so the storefront renders exactly the
-finish the merchant tuned. Publish itself is the topbar's primary CTA.
+faceted-vs-smooth shading — plus a **Scene & lighting** section: exposure,
+studio-environment reflection intensity, and contact-shadow strength
+(`manifest.scene`, range-validated). Everything applies live in the viewer
+and ships with the published manifest, so the storefront lights and
+finishes the product exactly as staged. Publish itself is the topbar's
+primary CTA.
+
+## Duplicating and growing a project
+
+Assemblies and variant sets have a **Duplicate** button in their editors:
+every part, internal joint, colour option and (for sets) the exclusive
+choice is cloned, with anchors between members remapped to the cloned
+members and anchors to outside parts left pointing outside — the copy lands
+beside the original and moves as one thing. Variant sets get the same
+editor an assembly has (rename, move together, bring to origin), opened by
+clicking the set's header.
+
+**＋ Add parts** (or dropping a 3MF/STL/GLB anywhere on the explorer)
+merges a second file into the project: names dedupe, the incoming parts get
+colour options on the existing palette, one GLB is rebuilt from the union,
+and — because every import is normalised — the new parts land centred on
+the flat axes, sitting on the ground.
 
 ## Anchors: summary first, controls on demand
 
@@ -265,13 +284,13 @@ test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
 test/parts.test.ts    15 — rename ripples (colour, add-on, variant entries),
                       delete repair, match-pose, absolute positioning, snap
-test/structure.test.ts 23 — assemblies merge colours without double-painting,
+test/structure.test.ts 29 — assemblies merge colours without double-painting,
                       variant sets are exclusive by construction (and absorb
                       add-on parts), drag-style add/remove membership repairs
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
                       deletes repair both structures
-test/studio.smoke.mjs 108 browser assertions — the full merchant journey
+test/studio.smoke.mjs 122 browser assertions — the full merchant journey
                       against the production build, including a real pointer
                       drag on the combined gizmo (and that one Ctrl+Z rewinds
                       the whole drag), view-cube navigation, the saved view
