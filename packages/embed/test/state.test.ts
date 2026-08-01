@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   defaultSelections, resolveValue, resolveColour, partColours, visibleParts,
-  coloursInUse, priceDeltas, buildPayload, isCustomColour,
+  coloursInUse, priceDeltas, buildPayload, isCustomColour, isOptionActive,
 } from '../src/runtime/state.ts';
 import type { Manifest, ColourOption } from '../src/manifest/types.ts';
 
@@ -171,6 +171,35 @@ test('visibleWhen gates a part on a choice', () => {
   assert.ok(!visibleParts(m, s).has('stand-mesh'));
   s['stand'] = 'steel';
   assert.ok(visibleParts(m, s).has('stand-mesh'));
+});
+
+test('an option whose parts are all hidden is inert — no panel slot, no charge', () => {
+  // The un-picked side of a pick-one set must be either-or EVERYWHERE:
+  // its colour option disappears from the panel and its surcharges drop.
+  const m = load();
+  const bodyOpt = colourOption(m, 'body-colour');
+  m.options.push({
+    id: 'style', type: 'choice', role: 'variant', label: 'Style',
+    choices: [{ id: 'yes', label: 'Yes' }, { id: 'no', label: 'No' }], default: 'no',
+  });
+  for (const part of m.parts) {
+    if (bodyOpt.parts.includes(part.id)) part.visibleWhen = { option: 'style', equals: ['yes'] };
+  }
+  const s = defaultSelections(m);
+  s['body-colour'] = '#FF5733'; // a paid custom colour on the hidden side
+
+  const visible = visibleParts(m, s);
+  assert.equal(isOptionActive(m, s, bodyOpt, visible), false, 'hidden side is inert');
+  assert.equal(isOptionActive(m, s, colourOption(m, 'sleeve-colour'), visible), true);
+  assert.equal(isOptionActive(m, s, m.options.find((o) => o.id === 'style')!, visible), true,
+    'the choice itself stays live — it is how you switch');
+  assert.ok(!priceDeltas(m, s).some((d) => d.optionId.includes('body-colour')),
+    'the hidden side never charges');
+
+  s['style'] = 'yes';
+  assert.equal(isOptionActive(m, s, bodyOpt), true);
+  assert.ok(priceDeltas(m, s).some((d) => d.optionId.includes('body-colour')),
+    'and charges again once picked');
 });
 
 test('the payload carries resolved values, names and an itemised total', () => {

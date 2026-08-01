@@ -92,6 +92,23 @@ export function visibleParts(manifest: Manifest, selections: Selections): Set<st
 }
 
 /**
+ * Whether an option currently does anything. A colour option whose every
+ * painted part is hidden — the un-picked side of a pick-one set — is inert:
+ * showing it invites the customer to configure a part they are not getting,
+ * and pricing it would charge them for it. Choice/text/upload options are
+ * always live (the pick-one choice itself must stay visible to switch).
+ */
+export function isOptionActive(
+  manifest: Manifest,
+  selections: Selections,
+  option: Option,
+  visible: Set<string> = visibleParts(manifest, selections),
+): boolean {
+  if (!isColour(option)) return true;
+  return option.parts.some((p) => visible.has(p));
+}
+
+/**
  * The distinct colours currently on the product — the choices a `source:
  * 'used'` option offers. Deduped by hex so picking the same white for body
  * and tiles doesn't show it twice.
@@ -124,8 +141,12 @@ export interface PriceDelta {
 export function priceDeltas(manifest: Manifest, selections: Selections): PriceDelta[] {
   const deltas: PriceDelta[] = [];
   const customByHex = new Map<string, { optionIds: string[]; amount: number; labels: string[] }>();
+  const visible = visibleParts(manifest, selections);
 
   for (const o of manifest.options) {
+    // An inert option (see isOptionActive) never charges: switching a
+    // pick-one set away from a part must drop that part's colour surcharges.
+    if (!isOptionActive(manifest, selections, o, visible)) continue;
     if (isColour(o)) {
       const colour = resolveColour(manifest, selections, o);
       if (!colour) continue;

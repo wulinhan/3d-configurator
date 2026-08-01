@@ -131,7 +131,12 @@ exclusive, each carries `visibleWhen` on that option, so customers pick which
 part they get and exactly one renders. `role` is advisory (the Studio's
 construction note); visibility itself flows through the same `visibleWhen`
 machinery add-ons use. Clicking a part whose visibility hangs on a choice
-opens that choice in the panel.
+opens that choice in the panel. A pick-one set is either-or *everywhere*:
+an option whose painted parts are all hidden is inert — no panel tab, no
+summary row, and crucially no surcharge (`isOptionActive` in
+`runtime/state.ts`; switching the set away from a part drops that part's
+colour pricing). The choice option itself always stays live — it is how the
+customer switches back.
 
 ## Trying it
 

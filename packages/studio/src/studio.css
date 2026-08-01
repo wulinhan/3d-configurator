@@ -247,14 +247,39 @@ input, select { font: inherit; }
   border: 1.5px solid var(--line); border-radius: 8px; padding: 7px 10px;
 }
 
+.anchor-block { display: flex; flex-direction: column; }
 .anchor-row { display: flex; align-items: center; gap: 6px; }
 .anchor-row .axis-name { width: 14px; font-size: 12px; font-weight: 700; color: var(--ink2); }
-.anchor-row select {
-  padding: 6px; border: 1.5px solid var(--line); border-radius: 8px;
-  background: #fff; font-size: 12px; min-width: 0; flex: 1;
-}
 .anchor-row .field { flex: 0 0 84px; }
-.anchor-row select { font-size: 11px; padding: 6px 3px; }
+/* One readable line per axis; the controls live behind it. */
+.anchor-summary {
+  flex: 1; min-width: 0; text-align: left;
+  border: 1.5px solid var(--line); border-radius: 8px; background: #fff;
+  padding: 6px 9px; font-size: 11px; color: var(--ink2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.anchor-summary.is-anchored { color: var(--ink); }
+.anchor-summary:hover { border-color: #c5c2bb; }
+.anchor-summary.is-open { border-color: var(--accent); }
+.anchor-editor {
+  margin: 4px 0 6px 20px; padding: 9px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  display: flex; flex-direction: column; gap: 9px;
+  animation: pop-in .13s ease;
+}
+.edge-triads { display: flex; gap: 14px; }
+.edge-triad-row { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.edge-triad {
+  display: flex; border: 1.5px solid var(--line); border-radius: 8px;
+  overflow: hidden; background: #fff;
+}
+.edge-triad button {
+  flex: 1; border: none; background: none; padding: 5px 0;
+  color: var(--ink2); display: grid; place-items: center;
+}
+.edge-triad button + button { border-left: 1px solid var(--line); }
+.edge-triad button:hover { background: var(--surface); }
+.edge-triad button.is-active { background: var(--accent); color: #fff; }
 
 /* ── palette ── */
 .swatch-list { display: flex; flex-direction: column; gap: 6px; }

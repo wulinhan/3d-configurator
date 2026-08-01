@@ -142,6 +142,16 @@ onto it, deselecting eases back over the origin. While dragging explorer
 rows, a card copy of the row rides the cursor (the dnd-kit DragOverlay
 pattern) and the row dims in place.
 
+## Anchors: summary first, controls on demand
+
+Each Position axis is a single readable line — `as modelled`, or
+`min → Base max` — plus its offset field. Clicking the summary expands that
+axis (one at a time) into a full-width anchor dropdown and two min/centre/max
+icon triads (the text-align-buttons pattern). The old layout kept nine
+dropdowns permanently on screen, truncated to "agai… my c… thei…"; most axes
+are "as modelled" most of the time, so the controls now only exist while
+they're being used.
+
 ## Snapping surfaces
 
 The Snap tool works on SURFACES, not invisible triangles: hovering grows
@@ -240,7 +250,7 @@ test/structure.test.ts 19 — assemblies merge colours without double-painting,
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
                       deletes repair both structures
-test/studio.smoke.mjs 95 browser assertions — the full merchant journey
+test/studio.smoke.mjs 100 browser assertions — the full merchant journey
                       against the production build, including a real pointer
                       drag on the combined gizmo (and that one Ctrl+Z rewinds
                       the whole drag), view-cube navigation, the saved view

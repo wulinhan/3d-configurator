@@ -9,6 +9,7 @@ import { validateManifest } from './manifest/validate.ts';
 import { Viewer } from './runtime/viewer.ts';
 import {
   defaultSelections, resolveValue, resolveColour, coloursInUse, buildPayload,
+  visibleParts, isOptionActive,
   type Selections,
 } from './runtime/state.ts';
 
@@ -218,7 +219,15 @@ export async function mount(opts: MountOptions) {
     body.replaceChildren();
     summary.replaceChildren();
 
-    for (const option of manifest.options) {
+    // Only options that currently do something get a tab: the un-picked side
+    // of a pick-one set is either-or everywhere, panel included.
+    const visible = visibleParts(manifest, selections);
+    const activeOptions = manifest.options.filter((o) => isOptionActive(manifest, selections, o, visible));
+    if (!activeOptions.some((o) => o.id === active)) {
+      active = activeOptions.find(isColour)?.id ?? activeOptions[0]?.id ?? '';
+    }
+
+    for (const option of activeOptions) {
       const tab = el('button', `cfg-tab${option.id === active ? ' is-active' : ''}`);
       tab.type = 'button';
       if (isColour(option)) {
@@ -240,7 +249,7 @@ export async function mount(opts: MountOptions) {
     // Summary — the same lines that end up on the order.
     const payload = buildPayload(manifest, selections);
     summary.append(el('div', 'cfg-summary-label', 'Your configuration'));
-    for (const o of manifest.options) {
+    for (const o of activeOptions) {
       if (!isColour(o)) continue;
       const row = el('div', 'cfg-summary-row');
       const dot = el('span', 'cfg-dot');

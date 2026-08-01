@@ -3,7 +3,7 @@
 // selected (see App.tsx); the explorer stays in the left panel. Every control
 // calls a tested edit op; these components only render and route.
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { Manifest, AnchorEdge, ColourOption, ChoiceOption } from '../../../embed/src/manifest/types.ts';
 import {
   sizeMm, withSizeMm, withAnchor, withRotation,
@@ -112,6 +112,10 @@ export function PartEditor(props: {
   const [lock, setLock] = useState(part?.placement?.lockAspect ?? true);
   const [matchFrom, setMatchFrom] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Which axis's anchor editor is expanded — one at a time; the rest show a
+  // one-line summary. Most axes are "as modelled" most of the time, and nine
+  // permanently-visible dropdowns truncated into "agai… my c… thei…".
+  const [openAxis, setOpenAxis] = useState<Axis | null>(null);
 
   if (!part) return null;
   if (!bounds) return <p className="empty">No geometry for this part.</p>;
@@ -166,7 +170,11 @@ export function PartEditor(props: {
       <section>
         <h4>Position</h4>
         {UI_AXES.map(({ label, axis }) => (
-          <AxisAnchorRow key={label} axis={axis} uiLabel={label} {...props} />
+          <AxisAnchorRow
+            key={label} axis={axis} uiLabel={label} {...props}
+            open={openAxis === axis}
+            onToggle={() => setOpenAxis(openAxis === axis ? null : axis)}
+          />
         ))}
         <div className="match-row">
           <Select
@@ -280,11 +288,61 @@ export function PartEditor(props: {
   );
 }
 
+// Alignment glyphs for the edge triads: a reference line with a block sat at
+// its min / centre / max — the text-align-buttons pattern, axis-agnostic.
+const EDGE_ICON: Record<AnchorEdge, ReactNode> = {
+  min: (
+    <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
+      <rect x="1" y="1" width="1.6" height="11" rx=".8" fill="currentColor" />
+      <rect x="3.6" y="3.5" width="7" height="6" rx="1.2" fill="currentColor" opacity=".5" />
+    </svg>
+  ),
+  center: (
+    <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
+      <rect x="5.7" y="1" width="1.6" height="11" rx=".8" fill="currentColor" />
+      <rect x="3" y="3.5" width="7" height="6" rx="1.2" fill="currentColor" opacity=".5" />
+    </svg>
+  ),
+  max: (
+    <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
+      <rect x="10.4" y="1" width="1.6" height="11" rx=".8" fill="currentColor" />
+      <rect x="2.4" y="3.5" width="7" height="6" rx="1.2" fill="currentColor" opacity=".5" />
+    </svg>
+  ),
+};
+const edgeName = (e: AnchorEdge) => (e === 'center' ? 'centre' : e);
+
+function EdgeTriad(props: {
+  label: string;
+  value: AnchorEdge;
+  testPrefix: string;
+  onPick: (e: AnchorEdge) => void;
+}) {
+  return (
+    <div className="edge-triad-row">
+      <span className="field-label">{props.label}</span>
+      <span className="edge-triad" role="group" aria-label={props.label}>
+        {EDGES.map((ed) => (
+          <button
+            key={ed} type="button" title={edgeName(ed)}
+            data-testid={`${props.testPrefix}-${ed}`}
+            className={props.value === ed ? 'is-active' : ''}
+            aria-pressed={props.value === ed}
+            onClick={() => props.onPick(ed)}
+          >{EDGE_ICON[ed]}</button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 function AxisAnchorRow(props: {
   project: Project;
   partId: string;
   axis: Axis;
   uiLabel: string;
+  open: boolean;
+  onToggle: () => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
   const { manifest } = props.project;
@@ -292,49 +350,65 @@ function AxisAnchorRow(props: {
   const placement = part.placement?.[AXIS_NAMES[props.axis]];
   const anchored = placement?.to && placement.to !== 'origin';
   const [ref, edge] = anchored ? placement!.to!.split(':') : ['', 'min'];
+  const align = (placement?.align ?? 'center') as AnchorEdge;
   const others = manifest.parts.filter((p) => p.id !== part.id);
+  const targetLabel = manifest.parts.find((p) => p.id === ref)?.label ?? ref;
 
   const commit = (next: { align: AnchorEdge; to: string; edge: AnchorEdge; offset: number } | { origin: true; offset?: number }) =>
     props.onChange(withAnchor(manifest, part.id, props.axis, next));
 
   const axisName = AXIS_NAMES[props.axis];
   return (
-    <div className="anchor-row" data-testid={`anchor-${axisName}`}>
-      <span className="axis-name">{props.uiLabel}</span>
-      <Select
-        ariaLabel="anchor mode" testId={`anchor-mode-${axisName}`} compact
-        value={anchored ? ref : 'origin'}
-        options={[
-          { value: 'origin', label: 'as modelled' },
-          ...others.map((p) => ({ value: p.id, label: `against ${p.label}` })),
-        ]}
-        onChange={(to) => commit(to === 'origin'
-          ? { origin: true, offset: 0 }
-          : { align: (placement?.align ?? 'min') as AnchorEdge, to, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 })}
-      />
-      {anchored && (
-        <>
+    <div className="anchor-block">
+      <div className="anchor-row" data-testid={`anchor-${axisName}`}>
+        <span className="axis-name">{props.uiLabel}</span>
+        <button
+          type="button"
+          className={`anchor-summary${anchored ? ' is-anchored' : ''}${props.open ? ' is-open' : ''}`}
+          data-testid={`anchor-summary-${axisName}`}
+          aria-expanded={props.open}
+          title="Edit how this axis is placed"
+          onClick={props.onToggle}
+        >
+          {anchored ? `${edgeName(align)} → ${targetLabel} ${edgeName(edge as AnchorEdge)}` : 'as modelled'}
+        </button>
+        <NumberField
+          label="" value={placement?.offset ?? 0} suffix="mm"
+          testId={`offset-${axisName}`}
+          onCommit={(offset) => commit(anchored
+            ? { align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset }
+            : { origin: true, offset })}
+        />
+      </div>
+      {props.open && (
+        <div className="anchor-editor" data-testid={`anchor-editor-${axisName}`}>
           <Select
-            ariaLabel="my edge" testId={`anchor-my-${axisName}`} compact
-            value={placement!.align ?? 'center'}
-            options={EDGES.map((ed) => ({ value: ed, label: `my ${ed}` }))}
-            onChange={(v) => commit({ align: v as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 })}
+            ariaLabel="anchor mode" testId={`anchor-mode-${axisName}`}
+            value={anchored ? ref : 'origin'}
+            options={[
+              { value: 'origin', label: 'as modelled — free on this axis' },
+              ...others.map((p) => ({ value: p.id, label: `against ${p.label}` })),
+            ]}
+            onChange={(to) => commit(to === 'origin'
+              ? { origin: true, offset: 0 }
+              : { align: (placement?.align ?? 'min') as AnchorEdge, to, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 })}
           />
-          <Select
-            ariaLabel="their edge" testId={`anchor-their-${axisName}`} compact
-            value={edge}
-            options={EDGES.map((ed) => ({ value: ed, label: `their ${ed}` }))}
-            onChange={(v) => commit({ align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: v as AnchorEdge, offset: placement?.offset ?? 0 })}
-          />
-        </>
+          {anchored && (
+            <div className="edge-triads">
+              <EdgeTriad
+                label="My edge" value={(placement!.align ?? 'center') as AnchorEdge}
+                testPrefix={`anchor-my-${axisName}`}
+                onPick={(v) => commit({ align: v, to: ref, edge: edge as AnchorEdge, offset: placement?.offset ?? 0 })}
+              />
+              <EdgeTriad
+                label={`${targetLabel}'s edge`} value={edge as AnchorEdge}
+                testPrefix={`anchor-their-${axisName}`}
+                onPick={(v) => commit({ align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: v, offset: placement?.offset ?? 0 })}
+              />
+            </div>
+          )}
+        </div>
       )}
-      <NumberField
-        label="" value={placement?.offset ?? 0} suffix="mm"
-        testId={`offset-${AXIS_NAMES[props.axis]}`}
-        onCommit={(offset) => commit(anchored
-          ? { align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset }
-          : { origin: true, offset })}
-      />
     </div>
   );
 }

@@ -165,15 +165,24 @@ check('and the value snaps back', near(size.w, 80), size.w);
 // ── 6. anchor the cap against the base ──────────────────────────────────────
 await page.click('.part-name:has-text("Cap")');
 await page.waitForTimeout(150);
-// The anchor dropdowns are the Studio's own listbox, not native <select>s.
+// Anchors hide behind a one-line summary chip per axis; expanding an axis
+// reveals the full-width dropdown and the min/centre/max icon triads.
 const pick = async (selectId, optionValue) => {
   await page.click(`[data-testid="${selectId}"]`);
   await page.click(`[data-testid="${selectId}-opt-${optionValue}"]`);
   await page.waitForTimeout(120);
 };
+check('anchor controls stay hidden until the axis is expanded',
+  !(await page.isVisible('[data-testid="anchor-mode-y"]')), '');
+await page.click('[data-testid="anchor-summary-y"]');
 await pick('anchor-mode-y', 'base');
-await pick('anchor-my-y', 'min');
-await pick('anchor-their-y', 'max');
+await page.click('[data-testid="anchor-my-y-min"]');
+await page.waitForTimeout(120);
+await page.click('[data-testid="anchor-their-y-max"]');
+await page.waitForTimeout(150);
+check('the summary chip reads the anchor in plain words',
+  /min → Base max/.test(await page.textContent('[data-testid="anchor-summary-y"]') ?? ''),
+  await page.textContent('[data-testid="anchor-summary-y"]'));
 await page.fill('[data-testid="offset-y"]', '2');
 await page.press('[data-testid="offset-y"]', 'Enter');
 await page.waitForTimeout(300);
@@ -742,10 +751,16 @@ await shoot('4-publish.png');
     (await page.isVisible('[data-testid="variant-price"]'))
     && !(await page.isVisible('[data-testid="addon-toggle"]')), '');
 
-  // 11d. the preview must let customers actually choose between them
+  // 11d. the preview must let customers actually choose between them — and
+  // the panel is either-or too: the hidden side has no colour tab or row.
   await page.click('[data-testid="preview-open"]');
   await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
   await page.waitForTimeout(400);
+  const tabTexts = () => page.$$eval('.preview-overlay .cfg-tab', (els) => els.map((e) => e.textContent ?? ''));
+  let previewTabs = await tabTexts();
+  check('the un-picked side of the pick-one has no colour tab',
+    previewTabs.includes('Base') && !previewTabs.includes('Cap') && previewTabs.includes('Body style'),
+    previewTabs);
   await page.click('.preview-overlay .cfg-tab:has-text("Body style")');
   await page.waitForTimeout(200);
   await page.click('.preview-overlay .cfg-choice:has-text("Cap")');
@@ -753,6 +768,14 @@ await shoot('4-publish.png');
   check('customers can switch the pick-one set in the preview',
     await page.evaluate(() => (window).__previewPayload?.selections?.['body-style'] === 'cap'),
     await page.evaluate(() => (window).__previewPayload?.selections));
+  previewTabs = await tabTexts();
+  check('switching flips which colour tab shows — either-or in the panel as well',
+    previewTabs.includes('Cap') && !previewTabs.includes('Base'), previewTabs);
+  check('…and the configuration summary lists only the picked side',
+    await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('.preview-overlay .cfg-summary-part')].map((e) => e.textContent);
+      return rows.includes('Cap') && !rows.includes('Base');
+    }), '');
   await page.click('[data-testid="preview-close"]');
   await page.waitForTimeout(200);
 
