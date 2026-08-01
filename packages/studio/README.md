@@ -145,12 +145,21 @@ pattern) and the row dims in place.
 ## Anchors: summary first, controls on demand
 
 Each Position axis is a single readable line — `as modelled`, or
-`min → Base max` — plus its offset field. Clicking the summary expands that
-axis (one at a time) into a full-width anchor dropdown and two min/centre/max
+`min → Base max` — plus a number field in ABSOLUTE millimetres (the part's
+laid-out centre). Typing a new coordinate slides the offset under whatever
+anchor the axis has, so joints hold; the raw anchor offset lives in the
+expanded editor for fine-tuning. Clicking the summary expands that axis
+(one at a time) into a full-width anchor dropdown and two min/centre/max
 icon triads (the text-align-buttons pattern). The old layout kept nine
-dropdowns permanently on screen, truncated to "agai… my c… thei…"; most axes
-are "as modelled" most of the time, so the controls now only exist while
-they're being used.
+dropdowns permanently on screen, truncated to "agai… my c… thei…"; most
+axes are "as modelled" most of the time, so the controls now only exist
+while they're being used.
+
+**Match** puts a part at exactly another part's location and rotation:
+centre lands on centre (the only reading of "same place" that holds when
+the parts are different sizes) as live centre→centre anchors, so the pair
+keeps coinciding when the source later moves. Scale is untouched, and
+anchor cycles are refused by the edit layer.
 
 ## Snapping surfaces
 
@@ -250,7 +259,7 @@ test/structure.test.ts 19 — assemblies merge colours without double-painting,
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
                       deletes repair both structures
-test/studio.smoke.mjs 100 browser assertions — the full merchant journey
+test/studio.smoke.mjs 104 browser assertions — the full merchant journey
                       against the production build, including a real pointer
                       drag on the combined gizmo (and that one Ctrl+Z rewinds
                       the whole drag), view-cube navigation, the saved view

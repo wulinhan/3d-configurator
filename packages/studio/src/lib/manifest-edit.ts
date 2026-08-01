@@ -480,6 +480,54 @@ export function copyPlacement(manifest: Manifest, fromId: string, toId: string):
 }
 
 /**
+ * Put a part at exactly another part's location and rotation. Centre lands
+ * on centre — the only reading of "same location" that holds when the two
+ * parts are different sizes (copied edge-anchors align an edge, not the
+ * body). Expressed as live centre→centre anchors, so the pair keeps
+ * coinciding when the source later moves. Scale is untouched.
+ */
+export function matchPose(manifest: Manifest, fromId: string, toId: string): Manifest {
+  if (fromId === toId) throw new EditError('pick a different part to match');
+  partOf(manifest, fromId);
+  return edit(manifest, (draft) => {
+    const from = partOf(draft, fromId);
+    const to = partOf(draft, toId);
+    const placement = { ...(to.placement ?? {}) };
+    for (const name of ['x', 'y', 'z'] as const) {
+      placement[name] = { align: 'center', to: `${fromId}:center`, offset: 0 };
+    }
+    if (from.placement?.rotation) placement.rotation = [...from.placement.rotation] as [number, number, number];
+    else delete placement.rotation;
+    to.placement = placement;
+  });
+}
+
+/** The laid-out centre of a part, in absolute millimetres. */
+export function partCentreMm(manifest: Manifest, partId: string, raw: Map<string, PartBounds>): [number, number, number] {
+  partOf(manifest, partId);
+  const box = resolveLayout(manifest, raw).get(partId)?.box;
+  if (!box) throw new EditError(`no geometry for "${partId}"`);
+  return [0, 1, 2].map((a) => (box.min[a] + box.max[a]) / 2) as [number, number, number];
+}
+
+/**
+ * Place a part's centre at an absolute coordinate on one axis. The panel's
+ * position fields speak absolute space; storage stays anchored — the move
+ * is an offset slide under whatever anchor the axis has, so joints hold.
+ */
+export function setPartCentre(
+  manifest: Manifest, partId: string, axis: Axis, valueMm: number, raw: Map<string, PartBounds>,
+): Manifest {
+  if (!Number.isFinite(valueMm)) throw new EditError('position must be finite millimetres');
+  const centre = partCentreMm(manifest, partId, raw);
+  const delta = valueMm - centre[axis];
+  if (Math.abs(delta) < 1e-9) return manifest;
+  const deltas: [number, number, number] = [0, 0, 0];
+  deltas[axis] = delta;
+  return nudge(manifest, partId, deltas);
+}
+
+/**
  * Snap two parts face to face. The merchant clicked a face on the part that
  * should MOVE, then a face on the part that stays; the moving part's clicked
  * face is anchored flush against the target's. Expressed as an anchor, so

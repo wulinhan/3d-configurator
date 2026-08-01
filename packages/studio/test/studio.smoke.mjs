@@ -190,6 +190,23 @@ m = await manifest();
 check('cap anchored: my min at base:max + 2 mm',
   JSON.stringify(m.parts[1].placement?.y) === JSON.stringify({ align: 'min', to: 'base:max', offset: 2 }),
   m.parts[1].placement?.y);
+
+// The row's number field speaks ABSOLUTE millimetres (part centre); typing a
+// new value slides the offset under the anchor instead of rewiring it.
+// Base top: raw 0..10 scaled ×3 about its centre (5) → spans −10..20.
+const zAbs = Number(await page.inputValue('[data-testid="pos-y"]'));
+check('the position field shows the absolute centre', near(zAbs, 24), zAbs); // base top 20 + 2 + half of 4
+await page.fill('[data-testid="pos-y"]', String(zAbs + 5));
+await page.press('[data-testid="pos-y"]', 'Enter');
+await page.waitForTimeout(250);
+m = await manifest();
+check('absolute position edits slide the anchored offset',
+  near(m.parts[1].placement?.y?.offset ?? 0, 7) && m.parts[1].placement?.y?.to === 'base:max',
+  m.parts[1].placement?.y);
+await page.keyboard.press('Control+z');
+await page.waitForTimeout(250);
+m = await manifest();
+check('…and one undo puts it back', near(m.parts[1].placement?.y?.offset ?? 0, 2), m.parts[1].placement?.y);
 // The base was doubled earlier; the camera must have backed off to keep the
 // whole model in frame. Inside-the-model looks like coverage near 1.0.
 const afterResize = await measureCoverage();
@@ -684,6 +701,21 @@ await shoot('4-publish.png');
     && Math.abs(capBox.min[1]) < 1e-3
     && Math.abs((capBox.min[2] + capBox.max[2]) / 2) < 1e-3,
     capBox);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(250);
+
+  // Match: land exactly at another part's location (and rotation), live.
+  await page.click('[data-testid="match-select"]');
+  await page.click('[data-testid="match-select-opt-base"]');
+  await page.click('[data-testid="match-apply"]');
+  await page.waitForTimeout(250);
+  const boxes = await page.evaluate(() => ({
+    cap: window.__studioViewer.partBox('cap'), base: window.__studioViewer.partBox('base'),
+  }));
+  check('Match lands the part centre-on-centre with the target',
+    [0, 1, 2].every((a) =>
+      Math.abs((boxes.cap.min[a] + boxes.cap.max[a]) / 2 - (boxes.base.min[a] + boxes.base.max[a]) / 2) < 1e-3),
+    boxes);
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(250);
 

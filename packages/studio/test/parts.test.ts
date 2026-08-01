@@ -10,7 +10,8 @@ import type { Manifest, ColourOption, ChoiceOption } from '../../embed/src/manif
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
   renamePart, removePart, setDefaultSwatch, copyPlacement, snapFaces,
-  withAnchor, makePartOptional, nudge, EditError,
+  withAnchor, makePartOptional, nudge, withRotation,
+  matchPose, partCentreMm, setPartCentre, EditError,
 } from '../src/lib/manifest-edit.ts';
 
 const near = (a: number, b: number, tol = 1e-6) => assert.ok(Math.abs(a - b) < tol, `${a} !== ${b}`);
@@ -120,6 +121,43 @@ test('copyPlacement does not copy scale — position only', () => {
   };
   const next = copyPlacement(capScaled, 'cap', 'fin');
   assert.equal(next.parts.find((p) => p.id === 'fin')!.placement?.scale, undefined);
+});
+
+// ── match pose & absolute positioning ───────────────────────────────────────
+
+test('matchPose lands centre on centre with the same rotation, as live anchors', () => {
+  let m = withRotation(fresh(), 'body', [0, 30, 0]);
+  m = nudge(m, 'body', [11, 3, -4]);
+  m = matchPose(m, 'body', 'cap');
+  valid(m);
+  const layout = resolveLayout(m, RAW);
+  for (const a of [0, 1, 2]) {
+    near((layout.get('cap')!.box.min[a] + layout.get('cap')!.box.max[a]) / 2,
+      (layout.get('body')!.box.min[a] + layout.get('body')!.box.max[a]) / 2);
+  }
+  assert.deepEqual(m.parts.find((p) => p.id === 'cap')!.placement!.rotation, [0, 30, 0]);
+  // Live: moving the source carries the matched part with it.
+  const moved = resolveLayout(nudge(m, 'body', [5, 0, 0]), RAW);
+  near((moved.get('cap')!.box.min[0] + moved.get('cap')!.box.max[0]) / 2,
+    (moved.get('body')!.box.min[0] + moved.get('body')!.box.max[0]) / 2);
+  assert.throws(() => matchPose(m, 'cap', 'cap'), EditError);
+});
+
+test('matchPose refuses to create an anchor cycle', () => {
+  const m = matchPose(fresh(), 'body', 'cap'); // cap follows body
+  assert.throws(() => matchPose(m, 'cap', 'body'), EditError);
+});
+
+test('setPartCentre speaks absolute mm; storage stays an anchored offset', () => {
+  let m = withAnchor(fresh(), 'cap', 1, { align: 'min', to: 'body', edge: 'max', offset: 2 });
+  near(partCentreMm(m, 'cap', RAW)[1], 24); // body top 20 + 2 + half of 4
+  m = setPartCentre(m, 'cap', 1, 30, RAW);
+  valid(m);
+  near(partCentreMm(m, 'cap', RAW)[1], 30);
+  const y = m.parts.find((p) => p.id === 'cap')!.placement!.y!;
+  assert.equal(y.to, 'body:max', 'the anchor survived — only the offset slid');
+  near(y.offset ?? 0, 8);
+  assert.equal(setPartCentre(m, 'cap', 1, 30, RAW), m, 'setting the current value is a no-op');
 });
 
 // ── snapping ────────────────────────────────────────────────────────────────

@@ -8,8 +8,9 @@ import type { Manifest, AnchorEdge, ColourOption, ChoiceOption } from '../../../
 import {
   sizeMm, withSizeMm, withAnchor, withRotation,
   makePartOptional, makePartRequired, setChoicePrice,
-  setDefaultSwatch, copyPlacement, setCustomColour,
+  setDefaultSwatch, setCustomColour,
   ungroup, renameGroup, nudgeGroup, partToOrigin, groupToOrigin,
+  matchPose, partCentreMm, setPartCentre,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -178,14 +179,15 @@ export function PartEditor(props: {
         ))}
         <div className="match-row">
           <Select
-            ariaLabel="Match position of" testId="match-select"
-            value={matchFrom} placeholder="Match position of…"
+            ariaLabel="Match position and rotation of" testId="match-select"
+            value={matchFrom} placeholder="Match another part…"
             options={manifest.parts.filter((p) => p.id !== part.id).map((p) => ({ value: p.id, label: p.label }))}
             onChange={setMatchFrom}
           />
           <button
             className="mini" data-testid="match-apply" disabled={!matchFrom}
-            onClick={() => { act(() => copyPlacement(manifest, matchFrom, part.id)); setMatchFrom(''); }}
+            title="Land centre-on-centre with the same rotation; follows if that part later moves"
+            onClick={() => { act(() => matchPose(manifest, matchFrom, part.id)); setMatchFrom(''); }}
           >Apply</button>
           <button
             className="mini" data-testid="to-origin" title="Centre on X/Y, sit on the ground at Z 0 — anchors survive"
@@ -373,11 +375,9 @@ function AxisAnchorRow(props: {
           {anchored ? `${edgeName(align)} → ${targetLabel} ${edgeName(edge as AnchorEdge)}` : 'as modelled'}
         </button>
         <NumberField
-          label="" value={placement?.offset ?? 0} suffix="mm"
-          testId={`offset-${axisName}`}
-          onCommit={(offset) => commit(anchored
-            ? { align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset }
-            : { origin: true, offset })}
+          label="" value={partCentreMm(manifest, part.id, props.project.raw)[props.axis]} suffix="mm"
+          testId={`pos-${axisName}`}
+          onCommit={(v) => props.onChange(setPartCentre(manifest, part.id, props.axis, v, props.project.raw))}
         />
       </div>
       {props.open && (
@@ -407,6 +407,14 @@ function AxisAnchorRow(props: {
               />
             </div>
           )}
+          <NumberField
+            label={anchored ? 'Offset from the anchor' : 'Offset from the modelled position'}
+            value={placement?.offset ?? 0} suffix="mm"
+            testId={`offset-${axisName}`}
+            onCommit={(offset) => commit(anchored
+              ? { align: (placement!.align ?? 'center') as AnchorEdge, to: ref, edge: edge as AnchorEdge, offset }
+              : { origin: true, offset })}
+          />
         </div>
       )}
     </div>
