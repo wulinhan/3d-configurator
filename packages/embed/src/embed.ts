@@ -220,41 +220,80 @@ export async function mount(opts: MountOptions) {
     summary.replaceChildren();
 
     // Only options that currently do something get a tab: the un-picked side
-    // of a pick-one set is either-or everywhere, panel included.
+    // of a variant set is either-or everywhere, panel included.
     const visible = visibleParts(manifest, selections);
     const activeOptions = manifest.options.filter((o) => isOptionActive(manifest, selections, o, visible));
-    if (!activeOptions.some((o) => o.id === active)) {
-      active = activeOptions.find(isColour)?.id ?? activeOptions[0]?.id ?? '';
+
+    // A variant set and its members' colours are ONE decision — "which tile,
+    // and in what colour" — so colour options that only paint members fold
+    // into the set's tab, which reads "Tile (Mail)". Picking a member and
+    // its colour happens in the same place.
+    const foldedColours = new Set<string>();
+    const folds = new Map<string, { colour?: ColourOption; memberLabel: string }>();
+    for (const v of manifest.options) {
+      if (!isChoice(v) || v.role !== 'variant') continue;
+      const memberIds = new Set(v.choices.map((c) => c.id));
+      const current = resolveValue(manifest, selections, v.id);
+      const memberLabel = v.choices.find((c) => c.id === current)?.label ?? '';
+      let colour: ColourOption | undefined;
+      for (const o of manifest.options) {
+        if (!isColour(o) || !o.parts.length || !o.parts.every((p) => memberIds.has(p))) continue;
+        foldedColours.add(o.id);
+        if (o.parts.some((p) => visible.has(p))) colour = o;
+      }
+      folds.set(v.id, { colour, memberLabel });
     }
 
-    for (const option of activeOptions) {
+    const tabbed = activeOptions.filter((o) => !foldedColours.has(o.id));
+    if (!tabbed.some((o) => o.id === active) && !foldedColours.has(active)) {
+      active = tabbed.find(isColour)?.id ?? tabbed[0]?.id ?? '';
+    } else if (foldedColours.has(active)) {
+      // The colour the customer was on folded into its set's tab — follow it.
+      active = [...folds.entries()].find(([, f]) => f.colour?.id === active)?.[0] ?? tabbed[0]?.id ?? '';
+    }
+
+    for (const option of tabbed) {
       const tab = el('button', `cfg-tab${option.id === active ? ' is-active' : ''}`);
       tab.type = 'button';
-      if (isColour(option)) {
+      const fold = folds.get(option.id);
+      const dotColour = fold?.colour
+        ? resolveColour(manifest, selections, fold.colour)?.hex
+        : isColour(option) ? resolveColour(manifest, selections, option)?.hex : undefined;
+      if (dotColour !== undefined) {
         const dot = el('span', 'cfg-dot');
-        dot.style.background = resolveColour(manifest, selections, option)?.hex ?? '#CCC';
+        dot.style.background = dotColour ?? '#CCC';
         tab.append(dot);
       }
-      tab.append(el('span', undefined, option.label));
+      tab.append(el('span', undefined, fold?.memberLabel ? `${option.label} (${fold.memberLabel})` : option.label));
       tab.addEventListener('click', () => select(option.id));
       tabs.append(tab);
     }
 
     const option = manifest.options.find((o) => o.id === active);
     if (option && isColour(option)) renderColour(option);
-    else if (option && isChoice(option)) renderChoice(option);
+    else if (option && isChoice(option)) {
+      renderChoice(option);
+      const fold = folds.get(option.id);
+      if (fold?.colour) renderColour(fold.colour);
+    }
 
     viewer.highlight(option && isColour(option) ? option.parts[0] : null);
 
-    // Summary — the same lines that end up on the order.
+    // Summary — the same lines that end up on the order. Folded colours are
+    // named after their set and member: "Tile (Mail)".
     const payload = buildPayload(manifest, selections);
     summary.append(el('div', 'cfg-summary-label', 'Your configuration'));
     for (const o of activeOptions) {
       if (!isColour(o)) continue;
+      let label = o.label;
+      if (foldedColours.has(o.id)) {
+        const owner = [...folds.entries()].find(([, f]) => f.colour?.id === o.id);
+        if (owner) label = `${manifest.options.find((x) => x.id === owner[0])?.label} (${owner[1].memberLabel})`;
+      }
       const row = el('div', 'cfg-summary-row');
       const dot = el('span', 'cfg-dot');
       dot.style.background = resolveColour(manifest, selections, o)?.hex ?? '#CCC';
-      row.append(dot, el('span', 'cfg-summary-part', o.label),
+      row.append(dot, el('span', 'cfg-summary-part', label),
         el('span', 'cfg-summary-value', payload.colourNames[o.id] ?? '—'));
       summary.append(row);
     }

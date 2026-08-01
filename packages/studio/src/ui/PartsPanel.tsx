@@ -1,9 +1,9 @@
 // The parts explorer. The manifest renders as ENTRIES — a loose part, an
-// assembly (parts treated as one), or a pick-one set (customers choose one,
+// assembly (parts treated as one), or a variant set (customers choose one,
 // mutually exclusive) — in the order customers will meet them.
 //
 // Structure is rearranged by DRAGGING the six-dot handle: drop a row between
-// rows to reorder, drop a loose part onto an assembly or pick-one set to add
+// rows to reorder, drop a loose part onto an assembly or variant set to add
 // it, drag a member out to set it loose. The drag is plain pointer maths
 // (no HTML5 DnD — its ghost images and enter/leave churn fight custom drop
 // zones); every drop commits through a tested edit op, so an illegal drop is
@@ -44,7 +44,7 @@ export function PartsPanel(props: {
   selectedPart: string | null;
   hiddenParts: Set<string>;
   solo: string | null;
-  /** What the viewer currently shows — tells pick-one rows which member is live. */
+  /** What the viewer currently shows — tells variant rows which member is live. */
   selections: Selections;
   editingGroup: string | null;
   onSelectPart: (id: string | null) => void;
@@ -175,7 +175,7 @@ export function PartsPanel(props: {
   const handle = (source: DragSource, id: string) => (
     <button
       className="drag-dots" data-testid={`drag-${id}`}
-      aria-label="Drag to reorder, or drop onto an assembly / pick-one set"
+      aria-label="Drag to reorder, or drop onto an assembly / variant set"
       onPointerDown={beginDrag(source)}
     >{DOTS}</button>
   );
@@ -274,7 +274,11 @@ export function PartsPanel(props: {
               if (next.has(entry.id)) next.delete(entry.id); else next.add(entry.id);
               return next;
             })}
-          >{open ? '▾' : '▸'}</button>
+          >
+            <svg className={`chev${open ? ' is-open' : ''}`} width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5.5 3.5 11 8 5.5 12.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
           <button
             className="mini icon" data-testid={`eye-${entry.id}`}
             aria-label={allHidden ? `Show ${entry.label}` : `Hide ${entry.label}`}
@@ -288,7 +292,7 @@ export function PartsPanel(props: {
             }}
           >
             {entry.label}
-            <span className="tag">{entry.kind === 'group' ? 'assembly' : 'pick one'}</span>
+            <span className="tag">{entry.kind === 'group' ? 'assembly' : 'variants'}</span>
           </button>
           {entry.kind === 'group' ? (
             <button
@@ -346,7 +350,7 @@ export function PartsPanel(props: {
       </div>
       <p className="hint">
         Drag the ⣿ handle to reorder. Drop a part onto an <strong>assembly</strong> or
-        <strong> pick-one set</strong> to add it; drag a part out to set it loose.
+        <strong> variant set</strong> to add it; drag a part out to set it loose.
       </p>
 
       {checked.size >= 1 && (
@@ -357,7 +361,7 @@ export function PartsPanel(props: {
               {checked.size >= 2 && (
                 <>
                   <button className="mini" data-testid="make-group" title="Move and colour as one part" onClick={() => setPending('group')}>Assembly</button>
-                  <button className="mini" data-testid="make-variant" title="Customers pick which one they get" onClick={() => setPending('variant')}>Pick-one set</button>
+                  <button className="mini" data-testid="make-variant" title="Customers pick which one they get" onClick={() => setPending('variant')}>Variant set</button>
                 </>
               )}
               <button
@@ -374,7 +378,7 @@ export function PartsPanel(props: {
                 onKeyDown={(e) => { if (e.key === 'Enter') confirmStructure(); if (e.key === 'Escape') setPending(null); }}
               />
               <button className="mini" data-testid="structure-confirm" onClick={confirmStructure}>
-                {pending === 'group' ? 'Create assembly' : 'Create pick-one set'}
+                {pending === 'group' ? 'Create assembly' : 'Create variant set'}
               </button>
               <button className="mini" onClick={() => { setPending(null); setStructureLabel(''); }}>✕</button>
             </>
@@ -397,7 +401,7 @@ export function PartsPanel(props: {
             {DOTS}
             <span>{label}</span>
             {entry && entry.kind !== 'part' && (
-              <span className="tag">{entry.kind === 'group' ? 'assembly' : 'pick one'}</span>
+              <span className="tag">{entry.kind === 'group' ? 'assembly' : 'variants'}</span>
             )}
           </div>
         );

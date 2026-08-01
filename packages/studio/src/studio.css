@@ -59,6 +59,11 @@ input, select { font: inherit; }
 }
 .ghost:hover { border-color: #c5c2bb; background: var(--surface); }
 .ghost.danger { color: var(--danger); border: none; padding: 4px 8px; }
+.cta {
+  border: none; border-radius: 8px; background: var(--accent); color: #fff;
+  padding: 8px 18px; font-size: 13px; font-weight: 700;
+}
+.cta:hover { background: #333; }
 
 .workspace { flex: 1; display: flex; min-height: 0; }
 .stage-wrap { flex: 1; min-width: 0; position: relative; }
@@ -188,6 +193,17 @@ input, select { font: inherit; }
   outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 8px;
 }
 .pick { margin: 0 1px 0 0; accent-color: var(--accent); }
+.chev { transition: transform .16s ease; display: block; }
+.chev.is-open { transform: rotate(90deg); }
+
+/* ── finish tab ── */
+.finish-row { border-bottom: 1px solid var(--line); padding-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+.finish-row:last-child { border-bottom: none; }
+.finish-row h4 { margin: 0; font-size: 12px; }
+.slider-row { display: flex; align-items: center; gap: 10px; }
+.slider-row .field-label { width: 38px; flex: none; }
+.slider-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.slider-value { width: 40px; flex: none; text-align: right; font-size: 11px; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .part-row.is-bundle .part-name { font-weight: 600; }
 .entry-members { display: flex; flex-direction: column; gap: 4px; margin-left: 26px; }
 .part-row.is-member .part-name { border-style: dashed; }

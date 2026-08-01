@@ -365,7 +365,8 @@ export function renamePart(manifest: Manifest, partId: string, label: string): M
   if (!label.trim()) throw new EditError('a part needs a name');
   return edit(manifest, (draft) => {
     partOf(draft, partId).label = label.trim();
-    // Options that exist purely for this part read better renamed with it.
+    // Options that exist purely for this part read better renamed with it —
+    // including the part's entry in any variant set, which customers read.
     for (const option of draft.options) {
       if (isColour(option) && option.parts.length === 1 && option.parts[0] === partId) option.label = label.trim();
       if (option.id === `${partId}-addon`) {
@@ -375,7 +376,29 @@ export function renamePart(manifest: Manifest, partId: string, label: string): M
           if (yes) yes.label = `Add ${label.trim()}`;
         }
       }
+      if (isChoice(option) && option.role === 'variant') {
+        const choice = option.choices.find((c) => c.id === partId);
+        if (choice) choice.label = label.trim();
+      }
     }
+  });
+}
+
+/** Set a part's surface finish — what the Finish tab edits. */
+export function setPartMaterial(
+  manifest: Manifest,
+  partId: string,
+  material: { roughness?: number; metalness?: number; flatShading?: boolean },
+): Manifest {
+  for (const key of ['roughness', 'metalness'] as const) {
+    const v = material[key];
+    if (v !== undefined && (!Number.isFinite(v) || v < 0 || v > 1)) {
+      throw new EditError(`${key} must be between 0 and 1`);
+    }
+  }
+  return edit(manifest, (draft) => {
+    const part = partOf(draft, partId);
+    part.material = { ...part.material, ...material };
   });
 }
 

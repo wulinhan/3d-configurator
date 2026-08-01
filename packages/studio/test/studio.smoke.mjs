@@ -586,6 +586,33 @@ await shoot('2-anchored.png');
   check('manifest still valid after the snap', snapVerdict.ok, snapVerdict.errors);
 }
 
+// ── 6h. finish tab: gloss/metal sliders apply live and undo cleanly ────────
+{
+  const before = (await manifest()).parts[0].material?.roughness;
+  await page.click('.tabs button:has-text("Finish")');
+  await page.waitForTimeout(150);
+  await page.locator('[data-testid="gloss-base"]').evaluate((el) => {
+    // React tracks the input's value itself; a plain `el.value = …` is
+    // invisible to its change detection. Go through the native setter.
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, '0.9');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForTimeout(250);
+  m = await manifest();
+  check('gloss slider writes roughness into the manifest',
+    near(m.parts[0].material?.roughness ?? -1, 0.1), m.parts[0].material);
+  check('…and the viewer material follows live', await page.evaluate(() =>
+    Math.abs(window.__studioViewer.meshOf('base').material.roughness - 0.1) < 1e-6), '');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  check('finish edits undo like everything else',
+    (m.parts[0].material?.roughness ?? undefined) === (before ?? undefined), m.parts[0].material);
+  await page.click('.tabs button:has-text("Parts")');
+  await page.waitForTimeout(150);
+}
+
 // ── 7. palette: add a colour, price a swatch ────────────────────────────────
 await page.click('.tabs button:has-text("Palette")');
 await page.fill('[data-testid="add-swatch"] input[aria-label="New colour name"]', 'Brand Teal');
@@ -631,8 +658,9 @@ check('add-on priced at 15',
   m.options.find((o) => o.id === 'cap-addon'));
 await shoot('3-addon.png');
 
-// ── 10. publish: validation + the downloaded manifest itself validates ─────
-await page.click('.tabs button:has-text("Publish")');
+// ── 10. publish: the topbar CTA opens the tab; the download validates ──────
+await page.click('[data-testid="publish-cta"]');
+await page.waitForTimeout(200);
 const report = await page.textContent('[data-testid="validation-report"]');
 check('validation report says valid', /Valid —/.test(report ?? ''), report);
 
@@ -790,23 +818,26 @@ await shoot('4-publish.png');
   await page.waitForTimeout(400);
   const tabTexts = () => page.$$eval('.preview-overlay .cfg-tab', (els) => els.map((e) => e.textContent ?? ''));
   let previewTabs = await tabTexts();
-  check('the un-picked side of the pick-one has no colour tab',
-    previewTabs.includes('Base') && !previewTabs.includes('Cap') && previewTabs.includes('Body style'),
+  check('the variant set folds into ONE tab, named for the current member',
+    previewTabs.includes('Body style (Base)') && !previewTabs.includes('Base') && !previewTabs.includes('Cap'),
     previewTabs);
   await page.click('.preview-overlay .cfg-tab:has-text("Body style")');
   await page.waitForTimeout(200);
+  check('the member choice and its colour swatches are picked together in that tab',
+    await page.evaluate(() => document.querySelectorAll('.preview-overlay .cfg-choice').length >= 2
+      && document.querySelectorAll('.preview-overlay .cfg-swatch').length > 0), '');
   await page.click('.preview-overlay .cfg-choice:has-text("Cap")');
   await page.waitForTimeout(300);
-  check('customers can switch the pick-one set in the preview',
+  check('customers can switch the variant set in the preview',
     await page.evaluate(() => (window).__previewPayload?.selections?.['body-style'] === 'cap'),
     await page.evaluate(() => (window).__previewPayload?.selections));
   previewTabs = await tabTexts();
-  check('switching flips which colour tab shows — either-or in the panel as well',
-    previewTabs.includes('Cap') && !previewTabs.includes('Base'), previewTabs);
-  check('…and the configuration summary lists only the picked side',
+  check('switching renames the tab to the new member — either-or in the panel as well',
+    previewTabs.includes('Body style (Cap)') && !previewTabs.includes('Body style (Base)'), previewTabs);
+  check('…and the configuration summary reads "set (member)" for the picked side only',
     await page.evaluate(() => {
       const rows = [...document.querySelectorAll('.preview-overlay .cfg-summary-part')].map((e) => e.textContent);
-      return rows.includes('Cap') && !rows.includes('Base');
+      return rows.includes('Body style (Cap)') && !rows.some((r) => r === 'Base' || r === 'Cap');
     }), '');
   await page.click('[data-testid="preview-close"]');
   await page.waitForTimeout(200);

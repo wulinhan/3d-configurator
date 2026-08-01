@@ -126,17 +126,19 @@ Two structural notions sit on top of parts. `groups` marks a set of parts the
 Studio treats as one — an *assembly*: moved together, one shared colour
 option. The runtime ignores it beyond validation, because by the time a
 manifest ships, the merge has already happened in the options. A `choice`
-option with `role: "variant"` is a *pick-one set*: its parts are mutually
+option with `role: "variant"` is a *variant set*: its parts are mutually
 exclusive, each carries `visibleWhen` on that option, so customers pick which
 part they get and exactly one renders. `role` is advisory (the Studio's
 construction note); visibility itself flows through the same `visibleWhen`
 machinery add-ons use. Clicking a part whose visibility hangs on a choice
-opens that choice in the panel. A pick-one set is either-or *everywhere*:
+opens that choice in the panel. A variant set is either-or *everywhere*:
 an option whose painted parts are all hidden is inert — no panel tab, no
 summary row, and crucially no surcharge (`isOptionActive` in
 `runtime/state.ts`; switching the set away from a part drops that part's
 colour pricing). The choice option itself always stays live — it is how the
-customer switches back.
+customer switches back. In the panel, a variant set and its members' colours
+render as ONE tab named "Set (Member)" — colour options that only paint
+members fold into it, so which part and what colour are a single decision.
 
 ## Trying it
 

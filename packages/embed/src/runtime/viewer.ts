@@ -343,6 +343,11 @@ export class Viewer {
       if (material) {
         material.roughness = part.material?.roughness ?? 0.55;
         material.metalness = part.material?.metalness ?? 0;
+        const flat = part.material?.flatShading ?? true;
+        if (material.flatShading !== flat) {
+          material.flatShading = flat;
+          material.needsUpdate = true; // shading model changes recompile the shader
+        }
       }
     }
     this.fitShadowCatcher();

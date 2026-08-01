@@ -15,7 +15,7 @@ import {
   makeVariantChoice, dissolveVariantChoice,
   addPartToGroup, removePartFromGroup, addPartToChoice, removePartFromChoice,
   entriesOf, moveEntry, moveEntryTo, withAnchor, makePartOptional, EditError,
-  partToOrigin, groupToOrigin, nudge,
+  partToOrigin, groupToOrigin, nudge, renamePart, setPartMaterial,
 } from '../src/lib/manifest-edit.ts';
 
 const near = (a: number, b: number, tol = 1e-6) => assert.ok(Math.abs(a - b) < tol, `${a} !== ${b}`);
@@ -211,6 +211,24 @@ test('groupToOrigin moves the assembly as one rigid thing', () => {
   near((min[2] + max[2]) / 2, 0);
   // Rigid: the badge kept its distance from the body.
   near(after.get('badge')!.box.min[1] - after.get('body')!.box.max[1], gap);
+});
+
+test('renaming a variant member renames its entry in the set — customers read those', () => {
+  let m = makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid style');
+  m = renamePart(m, 'flat-lid', 'Low profile');
+  valid(m);
+  const option = m.options.find((o) => o.id === 'lid-style') as ChoiceOption;
+  assert.equal(option.choices.find((c) => c.id === 'flat-lid')!.label, 'Low profile');
+});
+
+test('setPartMaterial merges finish knobs and rejects out-of-range values', () => {
+  let m = setPartMaterial(fresh(), 'body', { roughness: 0.2 });
+  m = setPartMaterial(m, 'body', { metalness: 0.6, flatShading: false });
+  valid(m);
+  assert.deepEqual(m.parts.find((p) => p.id === 'body')!.material,
+    { roughness: 0.2, metalness: 0.6, flatShading: false });
+  assert.throws(() => setPartMaterial(m, 'body', { roughness: 1.4 }), EditError);
+  assert.throws(() => setPartMaterial(m, 'body', { metalness: -0.1 }), EditError);
 });
 
 test('moveEntryTo lands an entry at an arbitrary position and clamps', () => {

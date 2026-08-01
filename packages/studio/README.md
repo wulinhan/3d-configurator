@@ -88,11 +88,11 @@ hand-off from dragging to authored state is invisible.
 ## Parts management
 
 The explorer renders ENTRIES, not raw parts: a loose part, an **assembly**
-(several parts treated as one), or a **pick-one set** (alternatives the
+(several parts treated as one), or a **variant set** (alternatives the
 customer chooses between). Every row carries a six-dot handle — drag it
 between rows to reorder (the explorer order is the manifest's part order and
 the option order customers meet), drop a loose part onto an assembly or
-pick-one set to add it, drag a member out to set it loose. Drops commit
+variant set to add it, drag a member out to set it loose. Drops commit
 through the tested edit ops, so an illegal drop is refused by the edit
 layer, not by fragile UI guards. Multi-selecting two or more loose parts
 offers both structures as buttons:
@@ -104,7 +104,7 @@ offers both structures as buttons:
   not twice — the anchor already carries them), and splits the assembly up;
   splitting keeps the merged colour option, and a departing member gets its
   own colour option back.
-- **Pick-one set** builds a `choice` option with `role: 'variant'` and
+- **Variant set** builds a `choice` option with `role: 'variant'` and
   points each member's `visibleWhen` at it — mutual exclusivity by
   construction, no runtime special-casing. A part that was an optional
   add-on is absorbed rather than refused (the refusal was invisible in
@@ -112,7 +112,9 @@ offers both structures as buttons:
   exactly one member is visible; clicking a hidden member (hollow dot) swaps
   the preview to it so it can be edited. A member's editor prices the choice
   instead of showing the add-on toggle, which would otherwise orphan the
-  option. In the embed, clicking a visible member opens its choice.
+  option. In the embed, clicking a visible member opens its choice, and the
+  set renders as ONE tab named "Set (Member)" where the member and its
+  colour are picked together; renaming a part renames its entry in the set.
 
 Each part row keeps uniform square controls: an eyeball (hide/show — an
 assembly's eyeball hides every member), a solo toggle, and ✕ delete; rename
@@ -120,7 +122,7 @@ is double-click on the name. Deleting asks with the Studio's own dialog
 (never the browser prompt), and checking rows in the explorer offers a mass
 delete — one confirm, one undo step. Delete repairs every reference: parts
 anchored to the deleted one keep their world position, its options are
-pruned, dangling colour links re-point, and a pick-one set sheds the
+pruned, dangling colour links re-point, and a variant set sheds the
 deleted member (dissolving entirely below two). Hide/solo are authoring
 aids only — never part of the manifest. Selecting a part slides a floating
 properties panel in from the stage's right edge (size, position anchors,
@@ -141,6 +143,14 @@ same thing in the same colours. Selecting a part eases the orbit centre
 onto it, deselecting eases back over the origin. While dragging explorer
 rows, a card copy of the row rides the cursor (the dnd-kit DragOverlay
 pattern) and the row dims in place.
+
+## Finish
+
+A Finish tab (after Palette) surfaces the material knobs the manifest
+already carries per part — gloss (inverse roughness), metalness, and
+faceted-vs-smooth shading — as sliders that apply live in the viewer and
+ship with the published manifest, so the storefront renders exactly the
+finish the merchant tuned. Publish itself is the topbar's primary CTA.
 
 ## Anchors: summary first, controls on demand
 
@@ -253,20 +263,22 @@ test/compress.test.ts  3 — meshopt output is tagged, smaller, and within
                       0.05 mm of the input
 test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
-test/structure.test.ts 19 — assemblies merge colours without double-painting,
-                      pick-one sets are exclusive by construction (and absorb
+test/parts.test.ts    15 — rename ripples (colour, add-on, variant entries),
+                      delete repair, match-pose, absolute positioning, snap
+test/structure.test.ts 23 — assemblies merge colours without double-painting,
+                      variant sets are exclusive by construction (and absorb
                       add-on parts), drag-style add/remove membership repairs
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
                       deletes repair both structures
-test/studio.smoke.mjs 104 browser assertions — the full merchant journey
+test/studio.smoke.mjs 108 browser assertions — the full merchant journey
                       against the production build, including a real pointer
                       drag on the combined gizmo (and that one Ctrl+Z rewinds
                       the whole drag), view-cube navigation, the saved view
                       surviving publish, a mesh-vs-layout divergence check,
                       drag-handle reordering and drag-out-of-assembly, the
                       customer preview mounting the real embed and switching
-                      a pick-one set, the resizable/collapsible explorer,
+                      a variant set, the resizable/collapsible explorer,
                       surface-glow snapping (hover, sticky first pick, flush
                       + centred landing), the Studio's own dialogs and
                       listboxes, and the compressed download

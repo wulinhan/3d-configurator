@@ -128,7 +128,7 @@ export function PartEditor(props: {
   const palette = manifest.palettes?.find((p) => p.id === colourOption?.palette);
 
   const visibleOption = part.visibleWhen ? manifest.options.find((o) => o.id === part.visibleWhen!.option) : undefined;
-  // A pick-one member's visibility belongs to its choice option — the add-on
+  // A variant member's visibility belongs to its choice option — the add-on
   // toggle must not touch it, or unchecking would orphan the choice.
   const variantOf = visibleOption?.type === 'choice' && (visibleOption as ChoiceOption).role === 'variant'
     ? (visibleOption as ChoiceOption) : undefined;
@@ -250,7 +250,7 @@ export function PartEditor(props: {
 
       {variantOf ? (
         <section>
-          <h4>Pick-one set</h4>
+          <h4>Variant set</h4>
           <p className="hint">
             This part is one of the “{variantOf.label}” choices — customers pick
             which one they get. Set a surcharge for picking this part:

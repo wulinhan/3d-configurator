@@ -23,6 +23,7 @@ import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
 import { PartEditor, GroupEditor } from './ui/PartEditor.tsx';
 import { PalettePanel } from './ui/PalettePanel.tsx';
+import { FinishPanel } from './ui/FinishPanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
 import { PreviewOverlay } from './ui/PreviewOverlay.tsx';
 
@@ -41,7 +42,7 @@ export interface SetManifestOptions {
   transient?: boolean;
 }
 
-const TABS = ['Parts', 'Palette', 'Publish'] as const;
+const TABS = ['Parts', 'Palette', 'Finish', 'Publish'] as const;
 type Tab = typeof TABS[number];
 const HISTORY_LIMIT = 100;
 const PANEL_MIN = 280;
@@ -315,11 +316,17 @@ export function App() {
           className="ghost icon-btn" data-testid="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"
           disabled={futureRef.current.length === 0} onClick={redo}
         >{REDO_ICON}</button>
+        <button className="ghost" onClick={() => { URL.revokeObjectURL(project.modelUrl); setProject(null); }}>
+          New model
+        </button>
         <button className="ghost preview-btn" data-testid="preview-open" onClick={() => setPreviewing(true)}>
           Preview
         </button>
-        <button className="ghost" onClick={() => { URL.revokeObjectURL(project.modelUrl); setProject(null); }}>
-          New model
+        <button
+          className="cta" data-testid="publish-cta"
+          onClick={() => { setPanelOpen(true); setTab('Publish'); }}
+        >
+          Publish
         </button>
       </header>
 
@@ -347,6 +354,7 @@ export function App() {
             />
           )}
           {tab === 'Palette' && <PalettePanel project={project} onChange={setManifest} />}
+          {tab === 'Finish' && <FinishPanel project={project} onChange={setManifest} />}
           {tab === 'Publish' && <PublishPanel project={project} onChange={setManifest} />}
         </aside>
 
