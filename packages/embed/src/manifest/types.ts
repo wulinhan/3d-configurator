@@ -226,14 +226,23 @@ export interface TextOption {
   /** Ghost text in the input; also what the Studio previews on the model. */
   placeholder?: string;
   /**
-   * One piece per letter: the carrier part becomes a TEMPLATE, and every
-   * character of the customer's text spawns its own copy of it — copy k
-   * carrying character k on its face — marched along `axis` (canonical
-   * 0=x 1=y 2=z, default x) at the part's size plus `gapMm` (default 5).
-   * A space spawns a blank piece. Combined with `pricePerChar`, this is a
-   * complete "type your name, get one keychain tile per letter" product.
+   * The text's own colour. Unset, the text shares the carrier part's
+   * material and colours with it; set, it renders in this fixed finish.
    */
-  perChar?: { axis?: 0 | 1 | 2; gapMm?: number };
+  colourHex?: Hex;
+  /**
+   * One piece per letter: the carrier part — or, if it belongs to an
+   * assembly, the WHOLE assembly — becomes a TEMPLATE, and every character
+   * of the customer's text spawns its own copy of it, copy k carrying
+   * character k on its face. `mode: 'line'` (default) marches copies along
+   * `axis` (canonical 0=x 1=y 2=z, default x) at the template's size plus
+   * `gapMm` (default 5); `mode: 'circle'` turns each copy `stepDeg`°
+   * (default 30) further round the vertical axis through the world origin,
+   * the original taken as facing the tangent. A space spawns a blank
+   * piece. Combined with `pricePerChar`, this is a complete "type your
+   * name, get one keychain tile per letter" product.
+   */
+  perChar?: { mode?: 'line' | 'circle'; axis?: 0 | 1 | 2; gapMm?: number; stepDeg?: number };
   /** Flat surcharge when any text is entered. */
   priceDelta?: number;
   /** Additional surcharge per character. */

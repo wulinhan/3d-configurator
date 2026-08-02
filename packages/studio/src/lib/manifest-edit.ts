@@ -600,35 +600,9 @@ export function makeGroup(manifest: Manifest, partIds: string[], label: string):
       groupId = `${slug(label)}-${n}`;
     }
     draft.groups = [...(draft.groups ?? []), { id: groupId, label: label.trim(), parts: [...partIds] }];
-
-    // Merge each member's solo colour option into one.
-    const solos = draft.options.filter(
-      (o): o is ColourOption => isColour(o) && o.source !== 'used'
-        && o.parts.length === 1 && partIds.includes(o.parts[0]));
-    if (solos.length) {
-      const first = solos[0];
-      const optionId = `${groupId}-colour`;
-      const covered = new Set(solos.flatMap((o) => o.parts));
-      const merged: ColourOption = {
-        ...structuredClone(first),
-        id: optionId,
-        label: label.trim(),
-        parts: partIds.filter((id) => covered.has(id)
-          // members with no colour option at all join the merged one, unless
-          // some other option already paints them
-          || !draft.options.some((o) => isColour(o) && o.parts.includes(id))),
-      };
-      const soloIds = new Set(solos.map((o) => o.id));
-      const at = draft.options.findIndex((o) => o.id === first.id);
-      draft.options = draft.options.filter((o) => !soloIds.has(o.id));
-      draft.options.splice(Math.min(at, draft.options.length), 0, merged);
-      // Anything linked to a merged-away option follows to the merged one.
-      for (const option of draft.options) {
-        if (!isColour(option)) continue;
-        if (option.linkedTo && soloIds.has(option.linkedTo)) option.linkedTo = optionId;
-        if (option.default.startsWith('@') && soloIds.has(option.default.slice(1))) option.default = `@${optionId}`;
-      }
-    }
+    // Members KEEP their own colour options: an assembly moves as one thing,
+    // but each part stays individually colourable — a clicker's base and
+    // button are one object with two finishes.
   });
 }
 
@@ -899,17 +873,25 @@ export function dissolveVariantChoice(manifest: Manifest, optionId: string): Man
 /**
  * The clone engine behind Duplicate and Repeat: stamp N copies of an
  * explorer entry — parts, internal anchors, colour options, and (for
- * assemblies / variant sets) the structure itself — each landed at a given
- * offset, optionally spun about the vertical axis. Anchors between members
- * remap to the cloned members; anchors to outside parts stay outside.
+ * assemblies / variant sets) the structure itself. A copy lands either by a
+ * uniform `deltas` nudge (anchors between members remap to the cloned
+ * members; anchors to outside parts stay outside), or by `memberCentres` —
+ * absolute laid-out centres per part, which COLLAPSE every anchor on that
+ * clone to plain origin offsets (a rotated copy cannot keep axis-aligned
+ * joints). `spinDeg` adds to each clone's own vertical rotation.
  * NOTE: the caller must rebuild the viewer's model after this — new parts
  * need meshes.
  */
 function stampEntryCopies(
   manifest: Manifest,
   entryId: string,
-  copies: Array<{ deltas: [number, number, number]; spinDeg?: number }>,
+  copies: Array<{
+    deltas?: [number, number, number];
+    spinDeg?: number;
+    memberCentres?: Map<string, [number, number, number]>;
+  }>,
   labelOf: (base: string, k: number) => string,
+  raw?: Map<string, PartBounds>,
 ): Manifest {
   const entry = entriesOf(manifest).find((e) => e.id === entryId);
   if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
@@ -951,6 +933,20 @@ function stampEntryCopies(
         if (spin) {
           const rotation = clone.placement?.rotation ?? [0, 0, 0];
           clone.placement = { ...clone.placement, rotation: [rotation[0], rotation[1] + spin, rotation[2]] };
+        }
+        // An absolute landing spot replaces every anchor with plain origin
+        // offsets: modelled centre + offset = target centre. Scale and spin
+        // act about the centre, so they don't shift it.
+        const centre = copies[k].memberCentres?.get(oldId);
+        const bounds = raw?.get(oldId);
+        if (centre && bounds) {
+          const rawCentre = [0, 1, 2].map((a) => (bounds.min[a] + bounds.max[a]) / 2);
+          clone.placement = {
+            ...clone.placement,
+            x: { to: 'origin', offset: round3(centre[0] - rawCentre[0]) },
+            y: { to: 'origin', offset: round3(centre[1] - rawCentre[1]) },
+            z: { to: 'origin', offset: round3(centre[2] - rawCentre[2]) },
+          };
         }
         return clone;
       });
@@ -1008,7 +1004,8 @@ function stampEntryCopies(
 
   let out = next;
   for (let k = 0; k < copies.length; k++) {
-    if (copies[k].deltas.some((d) => d !== 0)) out = nudgePartsTogether(out, copyIds[k], copies[k].deltas);
+    const deltas = copies[k].deltas;
+    if (deltas && deltas.some((d) => d !== 0)) out = nudgePartsTogether(out, copyIds[k], deltas);
   }
   return out;
 }
@@ -1034,10 +1031,14 @@ export function duplicateEntry(manifest: Manifest, entryId: string, raw: Map<str
 /**
  * Repeat an entry along a line or around a circle — the pattern tool.
  * Line: copies march along one axis, pitched at the entry\'s own size plus a
- * clear gap. Circle: copies orbit the world origin at the entry\'s current
- * radius (single-part entries also spin to keep facing the same way round).
- * `count` is the TOTAL number of instances, original included. Studio-only —
- * the stamped copies are ordinary parts by the time customers see them.
+ * clear gap. Circle: a RIGID rotation about the vertical axis through the
+ * world origin — the original is taken as facing the tangent, and copy i is
+ * the whole entry (every part\'s centre AND its own rotation) turned by
+ * i·360°/count, so every instance keeps facing its way round the ring.
+ * Anchors on circle copies collapse to absolute offsets: a rotated copy
+ * cannot keep axis-aligned joints. `count` is the TOTAL number of
+ * instances, original included. Studio-only — the stamped copies are
+ * ordinary parts by the time customers see them.
  */
 export function repeatEntry(
   manifest: Manifest,
@@ -1063,7 +1064,11 @@ export function repeatEntry(
   }
   if (!Number.isFinite(min[0])) throw new EditError('no geometry to repeat');
 
-  const copies: Array<{ deltas: [number, number, number]; spinDeg?: number }> = [];
+  const copies: Array<{
+    deltas?: [number, number, number];
+    spinDeg?: number;
+    memberCentres?: Map<string, [number, number, number]>;
+  }> = [];
   if (opts.mode === 'line') {
     const axis = opts.axis ?? 0;
     const pitch = (max[axis] - min[axis]) + (opts.gapMm ?? 5);
@@ -1075,23 +1080,26 @@ export function repeatEntry(
   } else {
     const cx = (min[0] + max[0]) / 2;
     const cz = (min[2] + max[2]) / 2;
-    const radius = Math.hypot(cx, cz);
-    if (radius < 1) {
+    if (Math.hypot(cx, cz) < 1) {
       throw new EditError('move the entry away from the origin first — the circle runs around the origin');
     }
-    const start = Math.atan2(cz, cx);
     for (let i = 1; i < opts.count; i++) {
-      const theta = start + (2 * Math.PI * i) / opts.count;
-      copies.push({
-        deltas: [radius * Math.cos(theta) - cx, 0, radius * Math.sin(theta) - cz],
-        // A lone part also spins so every instance faces the same way round
-        // the circle; multi-part sets keep their orientation (rigid rotation
-        // of a whole set is not a per-part operation).
-        spinDeg: entry.parts.length === 1 ? -(360 * i) / opts.count : undefined,
-      });
+      const phi = (2 * Math.PI * i) / opts.count;
+      const cosP = Math.cos(phi), sinP = Math.sin(phi);
+      // Rotate every member's laid-out centre about the origin by +phi (in
+      // the ground plane); the matching body spin is −phi in three.js's
+      // Y-rotation convention — together they are one rigid turn.
+      const centres = new Map<string, [number, number, number]>();
+      for (const id of entry.parts) {
+        const box = layout.get(id)?.box;
+        if (!box) continue;
+        const m = [0, 1, 2].map((a) => (box.min[a] + box.max[a]) / 2);
+        centres.set(id, [m[0] * cosP - m[2] * sinP, m[1], m[0] * sinP + m[2] * cosP]);
+      }
+      copies.push({ memberCentres: centres, spinDeg: -(360 * i) / opts.count });
     }
   }
-  return stampEntryCopies(manifest, entryId, copies, (base, k) => `${base} ${k + 2}`);
+  return stampEntryCopies(manifest, entryId, copies, (base, k) => `${base} ${k + 2}`, raw);
 }
 
 
@@ -1224,20 +1232,23 @@ export function addTextSlot(
 }
 
 /** The fields a merchant tunes after placing a slot. `perChar: null` turns
- * one-piece-per-letter back off. */
+ * one-piece-per-letter back off; `colourHex: null` re-matches the part. */
 export type TextSlotPatch = Partial<Pick<TextOption,
   'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label'>>
-  & { perChar?: { axis?: Axis; gapMm?: number } | null };
+  & { perChar?: { mode?: 'line' | 'circle'; axis?: Axis; gapMm?: number; stepDeg?: number } | null }
+  & { colourHex?: Hex | null };
 
 export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlotPatch): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
   return edit(manifest, (draft) => {
     const o = draft.options.find((x) => x.id === optionId) as TextOption;
-    const { perChar, ...rest } = patch;
+    const { perChar, colourHex, ...rest } = patch;
     Object.assign(o, rest);
     if (perChar === null) delete o.perChar;
     else if (perChar !== undefined) o.perChar = perChar;
+    if (colourHex === null) delete o.colourHex;
+    else if (colourHex !== undefined) o.colourHex = colourHex;
     // An emptied field falls back to its default rather than validating as 0.
     for (const key of ['sinkMm', 'rotationDeg', 'priceDelta', 'pricePerChar'] as const) {
       if (o[key] === 0) delete o[key];

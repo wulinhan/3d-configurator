@@ -81,7 +81,12 @@ export function Select(props: {
   };
 
   return (
-    <div className={`ui-select${props.compact ? ' compact' : ''}`} ref={rootRef}>
+    // preventDefault stops an enclosing <label> from forwarding the click
+    // back to the combobox button: choosing an option used to close the
+    // popup and have the label's activation behaviour immediately re-toggle
+    // it open. Our own handlers run before the default action, so nothing
+    // else changes.
+    <div className={`ui-select${props.compact ? ' compact' : ''}`} ref={rootRef} onClick={(e) => e.preventDefault()}>
       <button
         type="button" className="ui-select-btn" data-testid={props.testId}
         role="combobox" aria-expanded={open} aria-haspopup="listbox" aria-label={props.ariaLabel}

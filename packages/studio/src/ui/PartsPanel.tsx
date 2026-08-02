@@ -362,6 +362,12 @@ export function PartsPanel(props: {
               onClick={() => { props.onEditVariant(null); act(() => dissolveVariantChoice(manifest, entry.id)); }}
             >{UNGROUP}</button>
           )}
+          <button
+            className="mini icon danger" data-testid={`delete-${entry.id}`}
+            aria-label={`Delete ${entry.label} and its parts`}
+            title={entry.kind === 'group' ? 'Delete the assembly AND every part in it' : 'Delete the set AND every part in it'}
+            onClick={() => setConfirmDelete([...entry.parts])}
+          >✕</button>
         </div>
         {open && (
           <div className="entry-members" data-drop-into={entry.id}>
@@ -458,9 +464,6 @@ export function PartsPanel(props: {
           title="The chosen parts move and colour as one"
           onClick={() => setPending('group')}
         >＋ Assembly</button>
-        <span className="hint">
-          Drag the ⣿ handle to reorder, or drop a part onto a set to add it.
-        </span>
       </div>}
 
       {(pending !== null || checked.size >= 1) && (

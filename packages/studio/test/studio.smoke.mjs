@@ -197,6 +197,10 @@ const pick = async (selectId, optionValue) => {
 };
 check('anchor controls stay hidden until the axis is expanded',
   !(await page.isVisible('[data-testid="anchor-mode-y"]')), '');
+check('axis names wear their gizmo colours (X red)', await page.evaluate(() => {
+  const el = document.querySelector('[data-testid="anchor-x"] .axis-name');
+  return !!el && getComputedStyle(el).color === 'rgb(212, 74, 58)';
+}), await page.evaluate(() => getComputedStyle(document.querySelector('[data-testid="anchor-x"] .axis-name')).color));
 await page.click('[data-testid="anchor-summary-y"]');
 await pick('anchor-mode-y', 'base');
 await page.click('[data-testid="anchor-my-y-min"]');
@@ -984,12 +988,13 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.click('[data-testid="structure-confirm"]');
   await page.waitForTimeout(300);
   m = await manifest();
-  const shellColour = m.options.find((o) => o.id === 'shell-colour');
-  check('assembly recorded; member colour options merged into one',
+  check('assembly recorded; every member keeps its own colour option',
     m.groups?.[0]?.id === 'shell' && m.groups[0].parts.join(',') === 'base,cap'
-    && shellColour?.parts?.length === 2
-    && !m.options.some((o) => o.id === 'base-colour' || o.id === 'cap-colour'),
+    && m.options.some((o) => o.id === 'base-colour') && m.options.some((o) => o.id === 'cap-colour')
+    && !m.options.some((o) => o.id === 'shell-colour'),
     { groups: m.groups, options: m.options.map((o) => o.id) });
+  check('the assembly header carries a delete ✕ of its own',
+    await page.isVisible('[data-testid="delete-shell"]'), '');
 
   // Opening the assembly's editor + Transform parks a translate-only gizmo
   // at the set's centre of mass.
@@ -1018,8 +1023,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   // departing part paints alone again.
   await dragTo('[data-testid="drag-cap"]', '.part-list-head', 'centre');
   m = await manifest();
-  check('dragging a member out dissolves the two-part assembly and splits its colour back',
-    !m.groups && m.options.some((o) => o.id === 'cap-colour'),
+  check('dragging a member out dissolves the two-part assembly; colours untouched',
+    !m.groups && m.options.some((o) => o.id === 'cap-colour') && m.options.some((o) => o.id === 'base-colour'),
     { groups: m.groups, options: m.options.map((o) => o.id) });
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(200);
@@ -1215,6 +1220,20 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   }, vertsBefore, { timeout: 20000 });
   check('…and the extrusion rebuilds in the new face', true, '');
 
+  // The text takes its own colour, independent of the part it sits on.
+  await pick('text-colour-base-text', '#C82020');
+  m = await manifest();
+  check('the text-colour dropdown pins the slot colour',
+    m.options.find((o) => o.type === 'text')?.colourHex === '#C82020',
+    m.options.find((o) => o.type === 'text'));
+  await page.waitForFunction(() => {
+    const v = (window).__studioViewer;
+    const g = v.textMeshOf('base-text');
+    return !!g && g.material !== v.meshOf('base').material
+      && g.material.color.getHexString().toUpperCase() === 'C82020';
+  }, { timeout: 20000 });
+  check('…and the glyph renders in it, independent of the part', true, '');
+
   // One piece per letter: the template spawns a copy per placeholder char.
   await page.click('[data-testid="text-spawn-base-text"]');
   await page.fill('[data-testid="text-placeholder-base-text"]', 'AB');
@@ -1241,6 +1260,30 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     const g1 = v.scene.getObjectByName('text-base-text-1');
     return !!g0 && !!g1 && g1.parent?.name === 'percopy-base-text-1';
   }), '');
+
+  // Around a circle: the same pieces swing round the origin instead — each
+  // one step° further AND spun to face its way round, the same rigid turn
+  // the repeat tool stamps.
+  await pick('text-spawn-mode-base-text', 'circle');
+  await page.fill('[data-testid="text-spawn-step-base-text"]', '45');
+  await page.press('[data-testid="text-spawn-step-base-text"]', 'Enter');
+  await page.waitForFunction(() => {
+    const v = (window).__studioViewer;
+    const copy = v?.scene?.getObjectByName('percopy-base-text-1');
+    return !!copy && Math.abs(copy.quaternion.y) > 0.1;
+  }, { timeout: 20000 });
+  const ring = await page.evaluate(() => {
+    const v = (window).__studioViewer;
+    const src2 = v.meshOf('base');
+    const copy = v.scene.getObjectByName('percopy-base-text-1');
+    return {
+      srcR: Math.hypot(src2.position.x, src2.position.z),
+      copyR: Math.hypot(copy.position.x, copy.position.z),
+      spunY: copy.quaternion.y,
+    };
+  });
+  check('circle spawning keeps each piece at the template radius, spun to face round',
+    near(ring.srcR, ring.copyR, 0.1) && Math.abs(ring.spunY) > 0.1, ring);
 
   // Per-character pricing reaches the real embed in the preview.
   await page.fill('[data-testid="text-perchar-base-text"]', '2');

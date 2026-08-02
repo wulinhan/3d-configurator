@@ -139,6 +139,24 @@ test('perChar: toggles on with defaults, tunes axis and gap, toggles off clean',
   assert.equal(slotOf(off).perChar, undefined);
 });
 
+test('perChar circle: mode and step validate; text colour pins and releases', () => {
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  m = setTextSlot(m, 'body-text', { perChar: { mode: 'circle', stepDeg: 30 } });
+  valid(m);
+  assert.deepEqual(slotOf(m).perChar, { mode: 'circle', stepDeg: 30 });
+  assert.throws(() => setTextSlot(m, 'body-text', { perChar: { mode: 'spiral' as never } }), /mode/);
+  assert.throws(() => setTextSlot(m, 'body-text', { perChar: { mode: 'circle', stepDeg: 0 } }), /stepDeg/);
+  assert.throws(() => setTextSlot(m, 'body-text', { perChar: { mode: 'circle', stepDeg: 999 } }), /stepDeg/);
+
+  m = setTextSlot(m, 'body-text', { colourHex: '#C82020' });
+  valid(m);
+  assert.equal(slotOf(m).colourHex, '#C82020');
+  assert.throws(() => setTextSlot(m, 'body-text', { colourHex: 'red' as never }), /RRGGBB/);
+  const released = setTextSlot(m, 'body-text', { colourHex: null });
+  valid(released);
+  assert.equal(slotOf(released).colourHex, undefined);
+});
+
 test('validator: the slot geometry rules hold', () => {
   const m = addTextSlot(fresh(), 'body', PLACE);
   const broken = (patch: object) => {

@@ -98,13 +98,12 @@ through the tested edit ops, so an illegal drop is refused by the edit
 layer, not by fragile UI guards. Multi-selecting two or more loose parts
 offers both structures as buttons:
 
-- **Assembly** records `manifest.groups` and merges the members' solo colour
-  options into a single option (one colour control for the customer — that's
-  what "treated as one part" means at the storefront). Its editor renames,
-  nudges every member together (members anchored to each other move once,
-  not twice — the anchor already carries them), and splits the assembly up;
-  splitting keeps the merged colour option, and a departing member gets its
-  own colour option back.
+- **Assembly** records `manifest.groups` — the members move, duplicate and
+  repeat as one thing, but every part KEEPS its own colour option (a
+  clicker's base and button are one object with two finishes). Its editor
+  renames, nudges every member together (members anchored to each other
+  move once, not twice — the anchor already carries them), and splits the
+  assembly up; splitting touches nothing but the grouping.
 - **Variant set** builds a `choice` option with `role: 'variant'` and
   points each member's `visibleWhen` at it — mutual exclusivity by
   construction, no runtime special-casing. A part that was an optional
@@ -122,7 +121,9 @@ assembly's eyeball hides every member), a solo toggle (soloing a hidden
 variant member also selects it, switching the preview — otherwise solo
 would show nothing), a duplicate button (two overlapping squares; loose
 parts, assemblies and variant sets alike), and on bundles a split/dissolve
-button (two squares apart) or on parts a ✕ delete. Renaming — parts,
+button (two squares apart) AND a ✕ that deletes the whole assembly or set
+with every part in it (one confirm, one undo step); parts carry their own
+✕ delete. Renaming — parts,
 assemblies and variant sets — is double-click on the name, with the input
 sized to its content; name pills hug their text. With a set's editor open,
 Transform parks a translate-only gizmo at the set's centre of mass, so the
@@ -187,13 +188,15 @@ file is up) sits in the explorer and applies to the next file added.
 
 **Repeat** (in the part / assembly / variant-set editors, hidden from
 customers) stamps copies along an axis — pitched at the entry's own size
-plus a gap, edge-to-edge — or in a ring around the world origin at the
-entry's current distance, spinning each copy to face the centre when a
-lone part orbits. Copies are ordinary parts with their own colour options
-(labels count up: "Base 2", "Base 3"), so any of them can be recoloured,
-moved or deleted afterwards; the whole stamp is one undo step. This is the
-foundation for products that spawn per-unit geometry (one clicker tile per
-typed character).
+plus a gap, edge-to-edge — or in a ring: a RIGID turn about the vertical
+axis through the world origin, where the original is taken as facing the
+tangent and every copy (parts and whole assemblies alike) both orbits and
+spins by its share of the circle, keeping its face to the ring. Anchors on
+circle copies collapse to absolute offsets — a rotated copy cannot keep
+axis-aligned joints. Copies are ordinary parts with their own colour
+options (labels count up: "Base 2", "Base 3"), so any of them can be
+recoloured, moved or deleted afterwards; the whole stamp is one undo
+step.
 
 Publish lives in a floating modal off the topbar CTA (validation report,
 manifest and compressed-GLB downloads); the left panel keeps only Parts,
@@ -210,7 +213,9 @@ space, so the text rides every later move, rotation and anchor of the part.
 Customers type in the configurator; their words are extruded (three.js
 TextGeometry) straight out of the surface.
 
-Per slot the merchant sets: the **typeface** (a dropdown of five bundled
+Per slot the merchant sets: the **text colour** (match the carrier part —
+the default, text recolours with it — or pin any palette finish of its
+own), the **typeface** (a dropdown of five bundled
 faces — Helvetiker regular/bold, Droid Sans bold, Gentilis regular/bold,
 trimmed to printable ASCII at 25–63 KB each and lazy-loaded only when a
 manifest uses text), glyph **size**, extrusion **depth**, a **sink** that
@@ -223,16 +228,19 @@ shares the carrier part's material, so it colours with the part; the payload
 carries the typed string on the order. Deleting or renaming the carrier part
 deletes or renames the slot with it.
 
-**One piece per letter** turns the carrier part into a TEMPLATE: every
-character the customer types spawns its own copy of the part — copy k
-carrying character k — marched along a chosen axis at the template's size
-plus a gap, exactly like the repeat tool's line mode but driven by the
-text at runtime. A space spawns a blank piece, the length limit caps the
-piece count, and per-character pricing makes each piece pay its way. The
-spawning happens in the viewer (the manifest stays static; selections
-drive the copies), so the same manifest renders one tile or twenty
-depending on what the customer types — the "type your name, get one
-clicker per letter" product is this toggle plus a text slot.
+**One piece per letter** turns the carrier part — or, when it belongs to
+an assembly, the WHOLE assembly — into a TEMPLATE: every character the
+customer types spawns its own copy, copy k carrying character k. Line
+mode marches pieces along a chosen axis at the template's size plus a
+gap, exactly like the repeat tool; circle mode turns each piece a set
+step° further round the vertical axis through the origin (the original
+faces the tangent), the same rigid turn the repeat tool stamps. A space
+spawns a blank piece, the length limit caps the piece count, and
+per-character pricing makes each piece pay its way. The spawning happens
+in the viewer (the manifest stays static; selections drive the copies),
+so the same manifest renders one tile or twenty depending on what the
+customer types — the "type your name, get one clicker per letter" product
+is this toggle plus a text slot on the clicker assembly.
 
 ## Anchors: summary first, controls on demand
 
@@ -351,19 +359,22 @@ test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
 test/parts.test.ts    15 — rename ripples (colour, add-on, variant entries),
                       delete repair, match-pose, absolute positioning, snap
-test/structure.test.ts 33 — assemblies merge colours without double-painting,
+test/structure.test.ts 34 — assemblies merge colours without double-painting,
                       variant sets are exclusive by construction (and absorb
                       add-on parts), drag-style add/remove membership repairs
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
                       deletes repair both structures, repeat patterns pitch
-                      line copies at size+gap and ring copies about the origin
-test/text.test.ts      8 — text slots bind valid, tune through validation,
+                      line copies at size+gap and turn ring copies rigidly
+                      about the origin — assemblies orbit AND spin together
+test/text.test.ts      9 — text slots bind valid, tune through validation,
                       sanitise + clamp customer text, price flat + per
                       character, follow their carrier part (hidden = inert,
                       deleted = gone, renamed = renamed), per-letter
-                      spawning toggles on/off through validation
-test/studio.smoke.mjs 153 browser assertions — the full merchant journey
+                      spawning toggles on/off through validation in both
+                      line and circle modes, and the slot's own colour
+                      pins and releases
+test/studio.smoke.mjs 158 browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and

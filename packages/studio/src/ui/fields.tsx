@@ -5,10 +5,10 @@
 // op fires on commit (blur or Enter), and an op that throws puts the message
 // inline and restores the last good value.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 export function NumberField(props: {
-  label: string;
+  label: ReactNode;
   value: number;
   onCommit: (value: number) => void;
   step?: number;

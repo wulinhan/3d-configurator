@@ -150,9 +150,15 @@ export class Viewer {
   private shadowCatcher?: THREE.Mesh;
   private surfaceOverlays = new Map<'hover' | 'first', THREE.Mesh>();
   /** optionId → its extruded text mesh; `mesh` empty while the font loads. */
-  private textMeshes = new Map<string, { mesh?: THREE.Mesh; key: string }>();
-  /** optionId → per-letter template copies + their glyphs (see syncPerChar). */
-  private perCharText = new Map<string, { key: string; copies: THREE.Mesh[]; glyphs: THREE.Mesh[] }>();
+  private textMeshes = new Map<string, { mesh?: THREE.Mesh; key: string; customMat?: THREE.MeshStandardMaterial }>();
+  /** optionId → per-letter template pieces + their glyphs (see syncPerChar).
+   * pieces[k-1] maps template member part id → its clone for piece k. */
+  private perCharText = new Map<string, {
+    key: string;
+    pieces: Array<Map<string, THREE.Mesh>>;
+    glyphs: THREE.Mesh[];
+    customMat?: THREE.MeshStandardMaterial;
+  }>();
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
@@ -826,14 +832,44 @@ export class Viewer {
     mesh.position.set(...spec.origin).addScaledVector(n, -(spec.sinkMm ?? 0));
   }
 
+  /**
+   * What a glyph renders in: the carrier part's own material (so text
+   * colours with the part), or — when the slot pins `colourHex` — a
+   * dedicated material in that fixed finish, kept per option and disposed
+   * with it.
+   */
+  private textMaterial(
+    spec: TextOption,
+    entry: { customMat?: THREE.MeshStandardMaterial },
+  ): THREE.Material | undefined {
+    if (!spec.colourHex) {
+      entry.customMat?.dispose();
+      entry.customMat = undefined;
+      return this.materials.get(spec.part);
+    }
+    if (!entry.customMat) {
+      const base = this.materials.get(spec.part);
+      entry.customMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(spec.colourHex),
+        roughness: base?.roughness ?? 0.55,
+        metalness: base?.metalness ?? 0,
+        flatShading: base?.flatShading ?? true,
+        side: THREE.DoubleSide,
+      });
+    } else {
+      entry.customMat.color.set(spec.colourHex);
+    }
+    return entry.customMat;
+  }
+
   private syncSingle(option: TextOption, carrier: THREE.Mesh, text: string): void {
     const existing = this.textMeshes.get(option.id);
     const key = JSON.stringify([
       text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
-      option.rotationDeg, option.origin, option.normal, option.part,
+      option.rotationDeg, option.origin, option.normal, option.part, option.colourHex,
     ]);
     if (existing?.key === key) return;
-    this.textMeshes.set(option.id, { mesh: existing?.mesh, key });
+    this.textMeshes.set(option.id, { mesh: existing?.mesh, key, customMat: existing?.customMat });
 
     const spec = { ...option };
     loadFont(option.font ?? DEFAULT_FONT).then((font) => {
@@ -842,7 +878,7 @@ export class Viewer {
       const geo = this.buildTextGeometry(text, font, spec);
       let mesh = current.mesh;
       if (!mesh) {
-        mesh = new THREE.Mesh(geo, this.materials.get(spec.part));
+        mesh = new THREE.Mesh(geo, this.textMaterial(spec, current));
         mesh.castShadow = mesh.receiveShadow = true;
         mesh.name = `text-${spec.id}`;
         // Children of part meshes are seen by the recursive raycasts; text
@@ -851,77 +887,128 @@ export class Viewer {
         const parent = this.meshes.get(spec.part);
         if (!parent) { geo.dispose(); return; }
         parent.add(mesh);
-        this.textMeshes.set(option.id, { mesh, key });
+        current.mesh = mesh;
       } else {
         mesh.geometry.dispose();
         mesh.geometry = geo;
+        mesh.material = this.textMaterial(spec, current) ?? mesh.material;
         const parent = this.meshes.get(spec.part);
-        if (parent && mesh.parent !== parent) {
-          parent.add(mesh);
-          mesh.material = this.materials.get(spec.part) ?? mesh.material;
-        }
+        if (parent && mesh.parent !== parent) parent.add(mesh);
       }
       this.placeGlyph(mesh, spec);
     });
   }
 
+  /** A per-char template: the carrier's whole assembly, or just the carrier. */
+  private templateMembers(partId: string): string[] {
+    const group = this.manifest.groups?.find((g) => g.parts.includes(partId));
+    return group ? [...group.parts] : [partId];
+  }
+
   /**
-   * One piece per letter: the carrier is a TEMPLATE — every character of
-   * the text gets its own copy of the carrier's mesh (sharing geometry and
-   * material), marched along the canonical axis at the template's laid-out
-   * size plus the gap, each copy carrying that character's glyph. The
-   * original mesh is piece #1. Copies re-track the carrier's transform and
-   * visibility on every apply, so edits and variant switches carry the
-   * whole row; a space spawns a blank piece.
+   * One piece per letter: the carrier — or, when it belongs to an assembly,
+   * the WHOLE assembly — is a TEMPLATE. Every character of the text gets
+   * its own piece: clones of each member mesh (sharing geometry and
+   * material), with that character's glyph on the clone of the carrier.
+   * The original meshes are piece #1. Line mode marches pieces along a
+   * canonical axis at the template's laid-out size plus the gap; circle
+   * mode turns each piece stepDeg° further round the vertical axis through
+   * the origin (the original faces the tangent), the same rigid turn the
+   * repeat tool stamps. Pieces re-track the source meshes' transforms and
+   * visibility on every apply, so edits, variant switches and hides carry
+   * the whole run; a space spawns a blank piece.
    */
   private syncPerChar(option: TextOption, carrier: THREE.Mesh, text: string): void {
+    const mode = option.perChar?.mode ?? 'line';
     const axis = option.perChar?.axis ?? 0;
     const gap = option.perChar?.gapMm ?? 5;
-    const box = this.layout.get(option.part)?.box;
-    const pitch = (box ? box.max[axis] - box.min[axis] : 0) + gap;
+    const stepDeg = option.perChar?.stepDeg ?? 30;
+    const members = this.templateMembers(option.part);
     const chars = [...text];
 
     const key = JSON.stringify([
       text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
-      option.rotationDeg, option.origin, option.normal, option.part, axis, gap,
+      option.rotationDeg, option.origin, option.normal, option.part,
+      option.colourHex, members, mode, axis, gap, stepDeg,
     ]);
     let entry = this.perCharText.get(option.id);
     if (!entry || entry.key !== key) {
       this.dropPerChar(option.id);
-      entry = { key, copies: [], glyphs: [] };
+      entry = { key, pieces: [], glyphs: [] };
       this.perCharText.set(option.id, entry);
       for (let k = 1; k < chars.length; k++) {
-        const copy = new THREE.Mesh(carrier.geometry, carrier.material);
-        copy.castShadow = copy.receiveShadow = true;
-        copy.raycast = () => {};
-        copy.name = `percopy-${option.id}-${k}`;
-        this.group.add(copy);
-        entry.copies.push(copy);
+        const clones = new Map<string, THREE.Mesh>();
+        for (const memberId of members) {
+          const src = this.meshes.get(memberId);
+          if (!src) continue;
+          const copy = new THREE.Mesh(src.geometry, src.material);
+          copy.castShadow = copy.receiveShadow = true;
+          copy.raycast = () => {};
+          copy.name = memberId === option.part
+            ? `percopy-${option.id}-${k}`
+            : `percopy-${option.id}-${k}-${memberId}`;
+          this.group.add(copy);
+          clones.set(memberId, copy);
+        }
+        entry.pieces.push(clones);
       }
       const current = entry;
       const spec = { ...option };
       loadFont(option.font ?? DEFAULT_FONT).then((font) => {
         if (this.perCharText.get(option.id) !== current) return; // superseded
+        const material = this.textMaterial(spec, current);
         chars.forEach((ch, k) => {
           if (ch === ' ') return; // a space is a blank piece
-          const glyph = new THREE.Mesh(this.buildTextGeometry(ch, font, spec), this.materials.get(spec.part));
+          const parent = k === 0 ? carrier : current.pieces[k - 1]?.get(spec.part);
+          if (!parent) return;
+          const glyph = new THREE.Mesh(this.buildTextGeometry(ch, font, spec), material);
           glyph.castShadow = glyph.receiveShadow = true;
           glyph.raycast = () => {};
           glyph.name = `text-${spec.id}-${k}`;
           this.placeGlyph(glyph, spec);
-          (k === 0 ? carrier : current.copies[k - 1]).add(glyph);
+          parent.add(glyph);
           current.glyphs.push(glyph);
         });
       });
     }
 
-    entry.copies.forEach((copy, i) => {
-      copy.position.copy(carrier.position);
-      copy.position.setComponent(axis, copy.position.getComponent(axis) + pitch * (i + 1));
-      copy.quaternion.copy(carrier.quaternion);
-      copy.scale.copy(carrier.scale);
-      copy.visible = carrier.visible;
-    });
+    if (mode === 'line') {
+      let lo = Infinity, hi = -Infinity;
+      for (const memberId of members) {
+        const box = this.layout.get(memberId)?.box;
+        if (!box) continue;
+        lo = Math.min(lo, box.min[axis]);
+        hi = Math.max(hi, box.max[axis]);
+      }
+      const pitch = (Number.isFinite(lo) ? hi - lo : 0) + gap;
+      entry.pieces.forEach((clones, i) => {
+        for (const [memberId, copy] of clones) {
+          const src = this.meshes.get(memberId);
+          if (!src) continue;
+          copy.position.copy(src.position);
+          copy.position.setComponent(axis, copy.position.getComponent(axis) + pitch * (i + 1));
+          copy.quaternion.copy(src.quaternion);
+          copy.scale.copy(src.scale);
+          copy.visible = src.visible;
+        }
+      });
+    } else {
+      const Y = new THREE.Vector3(0, 1, 0);
+      entry.pieces.forEach((clones, i) => {
+        // Same convention as the repeat tool's circle: piece k sits k·step
+        // further round the ring; three's −angle Y-rotation advances the
+        // ground-plane angle by +angle, and body spin matches the orbit.
+        const q = new THREE.Quaternion().setFromAxisAngle(Y, -((i + 1) * stepDeg) * Math.PI / 180);
+        for (const [memberId, copy] of clones) {
+          const src = this.meshes.get(memberId);
+          if (!src) continue;
+          copy.position.copy(src.position).applyQuaternion(q);
+          copy.quaternion.copy(q).multiply(src.quaternion);
+          copy.scale.copy(src.scale);
+          copy.visible = src.visible;
+        }
+      });
+    }
   }
 
   private dropTextMesh(optionId: string): void {
@@ -929,6 +1016,7 @@ export class Viewer {
     if (!entry) return;
     entry.mesh?.removeFromParent();
     entry.mesh?.geometry.dispose();
+    entry.customMat?.dispose();
     this.textMeshes.delete(optionId);
   }
 
@@ -936,7 +1024,8 @@ export class Viewer {
     const entry = this.perCharText.get(optionId);
     if (!entry) return;
     for (const glyph of entry.glyphs) { glyph.removeFromParent(); glyph.geometry.dispose(); }
-    for (const copy of entry.copies) copy.removeFromParent();
+    for (const clones of entry.pieces) for (const copy of clones.values()) copy.removeFromParent();
+    entry.customMat?.dispose();
     this.perCharText.delete(optionId);
   }
 

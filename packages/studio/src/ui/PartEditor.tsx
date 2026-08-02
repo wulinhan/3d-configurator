@@ -26,11 +26,21 @@ const EDGES: AnchorEdge[] = ['min', 'center', 'max'];
 // The Studio speaks Z-up: X and Y are the flat plane, Z is height. The
 // internal space (manifest, renderer) stays Y-up — this table is purely how
 // axes are named and ordered on screen.
-export const UI_AXES: Array<{ label: string; axis: Axis }> = [
+export const UI_AXES: Array<{ label: 'X' | 'Y' | 'Z'; axis: Axis }> = [
   { label: 'X', axis: 0 }, // internal x — width
   { label: 'Y', axis: 2 }, // internal z — depth
   { label: 'Z', axis: 1 }, // internal y — height
 ];
+
+// The viewport's axis colours (X red, Y green, Z blue — Studio Z-up terms),
+// repeated wherever an axis is named so the panel and the gizmo speak the
+// same language.
+export const AXIS_COLOURS: Record<'X' | 'Y' | 'Z', string> = {
+  X: '#d44a3a', Y: '#4a9a44', Z: '#3a6fd4',
+};
+const axisTint = (label: 'X' | 'Y' | 'Z') => (
+  <span style={{ color: AXIS_COLOURS[label], fontWeight: 700 }}>{label}</span>
+);
 
 export type RepeatOpts = { count: number; mode: 'line' | 'circle'; axis?: Axis; gapMm?: number };
 
@@ -79,7 +89,7 @@ function RepeatSection(props: {
             <Select
               ariaLabel="Repeat axis" testId="repeat-axis" compact
               value={String(axis)}
-              options={UI_AXES.map(({ label, axis: a }) => ({ value: String(a), label }))}
+              options={UI_AXES.map(({ label, axis: a }) => ({ value: String(a), label, chip: AXIS_COLOURS[label] }))}
               onChange={(v) => setAxis(Number(v) as Axis)}
             />
           </label>
@@ -144,7 +154,7 @@ export function GroupEditor(props: {
         <div className="field-row" key={nudgeTick}>
           {UI_AXES.map(({ label, axis }) => (
             <NumberField
-              key={label} label={label} value={0} suffix="mm"
+              key={label} label={axisTint(label)} value={0} suffix="mm"
               testId={`nudge-${label.toLowerCase()}`}
               onCommit={(mm) => {
                 if (!mm) return;
@@ -160,8 +170,8 @@ export function GroupEditor(props: {
       <section>
         <h4>Assembly</h4>
         <p className="hint">
-          Parts in an assembly share one colour control in the configurator.
-          Splitting it up keeps their positions and the shared colour option.
+          Parts in an assembly move as one thing but keep their own colours.
+          Splitting it up keeps every part exactly where it is.
         </p>
         <div className="publish-actions">
           <button
@@ -214,7 +224,7 @@ export function VariantEditor(props: {
         <div className="field-row" key={nudgeTick}>
           {UI_AXES.map(({ label, axis }) => (
             <NumberField
-              key={label} label={label} value={0} suffix="mm"
+              key={label} label={axisTint(label)} value={0} suffix="mm"
               testId={`vnudge-${label.toLowerCase()}`}
               onCommit={(mm) => {
                 if (!mm) return;
@@ -353,7 +363,7 @@ export function PartEditor(props: {
         <div className="field-row">
           {UI_AXES.map(({ label, axis }) => (
             <NumberField
-              key={label} label={label} value={rotation[axis]} suffix="°" step={5}
+              key={label} label={axisTint(label)} value={rotation[axis]} suffix="°" step={5}
               testId={`rot-${label.toLowerCase()}`}
               onCommit={(deg) => {
                 const next = [...rotation] as [number, number, number];
@@ -507,6 +517,19 @@ function TextSlotEditor(props: {
         />
       </div>
       <label className="field wide">
+        <span className="field-label">Text colour</span>
+        <Select
+          ariaLabel="Text colour" testId={`text-colour-${slot.id}`}
+          value={slot.colourHex ?? ''}
+          placeholder="Match the part"
+          options={[
+            { value: '', label: 'Match the part' },
+            ...(manifest.palettes?.[0]?.swatches ?? []).map((s) => ({ value: s.hex, label: s.name, chip: s.hex })),
+          ]}
+          onChange={(v) => patch({ colourHex: v === '' ? null : (v as `#${string}`) })}
+        />
+      </label>
+      <label className="field wide">
         <span className="field-label">Example text (customers see it as a hint)</span>
         <input
           className="structure-name" data-testid={`text-placeholder-${slot.id}`}
@@ -531,23 +554,42 @@ function TextSlotEditor(props: {
           type="checkbox" checked={!!slot.perChar} data-testid={`text-spawn-${slot.id}`}
           onChange={(e) => patch({ perChar: e.target.checked ? {} : null })}
         />
-        One piece per letter — each typed character spawns its own copy of this part
+        One piece per letter — each typed character spawns its own copy of this
+        part (or its whole assembly)
       </label>
       {slot.perChar && (
         <div className="field-row">
           <label className="field">
-            <span className="field-label">Row axis</span>
+            <span className="field-label">Pattern</span>
             <Select
-              ariaLabel="Row axis" testId={`text-spawn-axis-${slot.id}`} compact
-              value={String(slot.perChar.axis ?? 0)}
-              options={UI_AXES.map(({ label, axis }) => ({ value: String(axis), label }))}
-              onChange={(v) => patch({ perChar: { ...slot.perChar, axis: Number(v) as Axis } })}
+              ariaLabel="Spawn pattern" testId={`text-spawn-mode-${slot.id}`} compact
+              value={slot.perChar.mode ?? 'line'}
+              options={[{ value: 'line', label: 'Along an axis' }, { value: 'circle', label: 'Around a circle' }]}
+              onChange={(v) => patch({ perChar: { ...slot.perChar, mode: v as 'line' | 'circle' } })}
             />
           </label>
-          <NumberField
-            label="Gap" value={slot.perChar.gapMm ?? 5} suffix="mm" testId={`text-spawn-gap-${slot.id}`}
-            onCommit={(v) => patch({ perChar: { ...slot.perChar, gapMm: v } })}
-          />
+          {(slot.perChar.mode ?? 'line') === 'line' ? (
+            <>
+              <label className="field">
+                <span className="field-label">Row axis</span>
+                <Select
+                  ariaLabel="Row axis" testId={`text-spawn-axis-${slot.id}`} compact
+                  value={String(slot.perChar.axis ?? 0)}
+                  options={UI_AXES.map(({ label, axis }) => ({ value: String(axis), label, chip: AXIS_COLOURS[label] }))}
+                  onChange={(v) => patch({ perChar: { ...slot.perChar, axis: Number(v) as Axis } })}
+                />
+              </label>
+              <NumberField
+                label="Gap" value={slot.perChar.gapMm ?? 5} suffix="mm" testId={`text-spawn-gap-${slot.id}`}
+                onCommit={(v) => patch({ perChar: { ...slot.perChar, gapMm: v } })}
+              />
+            </>
+          ) : (
+            <NumberField
+              label="Step" value={slot.perChar.stepDeg ?? 30} suffix="°" step={5} testId={`text-spawn-step-${slot.id}`}
+              onCommit={(v) => patch({ perChar: { ...slot.perChar, stepDeg: v } })}
+            />
+          )}
         </div>
       )}
       <div className="match-row">
@@ -633,7 +675,7 @@ function AxisAnchorRow(props: {
   return (
     <div className="anchor-block">
       <div className="anchor-row" data-testid={`anchor-${axisName}`}>
-        <span className="axis-name">{props.uiLabel}</span>
+        <span className="axis-name" style={{ color: AXIS_COLOURS[props.uiLabel as 'X' | 'Y' | 'Z'] ?? undefined }}>{props.uiLabel}</span>
         <button
           type="button"
           className={`anchor-summary${anchored ? ' is-anchored' : ''}${props.open ? ' is-open' : ''}`}

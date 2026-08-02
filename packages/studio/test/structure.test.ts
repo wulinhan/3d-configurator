@@ -1,7 +1,8 @@
 // Groups, variant choices, explorer entries and ordering. The properties
-// that matter: grouping merges colours without double-painting, variants are
-// mutually exclusive by construction, group moves never move a member twice,
-// and reordering carries whole entries and drags the option order along.
+// that matter: grouping moves parts as one while every member keeps its own
+// colour, variants are mutually exclusive by construction, group moves never
+// move a member twice, and reordering carries whole entries and drags the
+// option order along.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,14 +40,14 @@ const valid = (m: Manifest) => assert.deepEqual(validateManifest(m).errors, []);
 
 // ── groups ──────────────────────────────────────────────────────────────────
 
-test('makeGroup records the group and merges member colour options into one', () => {
+test('makeGroup records the group; every member keeps its own colour option', () => {
   const m = makeGroup(fresh(), ['body', 'badge'], 'Shell');
   valid(m);
   assert.deepEqual(m.groups, [{ id: 'shell', label: 'Shell', parts: ['body', 'badge'] }]);
-  const merged = m.options.find((o) => o.id === 'shell-colour') as ColourOption;
-  assert.deepEqual(merged.parts.sort(), ['badge', 'body']);
-  assert.ok(!m.options.some((o) => o.id === 'body-colour' || o.id === 'badge-colour'));
-  // No part painted by two colour options.
+  assert.ok(m.options.some((o) => o.id === 'body-colour'), 'body keeps its colour');
+  assert.ok(m.options.some((o) => o.id === 'badge-colour'), 'badge keeps its colour');
+  assert.ok(!m.options.some((o) => o.id === 'shell-colour'), 'no merged option appears');
+  // Still no part painted by two colour options.
   const painted = m.options.flatMap((o) => (o.type === 'colour' ? o.parts : []));
   assert.equal(new Set(painted).size, painted.length);
 });
@@ -58,17 +59,18 @@ test('makeGroup refuses singles, blanks, and double membership', () => {
   assert.throws(() => makeGroup(grouped, ['badge', 'lid'], 'Other'), /already in a group/);
 });
 
-test('ungroup dissolves the group but keeps the merged colour option', () => {
+test('ungroup dissolves the group; member colour options are untouched', () => {
   const m = ungroup(makeGroup(fresh(), ['body', 'badge'], 'Shell'), 'shell');
   valid(m);
   assert.equal(m.groups, undefined);
-  assert.ok(m.options.some((o) => o.id === 'shell-colour'));
+  assert.ok(m.options.some((o) => o.id === 'body-colour'));
+  assert.ok(m.options.some((o) => o.id === 'badge-colour'));
 });
 
-test('renameGroup renames the group and its merged option', () => {
+test('renameGroup renames the group; member colours keep their own names', () => {
   const m = renameGroup(makeGroup(fresh(), ['body', 'badge'], 'Shell'), 'shell', 'Chassis');
   assert.equal(m.groups![0].label, 'Chassis');
-  assert.equal(m.options.find((o) => o.id === 'shell-colour')!.label, 'Chassis');
+  assert.equal(m.options.find((o) => o.id === 'body-colour')!.label, 'Body');
 });
 
 test('nudgeGroup moves members once, even when anchored to each other', () => {
@@ -151,26 +153,24 @@ test('addPartToChoice absorbs add-ons, refuses grouped or other-choice parts', (
   assert.throws(() => addPartToChoice(grouped, 'lid', 'badge'), /assembly/);
 });
 
-test('addPartToGroup merges the newcomer\'s colour option into the shared one', () => {
+test('addPartToGroup adds membership; the newcomer keeps its own colour', () => {
   let m = makeGroup(fresh(), ['body', 'badge'], 'Shell');
   m = addPartToGroup(m, 'shell', 'lid');
   valid(m);
   assert.deepEqual(m.groups![0].parts, ['body', 'badge', 'lid']);
-  const merged = m.options.find((o) => o.id === 'shell-colour') as ColourOption;
-  assert.ok(merged.parts.includes('lid'));
-  assert.ok(!m.options.some((o) => o.id === 'lid-colour'));
+  assert.ok(m.options.some((o) => o.id === 'lid-colour'), 'lid keeps its colour option');
   const painted = m.options.flatMap((o) => (o.type === 'colour' ? o.parts : []));
   assert.equal(new Set(painted).size, painted.length, 'no part painted twice');
   assert.equal(addPartToGroup(m, 'shell', 'lid'), m, 'already a member is a no-op');
 });
 
-test('removePartFromGroup splits the colour back out; below two the assembly dissolves', () => {
+test('removePartFromGroup drops membership; below two the assembly dissolves', () => {
   let m = addPartToGroup(makeGroup(fresh(), ['body', 'badge'], 'Shell'), 'shell', 'lid');
   m = removePartFromGroup(m, 'shell', 'lid');
   valid(m);
   assert.deepEqual(m.groups![0].parts, ['body', 'badge']);
-  const split = m.options.find((o) => o.type === 'colour' && (o as ColourOption).parts.join() === 'lid');
-  assert.ok(split, 'departing part paints alone again');
+  const solo = m.options.find((o) => o.type === 'colour' && (o as ColourOption).parts.join() === 'lid');
+  assert.ok(solo, 'departing part still paints alone');
   m = removePartFromGroup(m, 'shell', 'badge');
   valid(m);
   assert.equal(m.groups, undefined, 'one-member assembly dissolves');
@@ -233,7 +233,7 @@ test('setPartMaterial merges finish knobs and rejects out-of-range values', () =
   assert.throws(() => setPartMaterial(m, 'body', { metalness: -0.1 }), EditError);
 });
 
-test('duplicateEntry copies an assembly: parts, internal anchors, merged colour, offset aside', () => {
+test('duplicateEntry copies an assembly: parts, internal anchors, member colours, offset aside', () => {
   let m = withAnchor(fresh(), 'badge', 1, { align: 'min', to: 'body', edge: 'max', offset: 1 });
   m = makeGroup(m, ['body', 'badge'], 'Shell');
   const before = resolveLayout(m, RAW);
@@ -245,7 +245,8 @@ test('duplicateEntry copies an assembly: parts, internal anchors, merged colour,
   assert.equal(copy.label, 'Shell copy');
   // The cloned badge rides the cloned body, not the original.
   assert.equal(m.parts.find((p) => p.id === 'badge-copy')!.placement!.y!.to, 'body-copy:max');
-  assert.ok(m.options.some((o) => o.id === 'shell-colour-copy'));
+  assert.ok(m.options.some((o) => o.id === 'body-colour-copy'));
+  assert.ok(m.options.some((o) => o.id === 'badge-colour-copy'));
   // Offset aside, and rigid: the clone pair keeps the badge-on-body gap.
   // Clones share their source's mesh, so bounds re-derive through it.
   const after = resolveLayout(m, boundsByPartId(m, RAW));
@@ -282,7 +283,7 @@ test('repeatEntry lines copies up with a clear gap; count includes the original'
   assert.throws(() => repeatEntry(m, 'badge', RAW, { count: 40, mode: 'line' }), EditError);
 });
 
-test('repeatEntry circles copies around the origin, spinning lone parts to face round', () => {
+test('repeatEntry circle is a rigid turn: every copy orbits AND spins to face round', () => {
   let m = nudge(fresh(), 'badge', [30, 0, 0]);
   m = repeatEntry(m, 'badge', RAW, { count: 4, mode: 'circle' });
   valid(m);
@@ -295,6 +296,34 @@ test('repeatEntry circles copies around the origin, spinning lone parts to face 
   assert.equal(m.parts.find((p) => p.id === 'badge-copy')!.placement!.rotation![1], -90);
   // Sitting at the origin, there is no circle to run around.
   assert.throws(() => repeatEntry(fresh(), 'badge', RAW, { count: 4, mode: 'circle' }), /origin/);
+});
+
+test('repeatEntry circles a whole ASSEMBLY rigidly: members orbit and spin together', () => {
+  // Body at (30, _, 0) with the badge riding 1mm above it: after a quarter
+  // turn the copy pair must sit at (0, _, 30)-ish, still stacked, with both
+  // parts spun -90 about their own centres. Anchors collapse on the copies.
+  let m = withAnchor(fresh(), 'badge', 1, { align: 'min', to: 'body', edge: 'max', offset: 1 });
+  m = makeGroup(m, ['body', 'badge'], 'Shell');
+  m = nudgeGroup(m, 'shell', [30, 0, 0]);
+  const before = resolveLayout(m, RAW);
+  m = repeatEntry(m, 'shell', RAW, { count: 4, mode: 'circle' });
+  valid(m);
+  const layout = resolveLayout(m, boundsByPartId(m, RAW));
+  const centre = (id) => {
+    const box = layout.get(id).box;
+    return [0, 1, 2].map((a) => (box.min[a] + box.max[a]) / 2);
+  };
+  const bodyBefore = [0, 1, 2].map((a) => (before.get('body').box.min[a] + before.get('body').box.max[a]) / 2);
+  const bodyCopy = centre('body-copy');
+  // Quarter turn: (x, z) -> (-z, x) under the +90-degree ground-plane turn.
+  near(bodyCopy[0], -bodyBefore[2], 1e-3);
+  near(bodyCopy[2], bodyBefore[0], 1e-3);
+  near(bodyCopy[1], bodyBefore[1], 1e-3);
+  // Both members spun by the same -90; the badge still sits 1mm above the body.
+  assert.equal(m.parts.find((p) => p.id === 'body-copy')!.placement!.rotation![1], -90);
+  assert.equal(m.parts.find((p) => p.id === 'badge-copy')!.placement!.rotation![1], -90);
+  near(layout.get('badge-copy').box.min[1] - layout.get('body-copy').box.max[1],
+    before.get('badge').box.min[1] - before.get('body').box.max[1], 1e-3);
 });
 
 test('repeatEntry repeats a whole assembly rigidly', () => {
