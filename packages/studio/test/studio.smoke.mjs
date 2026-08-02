@@ -667,9 +667,31 @@ await shoot('2-anchored.png');
   await page.waitForTimeout(200);
   check('undo returns the default staging', await page.evaluate(() =>
     Math.abs(window.__studioViewer.renderer.toneMappingExposure - 1.25) < 1e-6), '');
+
+  // Procedural texture library: pick a finish, tune it, clear it.
+  await pick('texture-base', 'leather');
+  await page.waitForTimeout(250);
+  m = await manifest();
+  check('texture library applies to the part', m.parts[0].material?.texture?.type === 'leather', m.parts[0].material);
+  check('…and the viewer bump-maps it live',
+    await page.evaluate(() => !!(window).__studioViewer.meshOf('base').material.normalMap), '');
+  await page.locator('[data-testid="texscale-base"]').evaluate((el) => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(el, '20');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForTimeout(250);
+  m = await manifest();
+  check('the grain-size slider writes the scale', m.parts[0].material?.texture?.scaleMm === 20, m.parts[0].material?.texture);
+  await pick('texture-base', '');
+  await page.waitForTimeout(250);
+  check('None clears the finish and the bump map',
+    await page.evaluate(() => !(window).__studioViewer.meshOf('base').material.normalMap), '');
+
   await page.click('.tabs button:has-text("Parts")');
   await page.waitForTimeout(150);
 }
+
 
 // ── 7. palette: add a colour, price a swatch ────────────────────────────────
 await page.click('.tabs button:has-text("Palette")');

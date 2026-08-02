@@ -14,7 +14,7 @@ import type {
   Manifest, Option, ColourOption, ChoiceOption, UploadOption, TextOption,
   Part, AxisPlacement,
 } from './types.ts';
-import { TEXT_FONTS } from './types.ts';
+import { TEXT_FONTS, TEXTURE_TYPES } from './types.ts';
 
 export interface Issue {
   path: string;
@@ -104,6 +104,18 @@ export function validateManifest(input: unknown): ValidationResult {
 
     if (p?.material?.fixedColour && !HEX.test(p.material.fixedColour)) {
       err(`${at}.material.fixedColour`, `"${p.material.fixedColour}" is not #RRGGBB`);
+    }
+    const tex = p?.material?.texture;
+    if (tex) {
+      if (!TEXTURE_TYPES.includes(tex.type)) {
+        err(`${at}.material.texture.type`, `unknown texture "${tex.type}" — bundled finishes are ${TEXTURE_TYPES.join(', ')}`);
+      }
+      if (tex.scaleMm != null && (!Number.isFinite(tex.scaleMm) || tex.scaleMm < 0.5 || tex.scaleMm > 100)) {
+        err(`${at}.material.texture.scaleMm`, 'must be between 0.5 and 100 millimetres');
+      }
+      if (tex.strength != null && (!Number.isFinite(tex.strength) || tex.strength < 0 || tex.strength > 3)) {
+        err(`${at}.material.texture.strength`, 'must be between 0 and 3');
+      }
     }
 
     const deps: string[] = [];

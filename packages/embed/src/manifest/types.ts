@@ -68,6 +68,10 @@ export interface ModelSource {
   scaleToMm?: number;
 }
 
+/** The bundled procedural finishes (see runtime/textures.ts). */
+export const TEXTURE_TYPES = ['leather', 'leather-coarse', 'fabric', 'canvas', 'wood', 'layers'] as const;
+export type TextureType = typeof TEXTURE_TYPES[number];
+
 export interface PartMaterial {
   roughness?: number;  // default 0.9
   metalness?: number;  // default 0
@@ -75,6 +79,13 @@ export interface PartMaterial {
   flatShading?: boolean;
   /** Non-colourable parts (chrome, glass) pin a colour and drop out of options. */
   fixedColour?: Hex;
+  /**
+   * A procedural surface finish, generated at runtime as a tileable normal
+   * map — leathers, weaves, wood grain, 3D-print layer lines. `scaleMm` is
+   * the feature size (default 8), `strength` the bump intensity (0–3,
+   * default 1).
+   */
+  texture?: { type: TextureType; scaleMm?: number; strength?: number };
 }
 
 /**

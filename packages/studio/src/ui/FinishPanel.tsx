@@ -4,9 +4,11 @@
 // setManifest — and publishes with the manifest, so the storefront renders
 // the same finish the merchant tuned.
 
-import type { Manifest } from '../../../embed/src/manifest/types.ts';
+import type { Manifest, TextureType } from '../../../embed/src/manifest/types.ts';
+import { TEXTURE_CHOICES } from '../../../embed/src/runtime/textures.ts';
 import { setPartMaterial, setScene } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
+import { Select } from './controls.tsx';
 
 const DEFAULT_ROUGHNESS = 0.55; // the viewer's dull-gloss plastic default
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -80,6 +82,43 @@ export function FinishPanel(props: {
               />
               Smooth shading (off keeps print-style facets)
             </label>
+            <label className="field wide">
+              <span className="field-label">Texture</span>
+              <Select
+                ariaLabel="Surface texture" testId={`texture-${p.id}`}
+                value={p.material?.texture?.type ?? ''}
+                options={[
+                  { value: '', label: 'None (smooth)' },
+                  ...TEXTURE_CHOICES.map((t) => ({ value: t.id, label: t.label })),
+                ]}
+                onChange={(v) => props.onChange(setPartMaterial(manifest, p.id,
+                  { texture: v === '' ? null : { ...p.material?.texture, type: v as TextureType } }))}
+              />
+            </label>
+            {p.material?.texture && (
+              <>
+                <label className="slider-row">
+                  <span className="field-label">Grain size</span>
+                  <input
+                    type="range" min={1} max={40} step={0.5}
+                    value={p.material.texture.scaleMm ?? 8} data-testid={`texscale-${p.id}`}
+                    onChange={(e) => props.onChange(setPartMaterial(manifest, p.id,
+                      { texture: { ...p.material!.texture!, scaleMm: Number(e.target.value) } }))}
+                  />
+                  <span className="slider-value">{(p.material.texture.scaleMm ?? 8).toFixed(1)}mm</span>
+                </label>
+                <label className="slider-row">
+                  <span className="field-label">Depth</span>
+                  <input
+                    type="range" min={0} max={3} step={0.05}
+                    value={p.material.texture.strength ?? 1} data-testid={`texstrength-${p.id}`}
+                    onChange={(e) => props.onChange(setPartMaterial(manifest, p.id,
+                      { texture: { ...p.material!.texture!, strength: Number(e.target.value) } }))}
+                  />
+                  <span className="slider-value">{(p.material.texture.strength ?? 1).toFixed(2)}</span>
+                </label>
+              </>
+            )}
           </section>
         );
       })}

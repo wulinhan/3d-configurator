@@ -8,7 +8,7 @@
 // concentrate.
 
 import type {
-  Manifest, Part, Option, ColourOption, ChoiceOption, TextOption, AxisPlacement, AnchorEdge, Hex,
+  Manifest, Part, Option, ColourOption, ChoiceOption, TextOption, TextureType, AxisPlacement, AnchorEdge, Hex,
 } from '../../../embed/src/manifest/types.ts';
 import { validateManifest } from '../../../embed/src/manifest/validate.ts';
 import { resolveLayout, modelBounds } from '../../../embed/src/runtime/layout.ts';
@@ -371,11 +371,15 @@ export function renamePart(manifest: Manifest, partId: string, label: string): M
   });
 }
 
-/** Set a part's surface finish — what the Finish tab edits. */
+/** Set a part's surface finish — what the Finish tab edits. `texture: null`
+ * removes the procedural finish. */
 export function setPartMaterial(
   manifest: Manifest,
   partId: string,
-  material: { roughness?: number; metalness?: number; flatShading?: boolean },
+  material: {
+    roughness?: number; metalness?: number; flatShading?: boolean;
+    texture?: { type: TextureType; scaleMm?: number; strength?: number } | null;
+  },
 ): Manifest {
   for (const key of ['roughness', 'metalness'] as const) {
     const v = material[key];
@@ -385,7 +389,10 @@ export function setPartMaterial(
   }
   return edit(manifest, (draft) => {
     const part = partOf(draft, partId);
-    part.material = { ...part.material, ...material };
+    const { texture, ...rest } = material;
+    part.material = { ...part.material, ...rest };
+    if (texture === null) delete part.material.texture;
+    else if (texture !== undefined) part.material.texture = texture;
   });
 }
 

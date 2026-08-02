@@ -376,6 +376,19 @@ test('renameVariantSet renames the customer-facing label only', () => {
   assert.throws(() => renameVariantSet(m, 'lid-style', '  '), EditError);
 });
 
+test('setPartMaterial applies and clears procedural textures through validation', () => {
+  let m = setPartMaterial(fresh(), 'body', { texture: { type: 'leather', scaleMm: 12, strength: 1.5 } });
+  valid(m);
+  assert.deepEqual(m.parts.find((p) => p.id === 'body')!.material?.texture,
+    { type: 'leather', scaleMm: 12, strength: 1.5 });
+  assert.throws(() => setPartMaterial(m, 'body', { texture: { type: 'velvet' as never } }), /texture/);
+  assert.throws(() => setPartMaterial(m, 'body', { texture: { type: 'wood', scaleMm: 999 } }), /scaleMm/);
+  assert.throws(() => setPartMaterial(m, 'body', { texture: { type: 'wood', strength: 9 } }), /strength/);
+  const cleared = setPartMaterial(m, 'body', { texture: null });
+  valid(cleared);
+  assert.equal(cleared.parts.find((p) => p.id === 'body')!.material?.texture, undefined);
+});
+
 test('setScene merges knobs and the validator holds the ranges', () => {
   let m = setScene(fresh(), { exposure: 1.6 });
   m = setScene(m, { shadowOpacity: 0.4 });

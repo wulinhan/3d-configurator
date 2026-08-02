@@ -157,8 +157,14 @@ pattern) and the row dims in place.
 ## Finish & staging
 
 A Finish tab (after Palette) surfaces the material knobs the manifest
-already carries per part — gloss (inverse roughness), metalness, and
-faceted-vs-smooth shading — plus a **Scene & lighting** section: exposure,
+already carries per part — gloss (inverse roughness), metalness,
+faceted-vs-smooth shading, and a **texture library**: six procedural
+finishes (fine/coarse leather, woven fabric, canvas, wood grain, 3D-print
+layer lines) generated at runtime as tileable normal maps — no image
+assets — with sliders for grain size (real millimetres) and bump depth.
+Parts ship without UVs, so the viewer box-projects them at load (and again
+after every engrave cut); the finish ships in the manifest and renders
+identically in the storefront — plus a **Scene & lighting** section: exposure,
 studio-environment reflection intensity, and contact-shadow strength
 (`manifest.scene`, range-validated). Everything applies live in the viewer
 and ships with the published manifest, so the storefront lights and
@@ -222,8 +228,11 @@ manifest uses text), the **style** — *Embossed* extrudes the glyphs proud
 of the surface (with a Fusion-style **sink** that lowers the sketch plane,
 relief = depth − sink), while *Engraved* is a REAL boolean difference: the
 glyph volume is subtracted from the part with three-bvh-csg (lazy-loaded,
-~115 KB only when a manifest engraves), so the pocket has actual walls and
-follows the customer's text live — glyph **size**, extrusion **depth**, a
+~115 KB only when a manifest engraves), and the pocket is then CLOSED with
+an exact lining — walls and floor built from the glyph prism itself — so
+engraving stays occluded and solid even on merchant meshes with open
+shells or flipped winding, where raw CSG loses its inside/outside bearings
+and leaves see-through pockets. Follows the customer's text live — glyph **size**, extrusion **depth**, a
 spin about the normal, a length limit, example text (rendered as
 the model's preview and the input's ghost), and pricing — flat and/or
 per-character, recomputed server-side like every other delta. The text mesh
@@ -372,7 +381,7 @@ test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
 test/parts.test.ts    15 — rename ripples (colour, add-on, variant entries),
                       delete repair, match-pose, absolute positioning, snap
-test/structure.test.ts 34 — assemblies merge colours without double-painting,
+test/structure.test.ts 35 — assemblies merge colours without double-painting,
                       variant sets are exclusive by construction (and absorb
                       add-on parts), drag-style add/remove membership repairs
                       colours both ways, group nudges never move an anchored
@@ -388,7 +397,11 @@ test/text.test.ts     10 — text slots bind valid, tune through validation,
                       line and circle modes, negative gaps overlap on
                       purpose, engraved style skips the emboss sink rule,
                       and the slot's own colour pins and releases
-test/studio.smoke.mjs 163 browser assertions — the full merchant journey
+test/engrave (embed)   3 — the boolean cut comes back CLOSED: surface,
+                      walls and floor — even on an open-shell mesh where
+                      raw CSG loses its bearings (the see-through-pocket
+                      regression, asserted headless)
+test/studio.smoke.mjs 167 browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and

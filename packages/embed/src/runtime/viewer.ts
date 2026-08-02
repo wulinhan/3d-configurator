@@ -9,13 +9,13 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
-import type { Font } from 'three/examples/jsm/loaders/FontLoader.js';
 
-import type { Manifest, TextOption } from '../manifest/types.ts';
+import type { Manifest, Part, TextOption } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, type Selections } from './state.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
+import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
+import { buildTextGeometry, placeGlyph, cutTextGeometry } from './engrave.ts';
 
 /**
  * three.js r155 switched to physically-based light units: a directional
@@ -184,6 +184,8 @@ export class Viewer {
   /** partId → the evaluated geometry currently on the mesh (disposable). */
   private debossGeo = new Map<string, THREE.BufferGeometry>();
   private csgModule?: Promise<typeof import('three-bvh-csg')>;
+  /** partId → its cloned normal-map texture (own repeat per part). */
+  private partTextures = new Map<string, THREE.Texture>();
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
@@ -320,6 +322,9 @@ export class Viewer {
         [0, 1, 2].map((a) => (box.min[a] + box.max[a]) / 2) as [number, number, number];
       geo.translate(-centre[0], -centre[1], -centre[2]);
       this.centres.set(part.id, centre);
+      // Merchant meshes ship without UVs; box-projected ones let the
+      // procedural finishes (normal maps) tile at real millimetre scales.
+      applyBoxUvs(geo);
 
       const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color('#CCCCCC'),
@@ -333,6 +338,7 @@ export class Viewer {
         // hole. Solid plastic has no inside to save fill rate on.
         side: THREE.DoubleSide,
       });
+      this.syncPartTexture(part, material);
       const mesh = new THREE.Mesh(geo, material);
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.userData.part = part.id;
@@ -401,6 +407,7 @@ export class Viewer {
           material.flatShading = flat;
           material.needsUpdate = true; // shading model changes recompile the shader
         }
+        this.syncPartTexture(part, material);
       }
     }
     this.fitShadowCatcher();
@@ -836,42 +843,6 @@ export class Viewer {
     return this.csgModule ??= import('three-bvh-csg');
   }
 
-  /**
-   * `source` minus the extruded text volume — a real boolean difference, in
-   * the carrier part's local space. The cutter is the glyph prism grown 0.2mm
-   * past the surface so the subtraction opens cleanly. On a CSG failure
-   * (hopelessly non-manifold merchant mesh) the part stays uncut.
-   */
-  private cutGeometry(
-    source: THREE.BufferGeometry,
-    text: string,
-    font: Font,
-    spec: TextOption,
-    csg: Awaited<ReturnType<Viewer['loadCsg']>>,
-  ): THREE.BufferGeometry {
-    const { Evaluator, Brush, SUBTRACTION } = csg;
-    const cutGeo = this.buildTextGeometry(text, font, { ...spec, depthMm: spec.depthMm + 0.2 });
-    try {
-      const evaluator = new Evaluator();
-      evaluator.attributes = ['position', 'normal'];
-      const posed = new THREE.Mesh(cutGeo);
-      this.placeGlyph(posed, { ...spec, sinkMm: spec.depthMm }); // cutter bottom at full depth
-      const a = new Brush(source);
-      a.updateMatrixWorld();
-      const b = new Brush(cutGeo);
-      b.position.copy(posed.position);
-      b.quaternion.copy(posed.quaternion);
-      b.updateMatrixWorld();
-      const out = evaluator.evaluate(a, b, SUBTRACTION);
-      return out.geometry;
-    } catch (err) {
-      console.warn('[configurator] engrave failed — showing the part uncut', err);
-      return source.clone();
-    } finally {
-      cutGeo.dispose();
-    }
-  }
-
   /** Apply (or clear) the single-slot engraved cuts, one chain per part. */
   private syncDebossParts(jobs: Map<string, Array<{ spec: TextOption; text: string }>>): void {
     for (const partId of [...this.debossSig.keys()]) {
@@ -902,7 +873,8 @@ export class Viewer {
         const base = this.debossBase.get(partId)!;
         let geo: THREE.BufferGeometry = base;
         list.forEach((j, i) => {
-          const next = this.cutGeometry(geo, j.text, fonts[i], j.spec, csg);
+          const next = cutTextGeometry(geo, j.text, fonts[i], j.spec, csg);
+          applyBoxUvs(next); // procedural finishes keep tiling on the cut part
           if (geo !== base) geo.dispose();
           geo = next;
         });
@@ -913,42 +885,6 @@ export class Viewer {
         this.debossGeo.set(partId, target.geometry);
       });
     }
-  }
-
-  /** One extruded glyph run, centred on the sketch origin. */
-  private buildTextGeometry(text: string, font: Font, spec: TextOption): THREE.BufferGeometry {
-    const geo = new TextGeometry(text, {
-      font,
-      size: spec.sizeMm,
-      depth: spec.depthMm,
-      curveSegments: 4,
-      bevelEnabled: false,
-    });
-    geo.computeBoundingBox();
-    const bb = geo.boundingBox!;
-    // Centre the run on the sketch origin; extrusion spans z 0..depth.
-    geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
-    return geo;
-  }
-
-  /**
-   * Pose a glyph mesh onto its sketch plane, in the carrier's local space.
-   * Basis: text faces along the surface normal. Up is the world's up
-   * projected onto the face; on horizontal faces (normal ≈ ±Y) it
-   * degenerates, so -Z steps in — text on a top face reads from the model's
-   * front. Sink lowers the sketch plane into the part; what stays proud of
-   * the surface is depth − sink.
-   */
-  private placeGlyph(mesh: THREE.Mesh, spec: TextOption): void {
-    const n = new THREE.Vector3(...spec.normal).normalize();
-    const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
-    const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
-    const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
-    mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, n));
-    if (spec.rotationDeg) {
-      mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(n, spec.rotationDeg * Math.PI / 180));
-    }
-    mesh.position.set(...spec.origin).addScaledVector(n, -(spec.sinkMm ?? 0));
   }
 
   /**
@@ -981,6 +917,37 @@ export class Viewer {
     return entry.customMat;
   }
 
+  /** Apply (or clear) a part's procedural finish — its normal map. Each
+   * part clones the cached map so it can carry its own repeat scale. */
+  private syncPartTexture(part: Part, material: THREE.MeshStandardMaterial): void {
+    const spec = part.material?.texture;
+    if (!spec) {
+      if (material.normalMap) {
+        material.normalMap = null;
+        material.needsUpdate = true;
+      }
+      this.partTextures.get(part.id)?.dispose();
+      this.partTextures.delete(part.id);
+      return;
+    }
+    let texture = this.partTextures.get(part.id);
+    if (!texture || texture.userData.type !== spec.type) {
+      texture?.dispose();
+      texture = proceduralNormalMap(spec.type).clone();
+      texture.userData.type = spec.type;
+      texture.needsUpdate = true;
+      this.partTextures.set(part.id, texture);
+    }
+    if (material.normalMap !== texture) {
+      material.normalMap = texture;
+      material.needsUpdate = true;
+    }
+    const repeat = BASE_TILE_MM / (spec.scaleMm ?? 8);
+    texture.repeat.set(repeat, repeat);
+    const s = spec.strength ?? 1;
+    material.normalScale.set(s, s);
+  }
+
   private syncSingle(option: TextOption, carrier: THREE.Mesh, text: string): void {
     const existing = this.textMeshes.get(option.id);
     const key = JSON.stringify([
@@ -994,7 +961,7 @@ export class Viewer {
     loadFont(option.font ?? DEFAULT_FONT).then((font) => {
       const current = this.textMeshes.get(option.id);
       if (current?.key !== key) return; // superseded while the font loaded
-      const geo = this.buildTextGeometry(text, font, spec);
+      const geo = buildTextGeometry(text, font, spec);
       let mesh = current.mesh;
       if (!mesh) {
         mesh = new THREE.Mesh(geo, this.textMaterial(spec, current));
@@ -1014,7 +981,7 @@ export class Viewer {
         const parent = this.meshes.get(spec.part);
         if (parent && mesh.parent !== parent) parent.add(mesh);
       }
-      this.placeGlyph(mesh, spec);
+      placeGlyph(mesh, spec);
     });
   }
 
@@ -1091,7 +1058,8 @@ export class Viewer {
           chars.forEach((ch, k) => {
             const target = k === 0 ? carrier : current.pieces[k - 1]?.get(spec.part);
             if (!target) return;
-            const geo = ch === ' ' ? base.clone() : this.cutGeometry(base, ch, font, spec, csg);
+            const geo = ch === ' ' ? base.clone() : cutTextGeometry(base, ch, font, spec, csg);
+            if (ch !== ' ') applyBoxUvs(geo);
             target.geometry = geo;
             current.ownGeometries!.push(geo);
           });
@@ -1105,11 +1073,11 @@ export class Viewer {
             if (ch === ' ') return; // a space is a blank piece
             const parent = k === 0 ? carrier : current.pieces[k - 1]?.get(spec.part);
             if (!parent) return;
-            const glyph = new THREE.Mesh(this.buildTextGeometry(ch, font, spec), material);
+            const glyph = new THREE.Mesh(buildTextGeometry(ch, font, spec), material);
             glyph.castShadow = glyph.receiveShadow = true;
             glyph.raycast = () => {};
             glyph.name = `text-${spec.id}-${k}`;
-            this.placeGlyph(glyph, spec);
+            placeGlyph(glyph, spec);
             parent.add(glyph);
             current.glyphs.push(glyph);
           });
