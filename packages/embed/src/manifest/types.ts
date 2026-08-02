@@ -225,6 +225,15 @@ export interface TextOption {
   maxLength?: number;
   /** Ghost text in the input; also what the Studio previews on the model. */
   placeholder?: string;
+  /**
+   * One piece per letter: the carrier part becomes a TEMPLATE, and every
+   * character of the customer's text spawns its own copy of it — copy k
+   * carrying character k on its face — marched along `axis` (canonical
+   * 0=x 1=y 2=z, default x) at the part's size plus `gapMm` (default 5).
+   * A space spawns a blank piece. Combined with `pricePerChar`, this is a
+   * complete "type your name, get one keychain tile per letter" product.
+   */
+  perChar?: { axis?: 0 | 1 | 2; gapMm?: number };
   /** Flat surcharge when any text is entered. */
   priceDelta?: number;
   /** Additional surcharge per character. */

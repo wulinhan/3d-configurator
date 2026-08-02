@@ -1215,6 +1215,33 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   }, vertsBefore, { timeout: 20000 });
   check('…and the extrusion rebuilds in the new face', true, '');
 
+  // One piece per letter: the template spawns a copy per placeholder char.
+  await page.click('[data-testid="text-spawn-base-text"]');
+  await page.fill('[data-testid="text-placeholder-base-text"]', 'AB');
+  await page.waitForFunction(() => {
+    const v = (window).__studioViewer;
+    return !!v?.scene?.getObjectByName('percopy-base-text-1') && !v.scene.getObjectByName('percopy-base-text-2');
+  }, { timeout: 20000 });
+  m = await manifest();
+  check('one-piece-per-letter records perChar on the slot',
+    !!m.options.find((o) => o.type === 'text')?.perChar, m.options.find((o) => o.type === 'text'));
+  const row = await page.evaluate(() => {
+    const v = (window).__studioViewer;
+    const carrier = v.meshOf('base');
+    const copy = v.scene.getObjectByName('percopy-base-text-1');
+    const box = v.partBox('base');
+    return { dx: copy.position.x - carrier.position.x, width: box.max[0] - box.min[0], visible: copy.visible };
+  });
+  check('“AB” spawns exactly two pieces, pitched a template-width plus the gap apart',
+    near(row.dx, row.width + 5, 0.1) && row.visible, row);
+  await page.waitForFunction(() => !!(window).__studioViewer?.scene?.getObjectByName('text-base-text-1'), { timeout: 20000 });
+  check('each piece carries its own letter', await page.evaluate(() => {
+    const v = (window).__studioViewer;
+    const g0 = v.scene.getObjectByName('text-base-text-0');
+    const g1 = v.scene.getObjectByName('text-base-text-1');
+    return !!g0 && !!g1 && g1.parent?.name === 'percopy-base-text-1';
+  }), '');
+
   // Per-character pricing reaches the real embed in the preview.
   await page.fill('[data-testid="text-perchar-base-text"]', '2');
   await page.press('[data-testid="text-perchar-base-text"]', 'Enter');
@@ -1224,6 +1251,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.click('.preview-overlay .cfg-tab:has-text("Base text")');
   await page.waitForTimeout(200);
   check('the customiser offers the text input', await page.isVisible('.preview-overlay .cfg-text-input'), '');
+  check('…and says each letter becomes its own piece',
+    /own piece/.test(await page.textContent('.preview-overlay .cfg-text') ?? ''), '');
   await page.fill('.preview-overlay .cfg-text-input', 'Hi');
   await page.waitForTimeout(300);
   check('typed text lands in the payload, priced per character',
@@ -1233,11 +1262,15 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.click('[data-testid="preview-close"]');
   await page.waitForTimeout(200);
 
-  // Removing the slot clears the option and the mesh.
+  // Removing the slot clears the option, the extrusion and the spawned row.
   await page.click('[data-testid="text-remove-base-text"]');
   await page.waitForFunction(() => !(window).__studio?.manifest?.options?.some((o) => o.type === 'text'), { timeout: 20000 });
-  await page.waitForFunction(() => !(window).__studioViewer.textMeshOf('base-text'), { timeout: 20000 });
-  check('removing the slot clears the option and the extrusion', true, '');
+  await page.waitForFunction(() => {
+    const v = (window).__studioViewer;
+    return !v.textMeshOf('base-text') && !v.scene.getObjectByName('percopy-base-text-1')
+      && !v.scene.getObjectByName('text-base-text-0');
+  }, { timeout: 20000 });
+  check('removing the slot clears the option, the extrusion and the spawned pieces', true, '');
 }
 
 check('material has the studio environment (dull-gloss plastic)',

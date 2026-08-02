@@ -526,6 +526,30 @@ function TextSlotEditor(props: {
           onCommit={(v) => patch({ pricePerChar: v })}
         />
       </div>
+      <label className="lock">
+        <input
+          type="checkbox" checked={!!slot.perChar} data-testid={`text-spawn-${slot.id}`}
+          onChange={(e) => patch({ perChar: e.target.checked ? {} : null })}
+        />
+        One piece per letter — each typed character spawns its own copy of this part
+      </label>
+      {slot.perChar && (
+        <div className="field-row">
+          <label className="field">
+            <span className="field-label">Row axis</span>
+            <Select
+              ariaLabel="Row axis" testId={`text-spawn-axis-${slot.id}`} compact
+              value={String(slot.perChar.axis ?? 0)}
+              options={UI_AXES.map(({ label, axis }) => ({ value: String(axis), label }))}
+              onChange={(v) => patch({ perChar: { ...slot.perChar, axis: Number(v) as Axis } })}
+            />
+          </label>
+          <NumberField
+            label="Gap" value={slot.perChar.gapMm ?? 5} suffix="mm" testId={`text-spawn-gap-${slot.id}`}
+            onCommit={(v) => patch({ perChar: { ...slot.perChar, gapMm: v } })}
+          />
+        </div>
+      )}
       <div className="match-row">
         <button
           className="mini danger" data-testid={`text-remove-${slot.id}`}

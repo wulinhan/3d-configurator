@@ -1223,16 +1223,21 @@ export function addTextSlot(
   });
 }
 
-/** The fields a merchant tunes after placing a slot. */
+/** The fields a merchant tunes after placing a slot. `perChar: null` turns
+ * one-piece-per-letter back off. */
 export type TextSlotPatch = Partial<Pick<TextOption,
-  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label'>>;
+  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label'>>
+  & { perChar?: { axis?: Axis; gapMm?: number } | null };
 
 export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlotPatch): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
   return edit(manifest, (draft) => {
     const o = draft.options.find((x) => x.id === optionId) as TextOption;
-    Object.assign(o, patch);
+    const { perChar, ...rest } = patch;
+    Object.assign(o, rest);
+    if (perChar === null) delete o.perChar;
+    else if (perChar !== undefined) o.perChar = perChar;
     // An emptied field falls back to its default rather than validating as 0.
     for (const key of ['sinkMm', 'rotationDeg', 'priceDelta', 'pricePerChar'] as const) {
       if (o[key] === 0) delete o[key];

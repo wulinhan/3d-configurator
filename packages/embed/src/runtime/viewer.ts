@@ -10,8 +10,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
+import type { Font } from 'three/examples/jsm/loaders/FontLoader.js';
 
-import type { Manifest } from '../manifest/types.ts';
+import type { Manifest, TextOption } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, type Selections } from './state.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
@@ -150,6 +151,8 @@ export class Viewer {
   private surfaceOverlays = new Map<'hover' | 'first', THREE.Mesh>();
   /** optionId → its extruded text mesh; `mesh` empty while the font loads. */
   private textMeshes = new Map<string, { mesh?: THREE.Mesh; key: string }>();
+  /** optionId → per-letter template copies + their glyphs (see syncPerChar). */
+  private perCharText = new Map<string, { key: string; copies: THREE.Mesh[]; glyphs: THREE.Mesh[] }>();
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
@@ -765,84 +768,176 @@ export class Viewer {
       // text will land (and merchants preview the slot); only typed text is
       // ever priced or put on the order.
       const text = (selections[option.id] ?? '').trim() || (option.placeholder ?? '').trim();
-      const existing = this.textMeshes.get(option.id);
       if (!carrier || !text) {
-        if (existing) this.dropTextMesh(option.id);
+        this.dropTextMesh(option.id);
+        this.dropPerChar(option.id);
         continue;
       }
-      const key = JSON.stringify([
-        text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
-        option.rotationDeg, option.origin, option.normal, option.part,
-      ]);
-      if (existing?.key === key) continue;
-      this.textMeshes.set(option.id, { mesh: existing?.mesh, key });
-
-      const spec = { ...option };
-      loadFont(option.font ?? DEFAULT_FONT).then((font) => {
-        const current = this.textMeshes.get(option.id);
-        if (current?.key !== key) return; // superseded while the font loaded
-        const geo = new TextGeometry(text, {
-          font,
-          size: spec.sizeMm,
-          depth: spec.depthMm,
-          curveSegments: 4,
-          bevelEnabled: false,
-        });
-        geo.computeBoundingBox();
-        const bb = geo.boundingBox!;
-        // Centre the run on the sketch origin; extrusion spans z 0..depth.
-        geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
-
-        let mesh = current.mesh;
-        if (!mesh) {
-          mesh = new THREE.Mesh(geo, this.materials.get(spec.part));
-          mesh.castShadow = mesh.receiveShadow = true;
-          mesh.name = `text-${spec.id}`;
-          // Children of part meshes are seen by the recursive raycasts; text
-          // must never intercept a part pick or a snap-surface probe.
-          mesh.raycast = () => {};
-          const parent = this.meshes.get(spec.part);
-          if (!parent) { geo.dispose(); return; }
-          parent.add(mesh);
-          this.textMeshes.set(option.id, { mesh, key });
-        } else {
-          mesh.geometry.dispose();
-          mesh.geometry = geo;
-          const parent = this.meshes.get(spec.part);
-          if (parent && mesh.parent !== parent) {
-            parent.add(mesh);
-            mesh.material = this.materials.get(spec.part) ?? mesh.material;
-          }
-        }
-
-        // Basis: text faces along the surface normal. Up is the world's up
-        // projected onto the face; on horizontal faces (normal ≈ ±Y) it
-        // degenerates, so -Z steps in — text on a top face reads from the
-        // model's front.
-        const n = new THREE.Vector3(...spec.normal).normalize();
-        const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
-        const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
-        const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
-        mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, n));
-        if (spec.rotationDeg) {
-          mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(n, spec.rotationDeg * Math.PI / 180));
-        }
-        // Sink lowers the sketch plane into the part; what stays proud of the
-        // surface is depth − sink.
-        mesh.position.set(...spec.origin).addScaledVector(n, -(spec.sinkMm ?? 0));
-      });
+      if (option.perChar) {
+        this.dropTextMesh(option.id); // the slot may have just been switched over
+        this.syncPerChar(option, carrier, text);
+      } else {
+        this.dropPerChar(option.id);
+        this.syncSingle(option, carrier, text);
+      }
     }
 
     for (const id of [...this.textMeshes.keys()]) {
       if (!wanted.has(id)) this.dropTextMesh(id);
     }
+    for (const id of [...this.perCharText.keys()]) {
+      if (!wanted.has(id)) this.dropPerChar(id);
+    }
+  }
+
+  /** One extruded glyph run, centred on the sketch origin. */
+  private buildTextGeometry(text: string, font: Font, spec: TextOption): THREE.BufferGeometry {
+    const geo = new TextGeometry(text, {
+      font,
+      size: spec.sizeMm,
+      depth: spec.depthMm,
+      curveSegments: 4,
+      bevelEnabled: false,
+    });
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox!;
+    // Centre the run on the sketch origin; extrusion spans z 0..depth.
+    geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
+    return geo;
+  }
+
+  /**
+   * Pose a glyph mesh onto its sketch plane, in the carrier's local space.
+   * Basis: text faces along the surface normal. Up is the world's up
+   * projected onto the face; on horizontal faces (normal ≈ ±Y) it
+   * degenerates, so -Z steps in — text on a top face reads from the model's
+   * front. Sink lowers the sketch plane into the part; what stays proud of
+   * the surface is depth − sink.
+   */
+  private placeGlyph(mesh: THREE.Mesh, spec: TextOption): void {
+    const n = new THREE.Vector3(...spec.normal).normalize();
+    const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+    const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
+    const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
+    mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, n));
+    if (spec.rotationDeg) {
+      mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(n, spec.rotationDeg * Math.PI / 180));
+    }
+    mesh.position.set(...spec.origin).addScaledVector(n, -(spec.sinkMm ?? 0));
+  }
+
+  private syncSingle(option: TextOption, carrier: THREE.Mesh, text: string): void {
+    const existing = this.textMeshes.get(option.id);
+    const key = JSON.stringify([
+      text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
+      option.rotationDeg, option.origin, option.normal, option.part,
+    ]);
+    if (existing?.key === key) return;
+    this.textMeshes.set(option.id, { mesh: existing?.mesh, key });
+
+    const spec = { ...option };
+    loadFont(option.font ?? DEFAULT_FONT).then((font) => {
+      const current = this.textMeshes.get(option.id);
+      if (current?.key !== key) return; // superseded while the font loaded
+      const geo = this.buildTextGeometry(text, font, spec);
+      let mesh = current.mesh;
+      if (!mesh) {
+        mesh = new THREE.Mesh(geo, this.materials.get(spec.part));
+        mesh.castShadow = mesh.receiveShadow = true;
+        mesh.name = `text-${spec.id}`;
+        // Children of part meshes are seen by the recursive raycasts; text
+        // must never intercept a part pick or a snap-surface probe.
+        mesh.raycast = () => {};
+        const parent = this.meshes.get(spec.part);
+        if (!parent) { geo.dispose(); return; }
+        parent.add(mesh);
+        this.textMeshes.set(option.id, { mesh, key });
+      } else {
+        mesh.geometry.dispose();
+        mesh.geometry = geo;
+        const parent = this.meshes.get(spec.part);
+        if (parent && mesh.parent !== parent) {
+          parent.add(mesh);
+          mesh.material = this.materials.get(spec.part) ?? mesh.material;
+        }
+      }
+      this.placeGlyph(mesh, spec);
+    });
+  }
+
+  /**
+   * One piece per letter: the carrier is a TEMPLATE — every character of
+   * the text gets its own copy of the carrier's mesh (sharing geometry and
+   * material), marched along the canonical axis at the template's laid-out
+   * size plus the gap, each copy carrying that character's glyph. The
+   * original mesh is piece #1. Copies re-track the carrier's transform and
+   * visibility on every apply, so edits and variant switches carry the
+   * whole row; a space spawns a blank piece.
+   */
+  private syncPerChar(option: TextOption, carrier: THREE.Mesh, text: string): void {
+    const axis = option.perChar?.axis ?? 0;
+    const gap = option.perChar?.gapMm ?? 5;
+    const box = this.layout.get(option.part)?.box;
+    const pitch = (box ? box.max[axis] - box.min[axis] : 0) + gap;
+    const chars = [...text];
+
+    const key = JSON.stringify([
+      text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
+      option.rotationDeg, option.origin, option.normal, option.part, axis, gap,
+    ]);
+    let entry = this.perCharText.get(option.id);
+    if (!entry || entry.key !== key) {
+      this.dropPerChar(option.id);
+      entry = { key, copies: [], glyphs: [] };
+      this.perCharText.set(option.id, entry);
+      for (let k = 1; k < chars.length; k++) {
+        const copy = new THREE.Mesh(carrier.geometry, carrier.material);
+        copy.castShadow = copy.receiveShadow = true;
+        copy.raycast = () => {};
+        copy.name = `percopy-${option.id}-${k}`;
+        this.group.add(copy);
+        entry.copies.push(copy);
+      }
+      const current = entry;
+      const spec = { ...option };
+      loadFont(option.font ?? DEFAULT_FONT).then((font) => {
+        if (this.perCharText.get(option.id) !== current) return; // superseded
+        chars.forEach((ch, k) => {
+          if (ch === ' ') return; // a space is a blank piece
+          const glyph = new THREE.Mesh(this.buildTextGeometry(ch, font, spec), this.materials.get(spec.part));
+          glyph.castShadow = glyph.receiveShadow = true;
+          glyph.raycast = () => {};
+          glyph.name = `text-${spec.id}-${k}`;
+          this.placeGlyph(glyph, spec);
+          (k === 0 ? carrier : current.copies[k - 1]).add(glyph);
+          current.glyphs.push(glyph);
+        });
+      });
+    }
+
+    entry.copies.forEach((copy, i) => {
+      copy.position.copy(carrier.position);
+      copy.position.setComponent(axis, copy.position.getComponent(axis) + pitch * (i + 1));
+      copy.quaternion.copy(carrier.quaternion);
+      copy.scale.copy(carrier.scale);
+      copy.visible = carrier.visible;
+    });
   }
 
   private dropTextMesh(optionId: string): void {
     const entry = this.textMeshes.get(optionId);
-    entry?.mesh?.removeFromParent();
-    entry?.mesh?.geometry.dispose();
+    if (!entry) return;
+    entry.mesh?.removeFromParent();
+    entry.mesh?.geometry.dispose();
     this.textMeshes.delete(optionId);
+  }
+
+  private dropPerChar(optionId: string): void {
+    const entry = this.perCharText.get(optionId);
+    if (!entry) return;
+    for (const glyph of entry.glyphs) { glyph.removeFromParent(); glyph.geometry.dispose(); }
+    for (const copy of entry.copies) copy.removeFromParent();
+    this.perCharText.delete(optionId);
   }
 
   /** The rendered text mesh of a text option, or undefined — a test hook. */

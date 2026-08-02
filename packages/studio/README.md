@@ -223,6 +223,17 @@ shares the carrier part's material, so it colours with the part; the payload
 carries the typed string on the order. Deleting or renaming the carrier part
 deletes or renames the slot with it.
 
+**One piece per letter** turns the carrier part into a TEMPLATE: every
+character the customer types spawns its own copy of the part — copy k
+carrying character k — marched along a chosen axis at the template's size
+plus a gap, exactly like the repeat tool's line mode but driven by the
+text at runtime. A space spawns a blank piece, the length limit caps the
+piece count, and per-character pricing makes each piece pay its way. The
+spawning happens in the viewer (the manifest stays static; selections
+drive the copies), so the same manifest renders one tile or twenty
+depending on what the customer types — the "type your name, get one
+clicker per letter" product is this toggle plus a text slot.
+
 ## Anchors: summary first, controls on demand
 
 Each Position axis is a single readable line — `as modelled`, or
@@ -347,11 +358,12 @@ test/structure.test.ts 33 — assemblies merge colours without double-painting,
                       member twice, reordering drags the option order along,
                       deletes repair both structures, repeat patterns pitch
                       line copies at size+gap and ring copies about the origin
-test/text.test.ts      7 — text slots bind valid, tune through validation,
+test/text.test.ts      8 — text slots bind valid, tune through validation,
                       sanitise + clamp customer text, price flat + per
                       character, follow their carrier part (hidden = inert,
-                      deleted = gone, renamed = renamed)
-test/studio.smoke.mjs 149 browser assertions — the full merchant journey
+                      deleted = gone, renamed = renamed), per-letter
+                      spawning toggles on/off through validation
+test/studio.smoke.mjs 153 browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and
@@ -366,8 +378,10 @@ test/studio.smoke.mjs 149 browser assertions — the full merchant journey
                       stamping and un-stamping copies, the compressed
                       download, New project resetting to the empty stage,
                       and 3D text end to end (face pick → slot → typeface
-                      dropdown reshaping the extrusion → customer typing
-                      priced per character in the real embed → removal)
+                      dropdown reshaping the extrusion → one-piece-per-letter
+                      spawning a pitched row of template copies → customer
+                      typing priced per character in the real embed → removal
+                      clearing slot, extrusion and spawned pieces)
 ```
 
 The browser test exists because two real defects passed every unit test: the

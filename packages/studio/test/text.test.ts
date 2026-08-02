@@ -124,6 +124,21 @@ test('a slot on a hidden part is inert — no tab, no charge', () => {
   assert.equal(priceDeltas(gated, s).find((d) => d.optionId === 'badge-text')!.amount, 9);
 });
 
+test('perChar: toggles on with defaults, tunes axis and gap, toggles off clean', () => {
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  m = setTextSlot(m, 'body-text', { perChar: {} });
+  valid(m);
+  assert.deepEqual(slotOf(m).perChar, {});
+  m = setTextSlot(m, 'body-text', { perChar: { axis: 2, gapMm: 4 } });
+  valid(m);
+  assert.deepEqual(slotOf(m).perChar, { axis: 2, gapMm: 4 });
+  assert.throws(() => setTextSlot(m, 'body-text', { perChar: { axis: 9 as never } }), /axis/);
+  assert.throws(() => setTextSlot(m, 'body-text', { perChar: { gapMm: -1 } }), /gapMm/);
+  const off = setTextSlot(m, 'body-text', { perChar: null });
+  valid(off);
+  assert.equal(slotOf(off).perChar, undefined);
+});
+
 test('validator: the slot geometry rules hold', () => {
   const m = addTextSlot(fresh(), 'body', PLACE);
   const broken = (patch: object) => {

@@ -218,9 +218,10 @@ export async function mount(opts: MountOptions) {
     const max = option.maxLength ?? 20;
     const wrap = el('div', 'cfg-text');
 
+    if (option.perChar) wrap.append(el('p', 'cfg-note', 'Each letter becomes its own piece.'));
     const priceBits: string[] = [];
     if (option.priceDelta) priceBits.push(`+${money(option.priceDelta)}`);
-    if (option.pricePerChar) priceBits.push(`+${money(option.pricePerChar)} per character`);
+    if (option.pricePerChar) priceBits.push(`+${money(option.pricePerChar)} per ${option.perChar ? 'piece' : 'character'}`);
     if (priceBits.length) wrap.append(el('p', 'cfg-note', priceBits.join(', ')));
 
     const input = document.createElement('input');

@@ -259,6 +259,15 @@ export function validateManifest(input: unknown): ValidationResult {
       if (o.placeholder && o.placeholder.length > (o.maxLength ?? 20)) {
         warn(`${at}.placeholder`, 'longer than maxLength — customers cannot type it back');
       }
+      if (o.perChar) {
+        if (o.perChar.axis != null && ![0, 1, 2].includes(o.perChar.axis)) {
+          err(`${at}.perChar.axis`, 'must be 0 (x), 1 (y) or 2 (z)');
+        }
+        const gap = o.perChar.gapMm;
+        if (gap != null && (typeof gap !== 'number' || !Number.isFinite(gap) || gap < 0 || gap > 500)) {
+          err(`${at}.perChar.gapMm`, 'must be a number between 0 and 500 millimetres');
+        }
+      }
     } else if (o) {
       warn(`${at}.type`, `unknown option type "${(o as { type?: string }).type}" — it will be skipped`);
     }
