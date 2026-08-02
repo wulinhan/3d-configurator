@@ -157,16 +157,19 @@ export function ViewerPane(props: {
       fit();
       viewer.start();
       const b = viewer.layoutBounds();
-      if (Number.isFinite(b.min[0])) {
-        const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
-        spanRef.current = span;
-        grid.scale.setScalar(span * 1.6);
-        axes.scale.setScalar(span * 0.35);
-        // Grid slightly below ground, axes slightly above: exactly coplanar
-        // lines fight in the depth buffer and shimmer as the camera moves.
-        grid.position.y = -span * 0.004;
-        axes.position.y = span * 0.004;
-      }
+      // An empty project has no geometry to measure — size the grid for a
+      // hand-scale work area (~120mm) so the viewport opens looking like a
+      // desk, not a void. The first added file replaces the whole pane.
+      const span = Number.isFinite(b.min[0])
+        ? Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2])
+        : 120;
+      spanRef.current = span;
+      grid.scale.setScalar(span * 1.6);
+      axes.scale.setScalar(span * 0.35);
+      // Grid slightly below ground, axes slightly above: exactly coplanar
+      // lines fight in the depth buffer and shimmer as the camera moves.
+      grid.position.y = -span * 0.004;
+      axes.position.y = span * 0.004;
       (window as any).__studioViewerReady = true;
     });
 

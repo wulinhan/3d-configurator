@@ -30,11 +30,86 @@ export const UI_AXES: Array<{ label: string; axis: Axis }> = [
   { label: 'Z', axis: 1 }, // internal y — height
 ];
 
+export type RepeatOpts = { count: number; mode: 'line' | 'circle'; axis?: Axis; gapMm?: number };
+
+// The pattern tool: stamp copies of a part / assembly / variant set along an
+// axis or around the origin. Merchant-only — the copies land as ordinary
+// parts; customers never see this control.
+function RepeatSection(props: {
+  entryId: string;
+  /** "part" | "assembly" | "set" — only used in the hint copy. */
+  what: string;
+  onRepeat: (entryId: string, opts: RepeatOpts) => void;
+}) {
+  const [mode, setMode] = useState<'line' | 'circle'>('line');
+  const [count, setCount] = useState(3);
+  const [axis, setAxis] = useState<Axis>(0);
+  const [gap, setGap] = useState(5);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <section>
+      <h4>Repeat</h4>
+      <p className="hint">
+        {mode === 'line'
+          ? `Stamps copies of this ${props.what} in a row, spaced edge-to-edge by the gap.`
+          : `Stamps copies of this ${props.what} in a ring around the origin at its current distance — move it off-centre first.`}
+      </p>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-label">Pattern</span>
+          <Select
+            ariaLabel="Repeat pattern" testId="repeat-mode" compact
+            value={mode}
+            options={[{ value: 'line', label: 'Along an axis' }, { value: 'circle', label: 'Around a circle' }]}
+            onChange={(v) => setMode(v as 'line' | 'circle')}
+          />
+        </label>
+        <NumberField
+          label="Total" value={count} step={1} testId="repeat-count"
+          onCommit={(v) => setCount(Math.round(v))}
+        />
+      </div>
+      {mode === 'line' && (
+        <div className="field-row">
+          <label className="field">
+            <span className="field-label">Axis</span>
+            <Select
+              ariaLabel="Repeat axis" testId="repeat-axis" compact
+              value={String(axis)}
+              options={UI_AXES.map(({ label, axis: a }) => ({ value: String(a), label }))}
+              onChange={(v) => setAxis(Number(v) as Axis)}
+            />
+          </label>
+          <NumberField
+            label="Gap" value={gap} suffix="mm" testId="repeat-gap"
+            onCommit={setGap}
+          />
+        </div>
+      )}
+      <div className="match-row">
+        <button
+          className="mini" data-testid="repeat-apply"
+          title="Each copy is a real part — recolour or delete any of them afterwards"
+          onClick={() => {
+            try {
+              props.onRepeat(props.entryId, mode === 'line' ? { count, mode, axis, gapMm: gap } : { count, mode });
+              setError(null);
+            } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+          }}
+        >Apply repeat</button>
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
 export function GroupEditor(props: {
   project: Project;
   groupId: string;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
   onDuplicate: (entryId: string) => void;
+  onRepeat: (entryId: string, opts: RepeatOpts) => void;
   onClose: () => void;
 }) {
   const { manifest } = props.project;
@@ -95,6 +170,7 @@ export function GroupEditor(props: {
           <button className="ghost" onClick={() => { props.onClose(); act(() => ungroup(manifest, group.id)); }}>Split up</button>
         </div>
       </section>
+      <RepeatSection entryId={group.id} what="assembly" onRepeat={props.onRepeat} />
       {error && <p className="error" role="alert">{error}</p>}
     </div>
   );
@@ -105,6 +181,7 @@ export function VariantEditor(props: {
   optionId: string;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
   onDuplicate: (entryId: string) => void;
+  onRepeat: (entryId: string, opts: RepeatOpts) => void;
   onClose: () => void;
 }) {
   const { manifest } = props.project;
@@ -163,6 +240,7 @@ export function VariantEditor(props: {
           <button className="ghost" onClick={() => { props.onClose(); act(() => dissolveVariantChoice(manifest, option.id)); }}>Dissolve</button>
         </div>
       </section>
+      <RepeatSection entryId={option.id} what="set" onRepeat={props.onRepeat} />
       {error && <p className="error" role="alert">{error}</p>}
     </div>
   );
@@ -172,6 +250,7 @@ export function PartEditor(props: {
   project: Project;
   partId: string;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
+  onRepeat: (entryId: string, opts: RepeatOpts) => void;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -202,6 +281,9 @@ export function PartEditor(props: {
   const addonPrice = addon?.type === 'choice'
     ? addon.choices.find((c) => c.id === 'yes')?.priceDelta ?? 0
     : 0;
+  // Repeating a bundled part would tear it out of its set — repeat the whole
+  // assembly / variant set from ITS editor instead.
+  const inGroup = manifest.groups?.some((g) => g.parts.includes(part.id)) ?? false;
 
   const act = (fn: () => Manifest) => {
     try { props.onChange(fn()); setError(null); }
@@ -351,6 +433,7 @@ export function PartEditor(props: {
           )}
         </section>
       )}
+      {!inGroup && !variantOf && <RepeatSection entryId={part.id} what="part" onRepeat={props.onRepeat} />}
       {error && <p className="error" role="alert">{error}</p>}
     </div>
   );

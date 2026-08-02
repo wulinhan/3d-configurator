@@ -893,18 +893,24 @@ export function dissolveVariantChoice(manifest: Manifest, optionId: string): Man
 }
 
 /**
- * Duplicate an explorer entry — a loose part, an assembly, or a variant set —
- * parts, internal anchors, colour options and structure included. The copy
- * lands beside the original (offset by its own width), anchors between
- * members are remapped to the cloned members, and anchors to outside parts
- * stay pointing outside, so the copy is immediately repositionable as one
- * thing. NOTE: the caller must rebuild the viewer's model after this — new
- * parts need meshes.
+ * The clone engine behind Duplicate and Repeat: stamp N copies of an
+ * explorer entry — parts, internal anchors, colour options, and (for
+ * assemblies / variant sets) the structure itself — each landed at a given
+ * offset, optionally spun about the vertical axis. Anchors between members
+ * remap to the cloned members; anchors to outside parts stay outside.
+ * NOTE: the caller must rebuild the viewer's model after this — new parts
+ * need meshes.
  */
-export function duplicateEntry(manifest: Manifest, entryId: string, raw: Map<string, PartBounds>): Manifest {
+function stampEntryCopies(
+  manifest: Manifest,
+  entryId: string,
+  copies: Array<{ deltas: [number, number, number]; spinDeg?: number }>,
+  labelOf: (base: string, k: number) => string,
+): Manifest {
   const entry = entriesOf(manifest).find((e) => e.id === entryId);
   if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
   const sourceIds = entry.parts;
+  const copyIds: string[][] = [];
 
   const next = edit(manifest, (draft) => {
     const usedPartIds = new Set(draft.parts.map((p) => p.id));
@@ -916,86 +922,174 @@ export function duplicateEntry(manifest: Manifest, entryId: string, raw: Map<str
       return id;
     };
 
-    const idMap = new Map<string, string>();
-    for (const oldId of sourceIds) idMap.set(oldId, dedupe(`${oldId}-copy`, usedPartIds));
+    let insertAt = Math.max(...sourceIds.map((id) => draft.parts.findIndex((p) => p.id === id)));
+    for (let k = 0; k < copies.length; k++) {
+      const idMap = new Map<string, string>();
+      for (const oldId of sourceIds) idMap.set(oldId, dedupe(`${oldId}-copy`, usedPartIds));
 
-    // Clone the parts. Internal anchors follow the clones; visibility rules
-    // are stripped (the variant case re-adds its own below — an add-on's
-    // yes/no option shouldn't silently gate two parts).
-    const lastIndex = Math.max(...sourceIds.map((id) => draft.parts.findIndex((p) => p.id === id)));
-    const clones: Part[] = sourceIds.map((oldId) => {
-      const source = draft.parts.find((p) => p.id === oldId)!;
-      const clone = structuredClone(source);
-      clone.id = idMap.get(oldId)!;
-      clone.label = `${source.label} copy`;
-      delete clone.visibleWhen;
-      for (const name of ['x', 'y', 'z'] as const) {
-        const a = clone.placement?.[name];
-        if (a?.to && a.to !== 'origin') {
-          const [ref, edge] = a.to.split(':');
-          if (idMap.has(ref)) a.to = `${idMap.get(ref)}:${edge}`;
+      // Clone the parts. Internal anchors follow the clones; visibility rules
+      // are stripped (the variant case re-adds its own below — an add-on\'s
+      // yes/no option shouldn\'t silently gate two parts).
+      const clones: Part[] = sourceIds.map((oldId) => {
+        const source = draft.parts.find((p) => p.id === oldId)!;
+        const clone = structuredClone(source);
+        clone.id = idMap.get(oldId)!;
+        clone.label = labelOf(source.label, k);
+        delete clone.visibleWhen;
+        for (const name of ['x', 'y', 'z'] as const) {
+          const a = clone.placement?.[name];
+          if (a?.to && a.to !== 'origin') {
+            const [ref, edge] = a.to.split(':');
+            if (idMap.has(ref)) a.to = `${idMap.get(ref)}:${edge}`;
+          }
+        }
+        const spin = copies[k].spinDeg;
+        if (spin) {
+          const rotation = clone.placement?.rotation ?? [0, 0, 0];
+          clone.placement = { ...clone.placement, rotation: [rotation[0], rotation[1] + spin, rotation[2]] };
+        }
+        return clone;
+      });
+      draft.parts.splice(insertAt + 1, 0, ...clones);
+      insertAt += clones.length;
+
+      // Clone colour options that paint only entry members.
+      const sourceSet = new Set(sourceIds);
+      const colourClones: ColourOption[] = [];
+      const colourIdMap = new Map<string, string>();
+      for (const option of draft.options) {
+        if (!isColour(option) || !option.parts.length || !option.parts.every((p) => sourceSet.has(p))) continue;
+        const clone = structuredClone(option);
+        clone.id = dedupe(`${option.id}-copy`, usedOptionIds);
+        colourIdMap.set(option.id, clone.id);
+        clone.label = labelOf(option.label, k);
+        clone.parts = option.parts.map((p) => idMap.get(p)!);
+        colourClones.push(clone);
+      }
+      for (const clone of colourClones) {
+        if (clone.linkedTo && colourIdMap.has(clone.linkedTo)) clone.linkedTo = colourIdMap.get(clone.linkedTo);
+        if (clone.default.startsWith('@') && colourIdMap.has(clone.default.slice(1))) {
+          clone.default = `@${colourIdMap.get(clone.default.slice(1))}`;
         }
       }
-      return clone;
-    });
-    draft.parts.splice(lastIndex + 1, 0, ...clones);
+      draft.options.push(...colourClones);
 
-    // Clone colour options that paint only entry members.
-    const sourceSet = new Set(sourceIds);
-    const colourClones: ColourOption[] = [];
-    const colourIdMap = new Map<string, string>();
-    for (const option of draft.options) {
-      if (!isColour(option) || !option.parts.length || !option.parts.every((p) => sourceSet.has(p))) continue;
-      const clone = structuredClone(option);
-      clone.id = dedupe(`${option.id}-copy`, usedOptionIds);
-      colourIdMap.set(option.id, clone.id);
-      clone.label = `${option.label} copy`;
-      clone.parts = option.parts.map((p) => idMap.get(p)!);
-      colourClones.push(clone);
-    }
-    for (const clone of colourClones) {
-      if (clone.linkedTo && colourIdMap.has(clone.linkedTo)) clone.linkedTo = colourIdMap.get(clone.linkedTo);
-      if (clone.default.startsWith('@') && colourIdMap.has(clone.default.slice(1))) {
-        clone.default = `@${colourIdMap.get(clone.default.slice(1))}`;
+      if (entry.kind === 'group') {
+        const source = draft.groups!.find((g) => g.id === entry.id)!;
+        const usedGroupIds = new Set(draft.groups!.map((g) => g.id));
+        draft.groups!.push({
+          id: dedupe(`${entry.id}-copy`, usedGroupIds),
+          label: labelOf(source.label, k),
+          parts: sourceIds.map((p) => idMap.get(p)!),
+        });
+      } else if (entry.kind === 'variant') {
+        const source = draft.options.find((o) => o.id === entry.id) as ChoiceOption;
+        const newOptionId = dedupe(`${entry.id}-copy`, usedOptionIds);
+        draft.options.push({
+          ...structuredClone(source),
+          id: newOptionId,
+          label: labelOf(source.label, k),
+          choices: source.choices.map((c) => ({ ...structuredClone(c), id: idMap.get(c.id)! })),
+          default: idMap.get(source.default) ?? idMap.get(source.choices[0].id)!,
+        });
+        for (const oldId of sourceIds) {
+          const clone = draft.parts.find((p) => p.id === idMap.get(oldId))!;
+          clone.visibleWhen = { option: newOptionId, equals: [idMap.get(oldId)!] };
+        }
       }
-    }
-    draft.options.push(...colourClones);
 
-    if (entry.kind === 'group') {
-      const source = draft.groups!.find((g) => g.id === entry.id)!;
-      const usedGroupIds = new Set(draft.groups!.map((g) => g.id));
-      draft.groups!.push({
-        id: dedupe(`${entry.id}-copy`, usedGroupIds),
-        label: `${source.label} copy`,
-        parts: sourceIds.map((p) => idMap.get(p)!),
-      });
-    } else if (entry.kind === 'variant') {
-      const source = draft.options.find((o) => o.id === entry.id) as ChoiceOption;
-      const newOptionId = dedupe(`${entry.id}-copy`, usedOptionIds);
-      draft.options.push({
-        ...structuredClone(source),
-        id: newOptionId,
-        label: `${source.label} copy`,
-        choices: source.choices.map((c) => ({ ...structuredClone(c), id: idMap.get(c.id)! })),
-        default: idMap.get(source.default) ?? idMap.get(source.choices[0].id)!,
-      });
-      for (const oldId of sourceIds) {
-        const clone = draft.parts.find((p) => p.id === idMap.get(oldId))!;
-        clone.visibleWhen = { option: newOptionId, equals: [idMap.get(oldId)!] };
-      }
+      copyIds.push(sourceIds.map((id) => idMap.get(id)!));
     }
   });
 
-  // Sit the copy beside the original, offset by the entry's own width.
+  let out = next;
+  for (let k = 0; k < copies.length; k++) {
+    if (copies[k].deltas.some((d) => d !== 0)) out = nudgePartsTogether(out, copyIds[k], copies[k].deltas);
+  }
+  return out;
+}
+
+/**
+ * Duplicate an explorer entry — a loose part, an assembly, or a variant set.
+ * The copy lands beside the original, offset by its own width, and is
+ * immediately repositionable as one thing.
+ */
+export function duplicateEntry(manifest: Manifest, entryId: string, raw: Map<string, PartBounds>): Manifest {
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
   const layout = resolveLayout(manifest, raw);
   let width = 0;
-  for (const id of sourceIds) {
+  for (const id of entry.parts) {
     const box = layout.get(id)?.box;
     if (box) width = Math.max(width, box.max[0] - box.min[0]);
   }
-  const newIds = next.parts.filter((p) => !manifest.parts.some((q) => q.id === p.id)).map((p) => p.id);
-  return nudgePartsTogether(next, newIds, [Math.max(width * 1.1, width + 5), 0, 0]);
+  return stampEntryCopies(manifest, entryId, [{ deltas: [Math.max(width * 1.1, width + 5), 0, 0] }],
+    (base) => `${base} copy`);
 }
+
+/**
+ * Repeat an entry along a line or around a circle — the pattern tool.
+ * Line: copies march along one axis, pitched at the entry\'s own size plus a
+ * clear gap. Circle: copies orbit the world origin at the entry\'s current
+ * radius (single-part entries also spin to keep facing the same way round).
+ * `count` is the TOTAL number of instances, original included. Studio-only —
+ * the stamped copies are ordinary parts by the time customers see them.
+ */
+export function repeatEntry(
+  manifest: Manifest,
+  entryId: string,
+  raw: Map<string, PartBounds>,
+  opts: { count: number; mode: 'line' | 'circle'; axis?: Axis; gapMm?: number },
+): Manifest {
+  if (!Number.isInteger(opts.count) || opts.count < 2 || opts.count > 24) {
+    throw new EditError('repeat count must be a whole number between 2 and 24');
+  }
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  const layout = resolveLayout(manifest, raw);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const id of entry.parts) {
+    const box = layout.get(id)?.box;
+    if (!box) continue;
+    for (const a of [0, 1, 2]) {
+      min[a] = Math.min(min[a], box.min[a]);
+      max[a] = Math.max(max[a], box.max[a]);
+    }
+  }
+  if (!Number.isFinite(min[0])) throw new EditError('no geometry to repeat');
+
+  const copies: Array<{ deltas: [number, number, number]; spinDeg?: number }> = [];
+  if (opts.mode === 'line') {
+    const axis = opts.axis ?? 0;
+    const pitch = (max[axis] - min[axis]) + (opts.gapMm ?? 5);
+    for (let i = 1; i < opts.count; i++) {
+      const deltas: [number, number, number] = [0, 0, 0];
+      deltas[axis] = pitch * i;
+      copies.push({ deltas });
+    }
+  } else {
+    const cx = (min[0] + max[0]) / 2;
+    const cz = (min[2] + max[2]) / 2;
+    const radius = Math.hypot(cx, cz);
+    if (radius < 1) {
+      throw new EditError('move the entry away from the origin first — the circle runs around the origin');
+    }
+    const start = Math.atan2(cz, cx);
+    for (let i = 1; i < opts.count; i++) {
+      const theta = start + (2 * Math.PI * i) / opts.count;
+      copies.push({
+        deltas: [radius * Math.cos(theta) - cx, 0, radius * Math.sin(theta) - cz],
+        // A lone part also spins so every instance faces the same way round
+        // the circle; multi-part sets keep their orientation (rigid rotation
+        // of a whole set is not a per-part operation).
+        spinDeg: entry.parts.length === 1 ? -(360 * i) / opts.count : undefined,
+      });
+    }
+  }
+  return stampEntryCopies(manifest, entryId, copies, (base, k) => `${base} ${k + 2}`);
+}
+
 
 /** Merge scene-rendering knobs — what the Finish tab's Scene sliders edit. */
 export function setScene(

@@ -20,7 +20,8 @@ import {
   type ExplorerEntry,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
-import { ConfirmDialog } from './controls.tsx';
+import { AXIS_PRESETS } from '../lib/import-model.ts';
+import { ConfirmDialog, Select } from './controls.tsx';
 
 const EYE = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>;
 const EYE_OFF = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
@@ -66,6 +67,9 @@ export function PartsPanel(props: {
   onEditGroup: (id: string | null) => void;
   onEditVariant: (id: string | null) => void;
   onAddModel: (file: File) => Promise<void>;
+  /** Which way imported files are up — applies to the NEXT file added. */
+  axes: string;
+  onAxesChange: (axes: string) => void;
   onSetHidden: (ids: string[], hidden: boolean) => void;
   onSolo: (id: string | null) => void;
   onHideAll: (hide: boolean) => void;
@@ -87,7 +91,6 @@ export function PartsPanel(props: {
   const addInputRef = useRef<HTMLInputElement>(null);
 
   const entries = entriesOf(manifest);
-  if (!manifest.parts.length) return <p className="empty">No parts in this model.</p>;
 
   const act = (fn: () => Manifest) => {
     try { props.onChange(fn()); setError(null); }
@@ -412,6 +415,21 @@ export function PartsPanel(props: {
           onChange={(e) => { const f = e.target.files?.[0]; if (f) addFromFile(f); e.target.value = ''; }}
         />
       </div>
+      <div className="axes-row">
+        <span className="hint">Import orientation</span>
+        <Select
+          value={props.axes} ariaLabel="Import orientation" testId="axes-preset" compact
+          options={AXIS_PRESETS.map((p) => ({ value: p.axes, label: p.label }))}
+          onChange={props.onAxesChange}
+        />
+      </div>
+      {!manifest.parts.length && (
+        <p className="empty" data-testid="empty-parts">
+          No parts yet — click <strong>＋ Add parts</strong>, or drop a 3MF / STL / GLB
+          file anywhere on this panel. Parts arrive as separate pieces from 3MF and
+          GLB; STL imports as a single part.
+        </p>
+      )}
       <div
         className={`part-rows${drag ? ' is-drag-live' : ''}`} role="listbox" aria-label="Parts"
         ref={listRef} data-drop-root=""
@@ -429,7 +447,7 @@ export function PartsPanel(props: {
           );
         })}
       </div>
-      <div className="structure-new">
+      {manifest.parts.length > 0 && <div className="structure-new">
         <button
           className="mini" data-testid="new-variant"
           title="Customers pick exactly one of the chosen parts"
@@ -443,7 +461,7 @@ export function PartsPanel(props: {
         <span className="hint">
           Drag the ⣿ handle to reorder, or drop a part onto a set to add it.
         </span>
-      </div>
+      </div>}
 
       {(pending !== null || checked.size >= 1) && (
         <div className="structure-bar" data-testid="structure-bar">

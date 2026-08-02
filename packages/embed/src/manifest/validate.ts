@@ -67,8 +67,11 @@ export function validateManifest(input: unknown): ValidationResult {
   const paletteIds = dupes(m.palettes, 'palettes');
   const optionIds = dupes(m.options, 'options');
 
-  if (!m.models?.length) err('models', 'at least one model source is required');
-  if (!m.parts?.length) err('parts', 'at least one part is required');
+  // Empty is a WARNING, not an error: the Studio starts from an empty
+  // project and every edit re-validates — an empty manifest must be legal to
+  // hold, just not sensible to ship.
+  if (!m.models?.length) warn('models', 'no model sources yet — add parts before publishing');
+  if (!m.parts?.length) warn('parts', 'no parts yet — add parts before publishing');
   if (!m.pricing?.currency) err('pricing.currency', 'required — the host cart needs to know what the deltas are denominated in');
 
   (m.models ?? []).forEach((s, i) => {

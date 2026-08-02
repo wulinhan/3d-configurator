@@ -146,10 +146,18 @@ export function mergeModel(
   });
 
   const manifest = structuredClone(current.manifest);
+  // An empty project starts with no model source at all (nothing to fetch);
+  // the first added file brings the source into being.
+  if (!manifest.models.length) manifest.models.push({ id: 'model', url: 'model.glb' });
   const usedIds = new Set(manifest.parts.map((p) => p.id));
   const usedOptions = new Set(manifest.options.map((o) => o.id));
   const paletteId = manifest.palettes?.[0]?.id ?? 'default';
-  const firstSwatch = manifest.palettes?.[0]?.swatches[0]?.id ?? 'white';
+  // Alternate defaults across the whole project, like initManifest — since an
+  // empty project's FIRST file also arrives through here, defaulting all
+  // parts to one swatch would open a multi-part model as a single white blob.
+  const swatches = manifest.palettes?.[0]?.swatches ?? [];
+  const defaultFor = (nthPart: number) =>
+    swatches[nthPart % 2 ? 0 : Math.min(1, swatches.length - 1)]?.id ?? 'white';
   const modelId = manifest.models[0]?.id ?? 'model';
 
   for (const part of renamed) {
@@ -166,7 +174,7 @@ export function mergeModel(
       label: titleCase(part.name),
       parts: [id],
       palette: paletteId,
-      default: firstSwatch,
+      default: defaultFor(manifest.parts.length),
       custom: { allowed: false },
     });
   }

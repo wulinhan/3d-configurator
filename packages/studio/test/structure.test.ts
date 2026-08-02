@@ -16,7 +16,7 @@ import {
   addPartToGroup, removePartFromGroup, addPartToChoice, removePartFromChoice,
   entriesOf, moveEntry, moveEntryTo, withAnchor, makePartOptional, EditError,
   partToOrigin, groupToOrigin, nudge, renamePart, setPartMaterial,
-  duplicateEntry, nudgeVariant, variantToOrigin, renameVariantSet, setScene,
+  duplicateEntry, repeatEntry, nudgeVariant, variantToOrigin, renameVariantSet, setScene,
 } from '../src/lib/manifest-edit.ts';
 import { mergeModel } from '../src/lib/manifest-init.ts';
 
@@ -265,6 +265,50 @@ test('duplicateEntry copies a variant set with its own exclusive choice option',
   const visible = visibleParts(m, defaultSelections(m));
   assert.ok(visible.has('lid') && visible.has('lid-copy'), 'both sets show their default');
   assert.ok(!visible.has('flat-lid') && !visible.has('flat-lid-copy'), 'both stay exclusive');
+});
+
+test('repeatEntry lines copies up with a clear gap; count includes the original', () => {
+  let m = repeatEntry(fresh(), 'badge', RAW, { count: 3, mode: 'line', axis: 0, gapMm: 6 });
+  valid(m);
+  const raw2 = boundsByPartId(m, RAW);
+  const layout = resolveLayout(m, raw2);
+  const ids = ['badge', 'badge-copy', 'badge-copy-2'];
+  assert.ok(ids.every((id) => m.parts.some((p) => p.id === id)), m.parts.map((p) => p.id).join(','));
+  const c = ids.map((id) => (layout.get(id)!.box.min[0] + layout.get(id)!.box.max[0]) / 2);
+  near(c[1] - c[0], 10); // badge is 4 wide → pitch = 4 + 6
+  near(c[2] - c[1], 10);
+  assert.equal(m.parts.find((p) => p.id === 'badge-copy')!.label, 'Badge 2');
+  assert.throws(() => repeatEntry(m, 'badge', RAW, { count: 1, mode: 'line' }), EditError);
+  assert.throws(() => repeatEntry(m, 'badge', RAW, { count: 40, mode: 'line' }), EditError);
+});
+
+test('repeatEntry circles copies around the origin, spinning lone parts to face round', () => {
+  let m = nudge(fresh(), 'badge', [30, 0, 0]);
+  m = repeatEntry(m, 'badge', RAW, { count: 4, mode: 'circle' });
+  valid(m);
+  const raw2 = boundsByPartId(m, RAW);
+  const layout = resolveLayout(m, raw2);
+  for (const id of ['badge', 'badge-copy', 'badge-copy-2', 'badge-copy-3']) {
+    const box = layout.get(id)!.box;
+    near(Math.hypot((box.min[0] + box.max[0]) / 2, (box.min[2] + box.max[2]) / 2), 30, 1e-3);
+  }
+  assert.equal(m.parts.find((p) => p.id === 'badge-copy')!.placement!.rotation![1], -90);
+  // Sitting at the origin, there is no circle to run around.
+  assert.throws(() => repeatEntry(fresh(), 'badge', RAW, { count: 4, mode: 'circle' }), /origin/);
+});
+
+test('repeatEntry repeats a whole assembly rigidly', () => {
+  let m = withAnchor(fresh(), 'badge', 1, { align: 'min', to: 'body', edge: 'max', offset: 1 });
+  m = makeGroup(m, ['body', 'badge'], 'Shell');
+  m = repeatEntry(m, 'shell', RAW, { count: 2, mode: 'line', axis: 2, gapMm: 4 });
+  valid(m);
+  assert.equal(m.groups!.length, 2);
+  const raw2 = boundsByPartId(m, RAW);
+  const layout = resolveLayout(m, raw2);
+  near(layout.get('badge-copy')!.box.min[1] - layout.get('body-copy')!.box.max[1],
+    layout.get('badge')!.box.min[1] - layout.get('body')!.box.max[1]);
+  near((layout.get('body-copy')!.box.min[2] + layout.get('body-copy')!.box.max[2]) / 2
+    - (layout.get('body')!.box.min[2] + layout.get('body')!.box.max[2]) / 2, 14); // body 10 deep + 4 gap
 });
 
 test('duplicateEntry also copies a loose part with its colour option', () => {

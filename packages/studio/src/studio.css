@@ -21,23 +21,13 @@ body {
 button { font: inherit; cursor: pointer; }
 input, select { font: inherit; }
 
-/* ── upload ── */
-.upload-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-.dropzone {
-  width: min(560px, 92vw);
-  border: 2px dashed var(--line); border-radius: 16px;
-  padding: 48px 36px; text-align: center; cursor: pointer;
-  transition: border-color .15s, background .15s;
-}
-.dropzone:hover { border-color: #c5c2bb; background: var(--surface); }
-.dropzone h1 { margin: 0 0 8px; font-size: 24px; letter-spacing: -.02em; }
-.dropzone p { margin: 4px 0; color: var(--ink2); font-size: 14px; }
-.dropzone .hint { font-size: 12px; }
+/* Import-orientation row in the parts explorer — applies to the next file. */
 .axes-row {
-  display: inline-flex; align-items: center; gap: 8px;
-  margin-top: 18px; font-size: 13px; color: var(--ink2); cursor: default;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px 8px; font-size: 12px; color: var(--ink2);
+  border-bottom: 1px solid var(--line);
 }
-.axes-row select { padding: 6px 8px; border: 1.5px solid var(--line); border-radius: 8px; background: #fff; }
+.axes-row .ui-select { margin-left: auto; }
 .error { color: var(--danger); font-size: 13px; }
 
 /* ── shell ── */

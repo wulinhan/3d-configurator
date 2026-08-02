@@ -561,13 +561,20 @@ export class Viewer {
     const triCount = (index ? index.count : pos.count) / 3;
 
     // Adjacency over shared edges, built once per geometry and cached.
+    // Edges are keyed by QUANTISED VERTEX POSITIONS, not indices: flat-shaded
+    // exports split vertices along hard edges, so index-based adjacency sees
+    // every triangle as an island and the "surface" collapses to one triangle
+    // — the standard mesh-tool approach is positional welding plus
+    // normal-angle region growing, which is what this implements.
     let adjacency = this.surfaceAdjacency.get(geo);
     if (!adjacency) {
+      const posKey = (i: number) =>
+        `${Math.round(pos.getX(i) * 1000)}_${Math.round(pos.getY(i) * 1000)}_${Math.round(pos.getZ(i) * 1000)}`;
       const byEdge = new Map<string, number[]>();
       for (let f = 0; f < triCount; f++) {
         for (let c = 0; c < 3; c++) {
-          const a = tri(f, c), b = tri(f, (c + 1) % 3);
-          const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+          const a = posKey(tri(f, c)), b = posKey(tri(f, (c + 1) % 3));
+          const key = a < b ? `${a}|${b}` : `${b}|${a}`;
           let list = byEdge.get(key);
           if (!list) byEdge.set(key, list = []);
           list.push(f);

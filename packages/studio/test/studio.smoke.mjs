@@ -98,16 +98,28 @@ const check = (name, pass, got = '') => {
 };
 const near = (a, b, tol = 1e-3) => Math.abs(a - b) < tol;
 
-// ── 1. upload ───────────────────────────────────────────────────────────────
+// ── 1. viewport-first start + first import ──────────────────────────────────
+// The Studio opens straight into the 3D viewport — no dropzone gate. The
+// first file comes in through the same ＋ Add parts input as every later one.
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
-await page.setInputFiles('[data-testid="file-input"]', {
+await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+check('Studio opens into the 3D viewport with no model', await page.isVisible('.stage canvas'), '');
+check('empty explorer points at ＋ Add parts', await page.isVisible('[data-testid="empty-parts"]'), '');
+check('orientation preset lives in the explorer', await page.isVisible('[data-testid="axes-preset"]'), '');
+let m = await manifest();
+check('empty project is a valid manifest with no parts or models',
+  m?.parts?.length === 0 && m?.models?.length === 0, { parts: m?.parts?.length, models: m?.models?.length });
+await shoot('0-empty.png');
+
+await page.setInputFiles('[data-testid="add-model-input"]', {
   name: 'desk-organiser.3mf', mimeType: 'application/octet-stream', buffer: Buffer.from(FIXTURE_3MF),
 });
+await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 2, { timeout: 20000 });
 await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
 await page.waitForTimeout(800);
 await shoot('1-loaded.png');
 
-let m = await manifest();
+m = await manifest();
 check('two parts imported from the 3MF', m?.parts?.length === 2, m?.parts?.length);
 check('product named from the filename', m?.name === 'desk organiser', m?.name);
 check('parts keep their 3MF names', m?.parts?.[0]?.id === 'base' && m?.parts?.[1]?.id === 'cap',
@@ -223,8 +235,12 @@ check('…and one undo puts it back', near(m.parts[1].placement?.y?.offset ?? 0,
 const afterResize = await measureCoverage();
 // The camera is focused on the selected cap, so the model fills a good share
 // of the frame — but "inside the model" is ~1.0 coverage with no background.
+// The failure modes this guards are extremes: a camera that never refit shows
+// the model microscopic (<0.001), a camera inside the model shows ~1.0 with
+// no background. The doubled part is WHITE, and a tone-mapped white top face
+// sits within the background band, so healthy coverage here is only ~0.03.
 check('camera reframed after the resize (model in view, not engulfing it)',
-  afterResize > 0.03 && afterResize < 0.92, afterResize.toFixed(4));
+  afterResize > 0.02 && afterResize < 0.92, afterResize.toFixed(4));
 await shoot('2-anchored.png');
 
 // ── 6b. what the viewer draws is where the layout engine says parts are ────
@@ -1103,10 +1119,64 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     hookBox);
 }
 
+// ── 14. repeat a part along an axis (merchant-only pattern tool) ───────────
+{
+  await page.click('.part-name:has-text("Base")');
+  await page.waitForTimeout(200);
+  check('part editor offers the repeat tool', await page.isVisible('[data-testid="repeat-apply"]'), '');
+  await page.fill('[data-testid="repeat-count"]', '3');
+  await page.press('[data-testid="repeat-count"]', 'Enter');
+  await page.fill('[data-testid="repeat-gap"]', '6');
+  await page.press('[data-testid="repeat-gap"]', 'Enter');
+  await page.click('[data-testid="repeat-apply"]');
+  await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 4, { timeout: 20000 });
+  await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  m = await manifest();
+  check('repeat ×3 stamps two more copies with counted labels',
+    m.parts.length === 4 && m.parts.filter((p) => /base/.test(p.id)).length === 3
+    && m.parts.some((p) => / 2$/.test(p.label)) && m.parts.some((p) => / 3$/.test(p.label)),
+    m.parts.map((p) => p.label));
+  const repeatVerdict = validateManifest(m);
+  check('manifest still valid after the repeat', repeatVerdict.ok, repeatVerdict.errors);
+  // Copies march along X, pitched at the base's width plus the 6mm gap.
+  const centres = await page.evaluate(() => {
+    const v = window.__studioViewer;
+    return ['base', 'base-copy', 'base-copy-2'].map((id) => {
+      const b = v.partBox(id);
+      return b ? (b.min[0] + b.max[0]) / 2 : null;
+    });
+  });
+  const width = await page.evaluate(() => {
+    const b = window.__studioViewer.partBox('base');
+    return b.max[0] - b.min[0];
+  });
+  check('copies sit gap apart edge-to-edge along X',
+    centres.every((c) => c !== null)
+    && near(centres[1] - centres[0], width + 6, 0.1) && near(centres[2] - centres[1], width + 6, 0.1),
+    { centres, width });
+
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  m = await manifest();
+  check('one undo removes the whole repeat', m.parts.length === 2, m.parts.length);
+}
+
 check('material has the studio environment (dull-gloss plastic)',
   await page.evaluate(() => !!window.__studioViewer.scene.environment), '');
 check('parts render double-sided — stray winding cannot look transparent',
   await page.evaluate(() => window.__studioViewer.meshOf('base')?.material.side === 2 /* THREE.DoubleSide */), '');
+
+// ── 15. new project resets to the empty viewport ───────────────────────────
+{
+  await page.click('[data-testid="new-project"]');
+  await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 0, { timeout: 20000 });
+  await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  m = await manifest();
+  check('new project returns to an empty viewport, ready to import',
+    m.parts.length === 0 && m.models.length === 0 && m.name === 'New Product'
+    && await page.isVisible('[data-testid="empty-parts"]'),
+    { parts: m.parts.length, name: m.name });
+}
 
 check('no console errors across the whole session', errors.length === 0, errors.join(' | '));
 

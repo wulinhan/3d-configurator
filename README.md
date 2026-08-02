@@ -11,7 +11,7 @@ set one up without us writing anything.
 ```
 packages/embed/   the runtime — manifest schema, layout, pricing, renderer —
                   and the model pipeline tools. See its README for the details.
-packages/studio/  the merchant-facing authoring app — upload a 3MF/STL/GLB,
+packages/studio/  the merchant-facing authoring app — import 3MF/STL/GLB files,
                   position parts in real millimetres, set palettes, custom-colour
                   rules and price deltas, publish a manifest the embed renders.
 apps/demo/        a mock merchant storefront hosting the embed: the reference

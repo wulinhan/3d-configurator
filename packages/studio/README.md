@@ -1,7 +1,8 @@
 # @allin/studio
 
-The merchant-facing authoring app. A merchant drops in a model, positions and
-sizes its parts in real millimetres, decides which surfaces take which
+The merchant-facing authoring app. The Studio opens straight into an empty
+3D viewport — a merchant imports one or more model files, positions and
+sizes the parts in real millimetres, decides which surfaces take which
 colours and what costs extra, and publishes the two files their product page
 needs: `manifest.json` and `model.glb`. No code on their side.
 
@@ -173,11 +174,26 @@ beside the original and moves as one thing. Variant sets get the same
 editor an assembly has (rename, move together, bring to origin), opened by
 clicking the set's header.
 
-**＋ Add parts** (or dropping a 3MF/STL/GLB anywhere on the explorer)
-merges a second file into the project: names dedupe, the incoming parts get
-colour options on the existing palette, one GLB is rebuilt from the union,
-and — because every import is normalised — the new parts land centred on
-the flat axes, sitting on the ground.
+**＋ Add parts** (or dropping a 3MF/STL/GLB anywhere on the explorer) is
+also how a project STARTS — there is no upload gate; the Studio opens into
+the empty viewport and the first file in names the product (from the
+filename), frames the camera and selects the first part. Every later file
+merges into the project: names dedupe, the incoming parts get colour
+options on the existing palette, one GLB is rebuilt from the union, and —
+because every import is normalised — the new parts land centred on the
+flat axes, sitting on the ground. The orientation preset (which way the
+file is up) sits in the explorer and applies to the next file added.
+**New project** in the topbar returns to the empty viewport.
+
+**Repeat** (in the part / assembly / variant-set editors, hidden from
+customers) stamps copies along an axis — pitched at the entry's own size
+plus a gap, edge-to-edge — or in a ring around the world origin at the
+entry's current distance, spinning each copy to face the centre when a
+lone part orbits. Copies are ordinary parts with their own colour options
+(labels count up: "Base 2", "Base 3"), so any of them can be recoloured,
+moved or deleted afterwards; the whole stamp is one undo step. This is the
+foundation for products that spawn per-unit geometry (one clicker tile per
+typed character).
 
 Publish lives in a floating modal off the topbar CTA (validation report,
 manifest and compressed-GLB downloads); the left panel keeps only Parts,
@@ -209,7 +225,11 @@ anchor cycles are refused by the edit layer.
 The Snap tool works on SURFACES, not invisible triangles: hovering grows
 the hit triangle across shared edges while they stay coplanar and glows the
 whole flat face; the first pick keeps its glow (accent colour) while the
-second is chosen. The commit mates the two faces flush along the clicked
+second is chosen. Adjacency is computed over POSITIONS, not vertex indices
+(quantised to a thousandth of a mm) — real meshes split their vertices at
+every hard edge for normals, so index-based adjacency sees each triangle
+as an island; welding by position finds the flat face the way CAD region
+selection does. The commit mates the two faces flush along the clicked
 axis AND centres the moving part onto the target in the face plane — a snap
 that only shared a plane left the part hanging in empty air beside its
 target, which read as "it just moved up". All three axes land as live
@@ -298,23 +318,27 @@ test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
 test/parts.test.ts    15 — rename ripples (colour, add-on, variant entries),
                       delete repair, match-pose, absolute positioning, snap
-test/structure.test.ts 30 — assemblies merge colours without double-painting,
+test/structure.test.ts 33 — assemblies merge colours without double-painting,
                       variant sets are exclusive by construction (and absorb
                       add-on parts), drag-style add/remove membership repairs
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
-                      deletes repair both structures
-test/studio.smoke.mjs 129 browser assertions — the full merchant journey
-                      against the production build, including a real pointer
-                      drag on the combined gizmo (and that one Ctrl+Z rewinds
-                      the whole drag), view-cube navigation, the saved view
-                      surviving publish, a mesh-vs-layout divergence check,
-                      drag-handle reordering and drag-out-of-assembly, the
-                      customer preview mounting the real embed and switching
-                      a variant set, the resizable/collapsible explorer,
-                      surface-glow snapping (hover, sticky first pick, flush
-                      + centred landing), the Studio's own dialogs and
-                      listboxes, and the compressed download
+                      deletes repair both structures, repeat patterns pitch
+                      line copies at size+gap and ring copies about the origin
+test/studio.smoke.mjs 139 browser assertions — the full merchant journey
+                      against the production build, from the empty viewport
+                      through the first import (name adoption, camera framing),
+                      including a real pointer drag on the combined gizmo (and
+                      that one Ctrl+Z rewinds the whole drag), view-cube
+                      navigation, the saved view surviving publish, a
+                      mesh-vs-layout divergence check, drag-handle reordering
+                      and drag-out-of-assembly, the customer preview mounting
+                      the real embed and switching a variant set, the
+                      resizable/collapsible explorer, surface-glow snapping
+                      (hover, sticky first pick, flush + centred landing), the
+                      Studio's own dialogs and listboxes, the repeat tool
+                      stamping and un-stamping copies, the compressed
+                      download, and New project resetting to the empty stage
 ```
 
 The browser test exists because two real defects passed every unit test: the

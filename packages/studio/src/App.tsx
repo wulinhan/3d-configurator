@@ -18,8 +18,7 @@ import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
 import { writeGlb } from './lib/write-glb.ts';
 import { initManifest, boundsOf, boundsByPartId, mergeModel, type PartBounds } from './lib/manifest-init.ts';
-import { duplicateEntry } from './lib/manifest-edit.ts';
-import { ImportError } from './lib/types.ts';
+import { duplicateEntry, repeatEntry, frameCamera, withProductName, type Axis } from './lib/manifest-edit.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
 import { PartEditor, GroupEditor, VariantEditor } from './ui/PartEditor.tsx';
@@ -54,6 +53,20 @@ const isVariantOption = (m: Manifest, optionId: string): boolean => {
   return o?.type === 'choice' && (o as ChoiceOption).role === 'variant';
 };
 
+// The Studio opens straight into the 3D viewport with nothing in it — the
+// first imported file brings the geometry, the product name, and the camera.
+// The placeholder bounds only size the empty grid; no model is ever fetched
+// (models stays [] until a file arrives).
+const EMPTY_BOUNDS: PartBounds = { min: [-60, 0, -60], max: [60, 80, 60] };
+
+function emptyProject(): Project {
+  const model: OrientedModel = { parts: [], bounds: EMPTY_BOUNDS, format: 'none', unitToMm: 1 };
+  const manifest = initManifest([], { name: 'New Product', bounds: EMPTY_BOUNDS });
+  manifest.models = [];
+  const modelUrl = URL.createObjectURL(new Blob([writeGlb([])], { type: 'model/gltf-binary' }));
+  return { model, manifest, raw: new Map(), modelUrl };
+}
+
 const UNDO_ICON = (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M4.5 9.5A 8.5 8.5 0 1 1 3.5 15" />
@@ -68,8 +81,7 @@ const REDO_ICON = (
 );
 
 export function App() {
-  const [project, setProject] = useState<Project | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [project, setProject] = useState<Project>(emptyProject);
   const [tab, setTab] = useState<Tab>('Parts');
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
   const [editingGroup, setEditingGroup] = useState<string | null>(null);
@@ -84,45 +96,30 @@ export function App() {
   // Which choice each pick-one option shows while authoring — the merchant's
   // temporary pick, never written to the manifest.
   const [variantPreview, setVariantPreview] = useState<Record<string, string>>({});
-  const fileRef = useRef<HTMLInputElement>(null);
 
   // History as refs: pushes happen inside event handlers, and every push is
   // paired with a setProject that re-renders, so render-time reads are never
   // stale. Keeping them out of state avoids re-render loops on cap trimming.
-  const projectRef = useRef<Project | null>(null);
+  const projectRef = useRef<Project>(project);
   projectRef.current = project;
   const pastRef = useRef<Manifest[]>([]);
   const futureRef = useRef<Manifest[]>([]);
 
-  const load = useCallback(async (file: File) => {
-    setError(null);
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const model = importModel(bytes, { axes });
-      const manifest = initManifest(model.parts, {
-        name: file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ') || 'New Product',
-        bounds: model.bounds as PartBounds,
-      });
-      const raw = boundsByPartId(manifest, boundsOf(model.parts));
-      const modelUrl = URL.createObjectURL(new Blob([writeGlb(model.parts)], { type: 'model/gltf-binary' }));
-      setProject((old) => {
-        if (old) URL.revokeObjectURL(old.modelUrl);
-        return { model, manifest, raw, modelUrl };
-      });
-      pastRef.current = [];
-      futureRef.current = [];
-      setSelectedPart(manifest.parts[0]?.id ?? null);
-      setEditingGroup(null);
-      setEditingVariant(null);
-      setHiddenParts(new Set());
-      setSolo(null);
-      setVariantPreview({});
-      setPreviewing(false);
-      setTab('Parts');
-    } catch (err) {
-      setError(err instanceof ImportError ? err.message : `import failed: ${err}`);
-    }
-  }, [axes]);
+  const newProject = useCallback(() => {
+    URL.revokeObjectURL(projectRef.current.modelUrl);
+    setProject(emptyProject());
+    pastRef.current = [];
+    futureRef.current = [];
+    setSelectedPart(null);
+    setEditingGroup(null);
+    setEditingVariant(null);
+    setHiddenParts(new Set());
+    setSolo(null);
+    setVariantPreview({});
+    setPreviewing(false);
+    setPublishing(false);
+    setTab('Parts');
+  }, []);
 
   const setManifest = useCallback((manifest: Manifest, opts?: SetManifestOptions) => {
     const old = projectRef.current;
@@ -243,28 +240,55 @@ export function App() {
     setProject({ ...old, manifest, raw, modelUrl });
   }, []);
 
-  // Add a second model file to the project: parts renamed clear of clashes,
-  // manifest extended, one GLB rebuilt from the union. The incoming file is
-  // normalised like any import — centred on the flat axes, sat on the ground.
+  // Add a model file to the project: parts renamed clear of clashes, manifest
+  // extended, one GLB rebuilt from the union. The incoming file is normalised
+  // like any import — centred on the flat axes, sat on the ground. The FIRST
+  // file into an empty project also brings the product name (from the
+  // filename) and frames the camera, since the empty project's placeholder
+  // camera was sized for nothing in particular.
   const addModelParts = useCallback(async (file: File) => {
     const old = projectRef.current;
-    if (!old) return;
+    const firstAdd = old.manifest.parts.length === 0;
     const bytes = new Uint8Array(await file.arrayBuffer());
     const incoming = importModel(bytes, { axes });
     const merged = mergeModel({ parts: old.model.parts, manifest: old.manifest }, incoming.parts);
+    const bounds = firstAdd
+      ? { min: [...incoming.bounds.min], max: [...incoming.bounds.max] }
+      : {
+        min: old.model.bounds.min.map((v, i) => Math.min(v, incoming.bounds.min[i])),
+        max: old.model.bounds.max.map((v, i) => Math.max(v, incoming.bounds.max[i])),
+      };
+    const model = { ...old.model, parts: merged.parts, bounds, format: incoming.format, unitToMm: incoming.unitToMm };
+    const raw = boundsByPartId(merged.manifest, boundsOf(merged.parts));
+    let manifest = merged.manifest;
+    if (firstAdd) {
+      const name = file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+      if (name) manifest = withProductName(manifest, name);
+      manifest = frameCamera(manifest, raw);
+    }
     pastRef.current.push(old.manifest);
     if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
     futureRef.current = [];
     URL.revokeObjectURL(old.modelUrl);
-    const bounds = {
-      min: old.model.bounds.min.map((v, i) => Math.min(v, incoming.bounds.min[i])) as [number, number, number],
-      max: old.model.bounds.max.map((v, i) => Math.max(v, incoming.bounds.max[i])) as [number, number, number],
-    };
-    const model = { ...old.model, parts: merged.parts, bounds };
     const modelUrl = URL.createObjectURL(new Blob([writeGlb(merged.parts)], { type: 'model/gltf-binary' }));
-    const raw = boundsByPartId(merged.manifest, boundsOf(merged.parts));
-    setProject({ ...old, model, manifest: merged.manifest, raw, modelUrl });
+    setProject({ ...old, model, manifest, raw, modelUrl });
+    if (firstAdd) setSelectedPart(manifest.parts[0]?.id ?? null);
   }, [axes]);
+
+  // Repeat = duplicate × N with placement maths; same viewer-remount dance.
+  // Throws EditError (bad count, part at the origin for a circle) BEFORE any
+  // state changes, so callers surface the message and nothing is half-done.
+  const repeatEntryInApp = useCallback((entryId: string, opts: { count: number; mode: 'line' | 'circle'; axis?: Axis; gapMm?: number }) => {
+    const old = projectRef.current;
+    const manifest = repeatEntry(old.manifest, entryId, old.raw, opts);
+    pastRef.current.push(old.manifest);
+    if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
+    futureRef.current = [];
+    URL.revokeObjectURL(old.modelUrl);
+    const modelUrl = URL.createObjectURL(new Blob([writeGlb(old.model.parts)], { type: 'model/gltf-binary' }));
+    const raw = boundsByPartId(manifest, boundsOf(old.model.parts));
+    setProject({ ...old, manifest, raw, modelUrl });
+  }, []);
 
   // Divider: drag resizes the explorer, a click (no meaningful movement)
   // collapses/expands it.
@@ -322,44 +346,15 @@ export function App() {
   // slides out (keeping its last content while it goes) when nothing is.
   const floatContent = project && tab === 'Parts'
     ? (editingVariant
-      ? <VariantEditor key={editingVariant} project={project} optionId={editingVariant} onChange={setManifest} onDuplicate={duplicateEntryInApp} onClose={() => setEditingVariant(null)} />
+      ? <VariantEditor key={editingVariant} project={project} optionId={editingVariant} onChange={setManifest} onDuplicate={duplicateEntryInApp} onRepeat={repeatEntryInApp} onClose={() => setEditingVariant(null)} />
       : editingGroup
-        ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onDuplicate={duplicateEntryInApp} onClose={() => setEditingGroup(null)} />
+        ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onDuplicate={duplicateEntryInApp} onRepeat={repeatEntryInApp} onClose={() => setEditingGroup(null)} />
         : selectedPart
-          ? <PartEditor key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} />
+          ? <PartEditor key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} onRepeat={repeatEntryInApp} />
           : null)
     : null;
   const lastFloatRef = useRef<ReactNode>(null);
   if (floatContent) lastFloatRef.current = floatContent;
-
-  if (!project) {
-    return (
-      <div className="upload-screen">
-        <div
-          className="dropzone"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) load(f); }}
-          onClick={() => fileRef.current?.click()}
-        >
-          <h1>Configurator Studio</h1>
-          <p>Drop a model to start — <strong>3MF</strong>, <strong>STL</strong> or <strong>GLB</strong>.</p>
-          <p className="hint">Parts arrive as separate pieces from 3MF and GLB; STL imports as a single part.</p>
-          <label className="axes-row" onClick={(e) => e.stopPropagation()}>
-            Model orientation
-            <select value={axes} onChange={(e) => setAxes(e.target.value)}>
-              {AXIS_PRESETS.map((p) => <option key={p.id} value={p.axes}>{p.label}</option>)}
-            </select>
-          </label>
-          {error && <p className="error" role="alert">{error}</p>}
-          <input
-            ref={fileRef} type="file" hidden data-testid="file-input"
-            accept=".3mf,.stl,.glb,model/gltf-binary"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) load(f); e.target.value = ''; }}
-          />
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="studio">
@@ -383,8 +378,8 @@ export function App() {
           className="ghost icon-btn" data-testid="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"
           disabled={futureRef.current.length === 0} onClick={redo}
         >{REDO_ICON}</button>
-        <button className="ghost" onClick={() => { URL.revokeObjectURL(project.modelUrl); setProject(null); }}>
-          New model
+        <button className="ghost" data-testid="new-project" onClick={newProject}>
+          New project
         </button>
         <button className="ghost preview-btn" data-testid="preview-open" onClick={() => setPreviewing(true)}>
           Preview
@@ -414,6 +409,8 @@ export function App() {
               onEditGroup={(id) => { setEditingGroup(id); if (id) setEditingVariant(null); }}
               onEditVariant={(id) => { setEditingVariant(id); if (id) { setEditingGroup(null); setSelectedPart(null); } }}
               onAddModel={addModelParts}
+              axes={axes}
+              onAxesChange={setAxes}
               onSetHidden={setHidden}
               onSolo={soloPart}
               onHideAll={(hide) => { setSolo(null); setHiddenParts(hide ? new Set(project.manifest.parts.map((p) => p.id)) : new Set()); }}
