@@ -14,6 +14,7 @@ import type {
   Manifest, Option, ColourOption, ChoiceOption, UploadOption, TextOption,
   Part, AxisPlacement,
 } from './types.ts';
+import { TEXT_FONTS } from './types.ts';
 
 export interface Issue {
   path: string;
@@ -229,7 +230,35 @@ export function validateManifest(input: unknown): ValidationResult {
       if (o.maxBytes != null && !(o.maxBytes > 0)) err(`${at}.maxBytes`, 'must be greater than zero');
     } else if (o && isText(o)) {
       if (!partIds.has(o.part)) err(`${at}.part`, `unknown part "${o.part}"`);
-      if (o.maxLength != null && !(o.maxLength > 0)) err(`${at}.maxLength`, 'must be greater than zero');
+      const vec3 = (key: 'origin' | 'normal') => {
+        const v = o[key];
+        if (!Array.isArray(v) || v.length !== 3 || v.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+          err(`${at}.${key}`, 'must be [x, y, z] millimetres in the part\'s local space');
+          return false;
+        }
+        return true;
+      };
+      vec3('origin');
+      if (vec3('normal') && Math.hypot(...o.normal) < 1e-6) {
+        err(`${at}.normal`, 'must not be a zero vector — it is the extrusion direction');
+      }
+      if (o.font != null && !TEXT_FONTS.includes(o.font)) {
+        err(`${at}.font`, `unknown font "${o.font}" — bundled fonts are ${TEXT_FONTS.join(', ')}`);
+      }
+      if (!(o.sizeMm > 0) || o.sizeMm > 200) err(`${at}.sizeMm`, 'must be between 0 and 200 millimetres');
+      if (!(o.depthMm >= 0.2) || o.depthMm > 50) err(`${at}.depthMm`, 'must be between 0.2 and 50 millimetres');
+      const sink = o.sinkMm ?? 0;
+      if (!(sink >= 0) || !Number.isFinite(sink)) err(`${at}.sinkMm`, 'must be zero or more');
+      else if (Number.isFinite(o.depthMm) && sink >= o.depthMm) {
+        err(`${at}.sinkMm`, 'must be less than depthMm — sinking the whole extrusion leaves nothing visible');
+      }
+      if (o.rotationDeg != null && !Number.isFinite(o.rotationDeg)) err(`${at}.rotationDeg`, 'must be a number');
+      if (o.maxLength != null && (!Number.isInteger(o.maxLength) || o.maxLength < 1 || o.maxLength > 60)) {
+        err(`${at}.maxLength`, 'must be a whole number between 1 and 60');
+      }
+      if (o.placeholder && o.placeholder.length > (o.maxLength ?? 20)) {
+        warn(`${at}.placeholder`, 'longer than maxLength — customers cannot type it back');
+      }
     } else if (o) {
       warn(`${at}.type`, `unknown option type "${(o as { type?: string }).type}" — it will be skipped`);
     }

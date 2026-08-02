@@ -9,10 +9,12 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
 
 import type { Manifest } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, type Selections } from './state.ts';
+import { loadFont, DEFAULT_FONT } from './fonts.ts';
 
 /**
  * three.js r155 switched to physically-based light units: a directional
@@ -111,6 +113,10 @@ function bakeGeometry(mesh: THREE.Mesh, scaleToMm: number): THREE.BufferGeometry
 /** A flat continuous surface on a part — what the snap tool picks and paints. */
 export interface SurfaceHit {
   partId: string;
+  /** Area-weighted centroid of the region, in the part's local mesh space. */
+  localCentre: [number, number, number];
+  /** Outward face normal in the same local space — a text slot's extrusion direction. */
+  localNormal: [number, number, number];
   /** World-space normal of the clicked face, flipped toward the viewer. */
   normal: [number, number, number];
   /** Triangle indices of the coplanar region, for highlighting. */
@@ -142,6 +148,8 @@ export class Viewer {
   private hiddenParts = new Set<string>();
   private shadowCatcher?: THREE.Mesh;
   private surfaceOverlays = new Map<'hover' | 'first', THREE.Mesh>();
+  /** optionId → its extruded text mesh; `mesh` empty while the font loads. */
+  private textMeshes = new Map<string, { mesh?: THREE.Mesh; key: string }>();
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
@@ -625,7 +633,33 @@ export class Viewer {
         if (coplanar) queue.push(next);
       }
     }
-    return { partId: hit.partId, normal: hit.normal, faces };
+
+    // Area-weighted centroid of the region in the part's LOCAL space — where
+    // a text slot binds, so it must be in the same space the text mesh will
+    // be parented into. The local normal is the world pick normal carried
+    // back through the mesh's rotation, keeping its outward orientation.
+    const centroid = new THREE.Vector3();
+    let area = 0;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c3 = new THREE.Vector3();
+    for (const f of faces) {
+      a.fromBufferAttribute(pos, tri(f, 0));
+      b.fromBufferAttribute(pos, tri(f, 1));
+      c3.fromBufferAttribute(pos, tri(f, 2));
+      const triArea = e1.copy(b).sub(a).cross(e2.copy(c3).sub(a)).length() / 2;
+      centroid.addScaledVector(a.add(b).add(c3).divideScalar(3), triArea);
+      area += triArea;
+    }
+    if (area > 0) centroid.divideScalar(area);
+    const worldQuat = hit.mesh.getWorldQuaternion(new THREE.Quaternion());
+    const outwardLocal = new THREE.Vector3(...hit.normal).applyQuaternion(worldQuat.invert()).normalize();
+
+    return {
+      partId: hit.partId,
+      normal: hit.normal,
+      faces,
+      localCentre: [centroid.x, centroid.y, centroid.z],
+      localNormal: [outwardLocal.x, outwardLocal.y, outwardLocal.z],
+    };
   }
 
   /**
@@ -708,7 +742,112 @@ export class Viewer {
       const mesh = this.meshes.get(partId);
       if (mesh) mesh.visible = visible.has(partId) && !this.hiddenParts.has(partId);
     }
+    this.syncText(selections);
     this.highlight(this.highlighted);
+  }
+
+  /**
+   * Build/refresh the extruded text of every text option (see TextOption).
+   *
+   * The text mesh is a CHILD of its carrier part's mesh, in the part's local
+   * space — every later move, rotation, anchor or hide of the part carries
+   * the text for free. It shares the part's material, so colour changes
+   * apply to both. Fonts load lazily; a stale async build is dropped when a
+   * newer key has been recorded in the meantime.
+   */
+  private syncText(selections: Selections): void {
+    const wanted = new Set<string>();
+    for (const option of this.manifest.options) {
+      if (option.type !== 'text') continue;
+      wanted.add(option.id);
+      const carrier = this.meshes.get(option.part);
+      // Nothing typed yet renders the placeholder — customers see where their
+      // text will land (and merchants preview the slot); only typed text is
+      // ever priced or put on the order.
+      const text = (selections[option.id] ?? '').trim() || (option.placeholder ?? '').trim();
+      const existing = this.textMeshes.get(option.id);
+      if (!carrier || !text) {
+        if (existing) this.dropTextMesh(option.id);
+        continue;
+      }
+      const key = JSON.stringify([
+        text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
+        option.rotationDeg, option.origin, option.normal, option.part,
+      ]);
+      if (existing?.key === key) continue;
+      this.textMeshes.set(option.id, { mesh: existing?.mesh, key });
+
+      const spec = { ...option };
+      loadFont(option.font ?? DEFAULT_FONT).then((font) => {
+        const current = this.textMeshes.get(option.id);
+        if (current?.key !== key) return; // superseded while the font loaded
+        const geo = new TextGeometry(text, {
+          font,
+          size: spec.sizeMm,
+          depth: spec.depthMm,
+          curveSegments: 4,
+          bevelEnabled: false,
+        });
+        geo.computeBoundingBox();
+        const bb = geo.boundingBox!;
+        // Centre the run on the sketch origin; extrusion spans z 0..depth.
+        geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
+
+        let mesh = current.mesh;
+        if (!mesh) {
+          mesh = new THREE.Mesh(geo, this.materials.get(spec.part));
+          mesh.castShadow = mesh.receiveShadow = true;
+          mesh.name = `text-${spec.id}`;
+          // Children of part meshes are seen by the recursive raycasts; text
+          // must never intercept a part pick or a snap-surface probe.
+          mesh.raycast = () => {};
+          const parent = this.meshes.get(spec.part);
+          if (!parent) { geo.dispose(); return; }
+          parent.add(mesh);
+          this.textMeshes.set(option.id, { mesh, key });
+        } else {
+          mesh.geometry.dispose();
+          mesh.geometry = geo;
+          const parent = this.meshes.get(spec.part);
+          if (parent && mesh.parent !== parent) {
+            parent.add(mesh);
+            mesh.material = this.materials.get(spec.part) ?? mesh.material;
+          }
+        }
+
+        // Basis: text faces along the surface normal. Up is the world's up
+        // projected onto the face; on horizontal faces (normal ≈ ±Y) it
+        // degenerates, so -Z steps in — text on a top face reads from the
+        // model's front.
+        const n = new THREE.Vector3(...spec.normal).normalize();
+        const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+        const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
+        const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
+        mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, n));
+        if (spec.rotationDeg) {
+          mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(n, spec.rotationDeg * Math.PI / 180));
+        }
+        // Sink lowers the sketch plane into the part; what stays proud of the
+        // surface is depth − sink.
+        mesh.position.set(...spec.origin).addScaledVector(n, -(spec.sinkMm ?? 0));
+      });
+    }
+
+    for (const id of [...this.textMeshes.keys()]) {
+      if (!wanted.has(id)) this.dropTextMesh(id);
+    }
+  }
+
+  private dropTextMesh(optionId: string): void {
+    const entry = this.textMeshes.get(optionId);
+    entry?.mesh?.removeFromParent();
+    entry?.mesh?.geometry.dispose();
+    this.textMeshes.delete(optionId);
+  }
+
+  /** The rendered text mesh of a text option, or undefined — a test hook. */
+  textMeshOf(optionId: string): THREE.Mesh | undefined {
+    return this.textMeshes.get(optionId)?.mesh;
   }
 
   /**

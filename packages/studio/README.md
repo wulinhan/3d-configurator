@@ -201,6 +201,28 @@ Palette and Finish. See `docs/integrations.md` for wiring the published
 files into Shopify, WooCommerce or a plain HTML page, and for why the
 payload's totals must be recomputed server-side before charging.
 
+## 3D text on a surface
+
+A part's editor carries a **3D text** section: *Place text on a face* arms
+the same surface-glow picker Snap uses, and the clicked flat face's centroid
+and normal become the slot's **sketch plane** — stored in the part's local
+space, so the text rides every later move, rotation and anchor of the part.
+Customers type in the configurator; their words are extruded (three.js
+TextGeometry) straight out of the surface.
+
+Per slot the merchant sets: the **typeface** (a dropdown of five bundled
+faces — Helvetiker regular/bold, Droid Sans bold, Gentilis regular/bold,
+trimmed to printable ASCII at 25–63 KB each and lazy-loaded only when a
+manifest uses text), glyph **size**, extrusion **depth**, a **sink** that
+lowers the sketch plane into the part Fusion-style (visible relief =
+depth − sink, so one slot does proud embossing or engraved-look inlays with
+no CSG), a spin about the normal, a length limit, example text (rendered as
+the model's preview and the input's ghost), and pricing — flat and/or
+per-character, recomputed server-side like every other delta. The text mesh
+shares the carrier part's material, so it colours with the part; the payload
+carries the typed string on the order. Deleting or renaming the carrier part
+deletes or renames the slot with it.
+
 ## Anchors: summary first, controls on demand
 
 Each Position axis is a single readable line — `as modelled`, or
@@ -325,7 +347,11 @@ test/structure.test.ts 33 — assemblies merge colours without double-painting,
                       member twice, reordering drags the option order along,
                       deletes repair both structures, repeat patterns pitch
                       line copies at size+gap and ring copies about the origin
-test/studio.smoke.mjs 139 browser assertions — the full merchant journey
+test/text.test.ts      7 — text slots bind valid, tune through validation,
+                      sanitise + clamp customer text, price flat + per
+                      character, follow their carrier part (hidden = inert,
+                      deleted = gone, renamed = renamed)
+test/studio.smoke.mjs 149 browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and
@@ -338,7 +364,10 @@ test/studio.smoke.mjs 139 browser assertions — the full merchant journey
                       (hover, sticky first pick, flush + centred landing), the
                       Studio's own dialogs and listboxes, the repeat tool
                       stamping and un-stamping copies, the compressed
-                      download, and New project resetting to the empty stage
+                      download, New project resetting to the empty stage,
+                      and 3D text end to end (face pick → slot → typeface
+                      dropdown reshaping the extrusion → customer typing
+                      priced per character in the real embed → removal)
 ```
 
 The browser test exists because two real defects passed every unit test: the

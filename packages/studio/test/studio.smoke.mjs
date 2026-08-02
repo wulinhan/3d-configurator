@@ -1161,6 +1161,85 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   check('one undo removes the whole repeat', m.parts.length === 2, m.parts.length);
 }
 
+// ── 15. 3D text: place on a face, tune the typeface, customer types ────────
+{
+  await page.click('.part-name:has-text("Base")');
+  await page.waitForTimeout(200);
+  await page.click('[data-testid="place-text"]');
+  check('placing text prompts for a face', await page.isVisible('[data-testid="text-pick-hint"]'), '');
+
+  // Look straight down, then click the base's centre — the ray lands on its
+  // top face, so the slot's sketch plane must come back as local +Y.
+  await page.evaluate(() => window.__studioViewCube.go('Top'));
+  let settled = '';
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(120);
+    const now = JSON.stringify(await page.evaluate(() => window.__studioViewer.cameraView()));
+    if (now === settled) break;
+    settled = now;
+  }
+  const baseAt = await page.evaluate(() => {
+    const v = window.__studioViewer;
+    const q = v.meshOf('base').position.clone().project(v.camera);
+    const r = document.querySelector('.stage canvas').getBoundingClientRect();
+    return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height];
+  });
+  await page.mouse.click(baseAt[0], baseAt[1]);
+  await page.waitForFunction(() => (window).__studio?.manifest?.options?.some((o) => o.type === 'text'), { timeout: 20000 });
+  m = await manifest();
+  const slot = m.options.find((o) => o.type === 'text');
+  check('the slot binds to the base with merchant-ready defaults',
+    slot.part === 'base' && slot.font === 'sans-bold' && slot.depthMm === 2 && slot.placeholder === 'Text',
+    slot);
+  check('the sketch plane is the picked TOP face (local +Y normal, on the surface)',
+    Math.abs(slot.normal[1] - 1) < 0.01 && slot.origin[1] > 0, { origin: slot.origin, normal: slot.normal });
+  const textVerdict = validateManifest(m);
+  check('manifest still valid with the text slot', textVerdict.ok, textVerdict.errors);
+
+  // The placeholder extrudes on the model as a real mesh (font loads lazily).
+  await page.waitForFunction(() => {
+    const mesh = (window).__studioViewer?.textMeshOf?.(`${'base-text'}`);
+    return !!mesh && mesh.geometry.attributes.position.count > 0;
+  }, { timeout: 20000 });
+  check('the placeholder text extrudes on the model', true, '');
+
+  // The typeface dropdown reshapes the glyphs.
+  const vertsBefore = await page.evaluate(() => (window).__studioViewer.textMeshOf('base-text').geometry.attributes.position.count);
+  await pick('text-font-base-text', 'serif');
+  m = await manifest();
+  check('the typeface dropdown writes the font', m.options.find((o) => o.type === 'text')?.font === 'serif',
+    m.options.find((o) => o.type === 'text')?.font);
+  await page.waitForFunction((before) => {
+    const mesh = (window).__studioViewer.textMeshOf('base-text');
+    return mesh && mesh.geometry.attributes.position.count !== before;
+  }, vertsBefore, { timeout: 20000 });
+  check('…and the extrusion rebuilds in the new face', true, '');
+
+  // Per-character pricing reaches the real embed in the preview.
+  await page.fill('[data-testid="text-perchar-base-text"]', '2');
+  await page.press('[data-testid="text-perchar-base-text"]', 'Enter');
+  await page.waitForTimeout(200);
+  await page.click('[data-testid="preview-open"]');
+  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
+  await page.click('.preview-overlay .cfg-tab:has-text("Base text")');
+  await page.waitForTimeout(200);
+  check('the customiser offers the text input', await page.isVisible('.preview-overlay .cfg-text-input'), '');
+  await page.fill('.preview-overlay .cfg-text-input', 'Hi');
+  await page.waitForTimeout(300);
+  check('typed text lands in the payload, priced per character',
+    await page.evaluate(() => (window).__previewPayload?.selections?.['base-text'] === 'Hi'
+      && (window).__previewPayload?.priceDeltas?.some((d) => d.optionId === 'base-text' && d.amount === 4)),
+    await page.evaluate(() => (window).__previewPayload));
+  await page.click('[data-testid="preview-close"]');
+  await page.waitForTimeout(200);
+
+  // Removing the slot clears the option and the mesh.
+  await page.click('[data-testid="text-remove-base-text"]');
+  await page.waitForFunction(() => !(window).__studio?.manifest?.options?.some((o) => o.type === 'text'), { timeout: 20000 });
+  await page.waitForFunction(() => !(window).__studioViewer.textMeshOf('base-text'), { timeout: 20000 });
+  check('removing the slot clears the option and the extrusion', true, '');
+}
+
 check('material has the studio environment (dull-gloss plastic)',
   await page.evaluate(() => !!window.__studioViewer.scene.environment), '');
 check('parts render double-sided — stray winding cannot look transparent',

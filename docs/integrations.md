@@ -8,8 +8,12 @@ the order**. This document covers both halves.
 ## 1. Embedding
 
 Host the two published files (`manifest.json`, `model.glb`) anywhere — your
-own domain, the platform's file storage, or a CDN — plus the embed bundle
-(`embed.js`, `embed.css`). Then, on the product page:
+own domain, the platform's file storage, or a CDN — plus the embed bundle:
+`embed.js`, `embed.css`, and the `embed-*.js` chunks beside them. The chunks
+are lazy pieces (typeface data for 3D text, the mesh decompressor) that
+`embed.js` fetches relative to its own URL only when a product needs them —
+keep the whole set in one folder and everything resolves. Then, on the
+product page:
 
 ```html
 <link rel="stylesheet" href="https://cdn.example.com/embed.css">
@@ -44,13 +48,14 @@ order needs — **including the money**:
   "type": "configurator:change",
   "productId": "tap-bar-3",
   "manifestVersion": "0.1.0",
-  "selections": { "body-colour": "jade-white", "tile-style": "mail", "stand": "oak" },
+  "selections": { "body-colour": "jade-white", "tile-style": "mail", "stand": "oak", "body-text": "MIA" },
   "colourNames": { "body-colour": "Jade White" },
   "priceDeltas": [
     { "optionId": "stand", "label": "Desk stand: Oak stand", "amount": 24 },
-    { "optionId": "body-colour", "label": "Custom colour #FF5733 (Body)", "amount": 35 }
+    { "optionId": "body-colour", "label": "Custom colour #FF5733 (Body)", "amount": 35 },
+    { "optionId": "body-text", "label": "Body text: “MIA”", "amount": 6 }
   ],
-  "deltaTotal": 59,
+  "deltaTotal": 65,
   "currency": "SGD"
 }
 ```

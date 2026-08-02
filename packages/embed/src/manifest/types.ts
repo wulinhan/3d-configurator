@@ -187,14 +187,48 @@ export interface UploadOption {
   templateUrl?: string;
 }
 
+/** Typefaces bundled with the runtime (see src/fonts/README.md). */
+export const TEXT_FONTS = ['sans', 'sans-bold', 'droid-sans-bold', 'serif', 'serif-bold'] as const;
+export type TextFont = typeof TEXT_FONTS[number];
+
+/**
+ * Customer-typed text extruded onto a flat surface of a part.
+ *
+ * The merchant picks the surface in the Studio; `origin`/`normal` record the
+ * sketch plane in the part's local mesh space, so the text rides along with
+ * every later move, rotation or anchor of the part. `sinkMm` lowers the
+ * sketch plane into the part (a Fusion-style construction plane): the
+ * visible relief is `depthMm − sinkMm`, so the same slot does proud
+ * embossing, flush inlay, or engraved-looking text without any CSG.
+ */
 export interface TextOption {
   id: string;
   type: 'text';
   label: string;
+  /** Part whose surface carries the text. */
   part: string;
+  /** Sketch-plane origin on the surface, part-local mm. */
+  origin: [number, number, number];
+  /** Face normal in the same space — the extrusion direction. */
+  normal: [number, number, number];
+  /** Extra rotation about the normal, degrees. Default 0. */
+  rotationDeg?: number;
+  /** One of TEXT_FONTS. Default 'sans-bold' — bold survives extrusion best. */
+  font?: TextFont;
+  /** Glyph height, mm. */
+  sizeMm: number;
+  /** Extrusion depth from the sketch plane, mm. */
+  depthMm: number;
+  /** How far the sketch plane sinks into the part. Default 0. */
+  sinkMm?: number;
+  /** Default 20. */
   maxLength?: number;
-  priceDelta?: number;
+  /** Ghost text in the input; also what the Studio previews on the model. */
   placeholder?: string;
+  /** Flat surcharge when any text is entered. */
+  priceDelta?: number;
+  /** Additional surcharge per character. */
+  pricePerChar?: number;
 }
 
 export type Option = ColourOption | ChoiceOption | UploadOption | TextOption;

@@ -4,7 +4,8 @@
 // calls a tested edit op; these components only render and route.
 
 import { useState, type ReactNode } from 'react';
-import type { Manifest, AnchorEdge, ColourOption, ChoiceOption } from '../../../embed/src/manifest/types.ts';
+import type { Manifest, AnchorEdge, ColourOption, ChoiceOption, TextOption, TextFont } from '../../../embed/src/manifest/types.ts';
+import { FONT_CHOICES } from '../../../embed/src/runtime/fonts.ts';
 import {
   sizeMm, withSizeMm, withAnchor, withRotation,
   makePartOptional, makePartRequired, setChoicePrice,
@@ -12,6 +13,7 @@ import {
   ungroup, renameGroup, nudgeGroup, partToOrigin, groupToOrigin,
   matchPose, partCentreMm, setPartCentre,
   nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
+  setTextSlot, removeTextSlot, type TextSlotPatch,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -251,6 +253,8 @@ export function PartEditor(props: {
   partId: string;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
   onRepeat: (entryId: string, opts: RepeatOpts) => void;
+  /** Arm "click a face" text placement for this part in the viewport. */
+  onPlaceText: (partId: string) => void;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -433,8 +437,101 @@ export function PartEditor(props: {
           )}
         </section>
       )}
+      <section>
+        <h4>3D text</h4>
+        <p className="hint">
+          Customers type; their words extrude from a flat face of this part.
+          Place the sketch plane by clicking a face, then set the typeface,
+          size and depth — sink the plane to engrave instead of emboss.
+        </p>
+        {manifest.options.filter((o): o is TextOption => o.type === 'text' && o.part === part.id).map((slot) => (
+          <TextSlotEditor key={slot.id} slot={slot} manifest={manifest} onChange={props.onChange} act={act} />
+        ))}
+        <div className="match-row">
+          <button
+            className="mini" data-testid="place-text"
+            title="Click a flat face on this part in the viewport to set where the text sits"
+            onClick={() => props.onPlaceText(part.id)}
+          >＋ Place text on a face</button>
+        </div>
+      </section>
       {!inGroup && !variantOf && <RepeatSection entryId={part.id} what="part" onRepeat={props.onRepeat} />}
       {error && <p className="error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+// One text slot's controls. Every commit routes through setTextSlot, so an
+// out-of-range value surfaces the edit layer's message instead of saving.
+function TextSlotEditor(props: {
+  slot: TextOption;
+  manifest: Manifest;
+  onChange: (m: Manifest, opts?: SetManifestOptions) => void;
+  act: (fn: () => Manifest) => void;
+}) {
+  const { slot, manifest, act } = props;
+  const patch = (p: TextSlotPatch) => act(() => setTextSlot(manifest, slot.id, p));
+  return (
+    <div className="text-slot" data-testid={`text-slot-${slot.id}`}>
+      <label className="field wide">
+        <span className="field-label">Typeface</span>
+        <Select
+          ariaLabel="Typeface" testId={`text-font-${slot.id}`}
+          value={slot.font ?? 'sans-bold'}
+          options={FONT_CHOICES.map((f) => ({ value: f.id, label: f.label }))}
+          onChange={(v) => patch({ font: v as TextFont })}
+        />
+      </label>
+      <div className="field-row">
+        <NumberField
+          label="Size" value={slot.sizeMm} suffix="mm" testId={`text-size-${slot.id}`}
+          onCommit={(v) => patch({ sizeMm: v })}
+        />
+        <NumberField
+          label="Depth" value={slot.depthMm} suffix="mm" testId={`text-depth-${slot.id}`}
+          onCommit={(v) => patch({ depthMm: v })}
+        />
+        <NumberField
+          label="Sink" value={slot.sinkMm ?? 0} suffix="mm" testId={`text-sink-${slot.id}`}
+          onCommit={(v) => patch({ sinkMm: v })}
+        />
+      </div>
+      <div className="field-row">
+        <NumberField
+          label="Spin" value={slot.rotationDeg ?? 0} suffix="°" step={5} testId={`text-spin-${slot.id}`}
+          onCommit={(v) => patch({ rotationDeg: v })}
+        />
+        <NumberField
+          label="Max letters" value={slot.maxLength ?? 20} step={1} testId={`text-max-${slot.id}`}
+          onCommit={(v) => patch({ maxLength: Math.round(v) })}
+        />
+      </div>
+      <label className="field wide">
+        <span className="field-label">Example text (customers see it as a hint)</span>
+        <input
+          className="structure-name" data-testid={`text-placeholder-${slot.id}`}
+          value={slot.placeholder ?? ''}
+          onChange={(e) => patch({ placeholder: e.target.value })}
+        />
+      </label>
+      <div className="field-row">
+        <NumberField
+          label="Extra when used" value={slot.priceDelta ?? 0} suffix={manifest.pricing.currency} step={1}
+          testId={`text-price-${slot.id}`}
+          onCommit={(v) => patch({ priceDelta: v })}
+        />
+        <NumberField
+          label="Per letter" value={slot.pricePerChar ?? 0} suffix={manifest.pricing.currency} step={0.5}
+          testId={`text-perchar-${slot.id}`}
+          onCommit={(v) => patch({ pricePerChar: v })}
+        />
+      </div>
+      <div className="match-row">
+        <button
+          className="mini danger" data-testid={`text-remove-${slot.id}`}
+          onClick={() => act(() => removeTextSlot(manifest, slot.id))}
+        >Remove text</button>
+      </div>
     </div>
   );
 }

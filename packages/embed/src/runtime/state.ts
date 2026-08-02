@@ -95,8 +95,9 @@ export function visibleParts(manifest: Manifest, selections: Selections): Set<st
  * Whether an option currently does anything. A colour option whose every
  * painted part is hidden — the un-picked side of a pick-one set — is inert:
  * showing it invites the customer to configure a part they are not getting,
- * and pricing it would charge them for it. Choice/text/upload options are
- * always live (the pick-one choice itself must stay visible to switch).
+ * and pricing it would charge them for it. Text and upload options follow
+ * their carrier part the same way. Choice options are always live (the
+ * pick-one choice itself must stay visible to switch).
  */
 export function isOptionActive(
   manifest: Manifest,
@@ -104,8 +105,24 @@ export function isOptionActive(
   option: Option,
   visible: Set<string> = visibleParts(manifest, selections),
 ): boolean {
-  if (!isColour(option)) return true;
-  return option.parts.some((p) => visible.has(p));
+  if (isColour(option)) return option.parts.some((p) => visible.has(p));
+  if (option.type === 'text' || option.type === 'upload') return visible.has(option.part);
+  return true;
+}
+
+/**
+ * What a text option can actually render: the bundled fonts carry printable
+ * ASCII only, so anything else is dropped rather than rendered as tofu, and
+ * the length is clamped to the merchant's limit.
+ */
+export function sanitiseText(value: string, maxLength: number): string {
+  let out = '';
+  for (const ch of value) {
+    const c = ch.charCodeAt(0);
+    if (c >= 32 && c <= 126) out += ch;
+    if (out.length >= maxLength) break;
+  }
+  return out;
 }
 
 /**
@@ -133,6 +150,10 @@ export function coloursInUse(manifest: Manifest, selections: Selections): Array<
  */
 export function applySelection(manifest: Manifest, selections: Selections, optionId: string, value: string): void {
   const option = manifest.options.find((o) => o.id === optionId);
+  if (option?.type === 'text') {
+    selections[optionId] = sanitiseText(value, option.maxLength ?? 20);
+    return;
+  }
   const memberColour = (): ColourOption | undefined => {
     if (!option || !isChoice(option) || option.role !== 'variant') return undefined;
     // The set's member parts are the ones whose visibility hangs on it — not
@@ -205,9 +226,10 @@ export function priceDeltas(manifest: Manifest, selections: Selections): PriceDe
       const choice = o.choices.find((c) => c.id === resolveValue(manifest, selections, o.id));
       if (choice?.priceDelta) deltas.push({ optionId: o.id, label: `${o.label}: ${choice.label}`, amount: choice.priceDelta });
     } else if (o.type === 'text') {
-      if (o.priceDelta && (selections[o.id] ?? '').trim()) {
-        deltas.push({ optionId: o.id, label: o.label, amount: o.priceDelta });
-      }
+      const text = (selections[o.id] ?? '').trim();
+      if (!text) continue;
+      const amount = (o.priceDelta ?? 0) + (o.pricePerChar ?? 0) * text.length;
+      if (amount) deltas.push({ optionId: o.id, label: `${o.label}: “${text}”`, amount });
     } else if (o.type === 'upload') {
       if (o.priceDelta && selections[o.id]) deltas.push({ optionId: o.id, label: o.label, amount: o.priceDelta });
     }

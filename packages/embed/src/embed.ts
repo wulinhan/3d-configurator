@@ -4,7 +4,7 @@
 // per-product code here, which is the whole point. Selections are posted to
 // the host page on every change so the merchant's cart can price them.
 
-import type { Manifest, ColourOption, ChoiceOption, Option } from './manifest/types.ts';
+import type { Manifest, ColourOption, ChoiceOption, TextOption, Option } from './manifest/types.ts';
 import { validateManifest } from './manifest/validate.ts';
 import { Viewer } from './runtime/viewer.ts';
 import {
@@ -214,6 +214,43 @@ export async function mount(opts: MountOptions) {
     new Intl.NumberFormat('en-SG', { style: 'currency', currency: manifest.pricing.currency, minimumFractionDigits: 0 })
       .format(n);
 
+  function renderText(option: TextOption) {
+    const max = option.maxLength ?? 20;
+    const wrap = el('div', 'cfg-text');
+
+    const priceBits: string[] = [];
+    if (option.priceDelta) priceBits.push(`+${money(option.priceDelta)}`);
+    if (option.pricePerChar) priceBits.push(`+${money(option.pricePerChar)} per character`);
+    if (priceBits.length) wrap.append(el('p', 'cfg-note', priceBits.join(', ')));
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'cfg-text-input';
+    input.maxLength = max;
+    input.placeholder = option.placeholder ?? 'Your text';
+    input.value = selections[option.id] ?? '';
+    input.setAttribute('aria-label', option.label);
+
+    const count = el('span', 'cfg-text-count', `${input.value.length}/${max}`);
+
+    // Typing must not rebuild the panel — a re-render would replace the input
+    // mid-word and drop the keyboard focus. The model, the summary and the
+    // host payload update; the input stays the customer's.
+    input.addEventListener('input', () => {
+      applySelection(manifest, selections, option.id, input.value);
+      if (input.value !== selections[option.id]) input.value = selections[option.id];
+      count.textContent = `${input.value.length}/${max}`;
+      viewer.apply(selections);
+      renderSummary();
+      post();
+    });
+
+    const row = el('div', 'cfg-text-row');
+    row.append(input, count);
+    wrap.append(row);
+    body.append(wrap);
+  }
+
   function render() {
     tabs.replaceChildren();
     body.replaceChildren();
@@ -275,15 +312,47 @@ export async function mount(opts: MountOptions) {
       renderChoice(option);
       const fold = folds.get(option.id);
       if (fold?.colour) renderColour(fold.colour);
-    }
+    } else if (option?.type === 'text') renderText(option);
 
     viewer.highlight(option && isColour(option) ? option.parts[0] : null);
+    renderSummary();
+  }
 
-    // Summary — the same lines that end up on the order. Folded colours are
-    // named after their set and member: "Tile (Mail)".
+  // Summary — the same lines that end up on the order. Its own function so a
+  // text keystroke can refresh it without rebuilding (and re-focusing) the
+  // panel body. Folded colours are named after their set and member:
+  // "Tile (Mail)".
+  function renderSummary() {
+    summary.replaceChildren();
+    const visible = visibleParts(manifest, selections);
+    const activeOptions = manifest.options.filter((o) => isOptionActive(manifest, selections, o, visible));
+    const foldedColours = new Set<string>();
+    const folds = new Map<string, { colour?: ColourOption; memberLabel: string }>();
+    for (const v of manifest.options) {
+      if (!isChoice(v) || v.role !== 'variant') continue;
+      const memberIds = new Set(manifest.parts.filter((p) => p.visibleWhen?.option === v.id).map((p) => p.id));
+      const current = resolveValue(manifest, selections, v.id);
+      const memberLabel = v.choices.find((c) => c.id === current)?.label ?? '';
+      let colour: ColourOption | undefined;
+      for (const o of manifest.options) {
+        if (!isColour(o) || !o.parts.length || !o.parts.every((p) => memberIds.has(p))) continue;
+        foldedColours.add(o.id);
+        if (o.parts.some((p) => visible.has(p))) colour = o;
+      }
+      folds.set(v.id, { colour, memberLabel });
+    }
+
     const payload = buildPayload(manifest, selections);
     summary.append(el('div', 'cfg-summary-label', 'Your configuration'));
     for (const o of activeOptions) {
+      if (o.type === 'text') {
+        const text = payload.selections[o.id];
+        if (!text) continue;
+        const row = el('div', 'cfg-summary-row');
+        row.append(el('span', 'cfg-summary-part', o.label), el('span', 'cfg-summary-value', `“${text}”`));
+        summary.append(row);
+        continue;
+      }
       if (!isColour(o)) continue;
       let label = o.label;
       if (foldedColours.has(o.id)) {

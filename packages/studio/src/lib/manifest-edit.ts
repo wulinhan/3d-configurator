@@ -8,7 +8,7 @@
 // concentrate.
 
 import type {
-  Manifest, Part, Option, ColourOption, ChoiceOption, AxisPlacement, AnchorEdge, Hex,
+  Manifest, Part, Option, ColourOption, ChoiceOption, TextOption, AxisPlacement, AnchorEdge, Hex,
 } from '../../../embed/src/manifest/types.ts';
 import { validateManifest } from '../../../embed/src/manifest/validate.ts';
 import { resolveLayout, modelBounds } from '../../../embed/src/runtime/layout.ts';
@@ -364,6 +364,9 @@ export function renamePart(manifest: Manifest, partId: string, label: string): M
         const choice = option.choices.find((c) => c.id === partId);
         if (choice) choice.label = label.trim();
       }
+      if (option.type === 'text' && option.part === partId) {
+        option.label = `${label.trim()} text`;
+      }
     }
   });
 }
@@ -414,6 +417,7 @@ export function removePart(manifest: Manifest, partId: string, raw: Map<string, 
 
     draft.options = draft.options.filter((option) => {
       if (option.id === `${partId}-addon`) return false;
+      if (option.type === 'text' && option.part === partId) return false;
       if (isColour(option)) {
         option.parts = option.parts.filter((id) => id !== partId);
         return option.parts.length > 0 || option.source === 'used';
@@ -1186,6 +1190,62 @@ export function moveEntry(manifest: Manifest, entryId: string, direction: -1 | 1
   const to = at + direction;
   if (to < 0 || to >= entries.length) return manifest;
   return moveEntryTo(manifest, entryId, to);
+}
+
+// ── 3D text slots ───────────────────────────────────────────────────────────
+
+const TEXT_DEFAULTS = { font: 'sans-bold', sizeMm: 8, depthMm: 2, maxLength: 20, placeholder: 'Text' } as const;
+
+/**
+ * Bind a text slot to a picked flat surface of a part. `origin` and `normal`
+ * are in the part's local mesh space (what the viewer's surface pick
+ * reports), so the slot rides every later move of the part. Defaults are a
+ * merchant starting point: 8 mm bold text embossed 2 mm proud.
+ */
+export function addTextSlot(
+  manifest: Manifest,
+  partId: string,
+  place: { origin: [number, number, number]; normal: [number, number, number] },
+): Manifest {
+  const part = partOf(manifest, partId);
+  let id = `${partId}-text`;
+  for (let n = 2; manifest.options.some((o) => o.id === id); n++) id = `${partId}-text-${n}`;
+  return edit(manifest, (draft) => {
+    draft.options.push({
+      id,
+      type: 'text',
+      label: `${part.label} text`,
+      part: partId,
+      origin: place.origin.map(round3) as [number, number, number],
+      normal: place.normal.map(round3) as [number, number, number],
+      ...TEXT_DEFAULTS,
+    });
+  });
+}
+
+/** The fields a merchant tunes after placing a slot. */
+export type TextSlotPatch = Partial<Pick<TextOption,
+  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label'>>;
+
+export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlotPatch): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
+  return edit(manifest, (draft) => {
+    const o = draft.options.find((x) => x.id === optionId) as TextOption;
+    Object.assign(o, patch);
+    // An emptied field falls back to its default rather than validating as 0.
+    for (const key of ['sinkMm', 'rotationDeg', 'priceDelta', 'pricePerChar'] as const) {
+      if (o[key] === 0) delete o[key];
+    }
+  });
+}
+
+export function removeTextSlot(manifest: Manifest, optionId: string): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
+  return edit(manifest, (draft) => {
+    draft.options = draft.options.filter((o) => o.id !== optionId);
+  });
 }
 
 // ── camera ──────────────────────────────────────────────────────────────────

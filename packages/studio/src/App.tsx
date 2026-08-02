@@ -18,7 +18,7 @@ import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
 import { writeGlb } from './lib/write-glb.ts';
 import { initManifest, boundsOf, boundsByPartId, mergeModel, type PartBounds } from './lib/manifest-init.ts';
-import { duplicateEntry, repeatEntry, frameCamera, withProductName, type Axis } from './lib/manifest-edit.ts';
+import { duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, type Axis } from './lib/manifest-edit.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
 import { PartEditor, GroupEditor, VariantEditor } from './ui/PartEditor.tsx';
@@ -91,6 +91,8 @@ export function App() {
   const [axes, setAxes] = useState<string>(AXIS_PRESETS[1].axes); // 3D-print files dominate
   const [previewing, setPreviewing] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  // Part id while "click a face to place text" is armed in the viewport.
+  const [placingText, setPlacingText] = useState<string | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
   // Which choice each pick-one option shows while authoring — the merchant's
@@ -118,6 +120,7 @@ export function App() {
     setVariantPreview({});
     setPreviewing(false);
     setPublishing(false);
+    setPlacingText(null);
     setTab('Parts');
   }, []);
 
@@ -275,6 +278,19 @@ export function App() {
     if (firstAdd) setSelectedPart(manifest.parts[0]?.id ?? null);
   }, [axes]);
 
+  // A text-placement click in the viewport lands here: the picked face's
+  // sketch plane becomes a text slot via the tested edit op. setManifest
+  // records the history step; nothing needs a viewer remount (no new parts).
+  const placeTextInApp = useCallback((partId: string, place: { origin: [number, number, number]; normal: [number, number, number] }) => {
+    const old = projectRef.current;
+    try {
+      setManifest(addTextSlot(old.manifest, partId, place));
+      setSelectedPart(partId); // keep the slot's editor on screen
+    } finally {
+      setPlacingText(null);
+    }
+  }, [setManifest]);
+
   // Repeat = duplicate × N with placement maths; same viewer-remount dance.
   // Throws EditError (bad count, part at the origin for a circle) BEFORE any
   // state changes, so callers surface the message and nothing is half-done.
@@ -350,7 +366,7 @@ export function App() {
       : editingGroup
         ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onDuplicate={duplicateEntryInApp} onRepeat={repeatEntryInApp} onClose={() => setEditingGroup(null)} />
         : selectedPart
-          ? <PartEditor key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} onRepeat={repeatEntryInApp} />
+          ? <PartEditor key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} onRepeat={repeatEntryInApp} onPlaceText={setPlacingText} />
           : null)
     : null;
   const lastFloatRef = useRef<ReactNode>(null);
@@ -439,6 +455,9 @@ export function App() {
             project={project} selections={selections} selectedPart={selectedPart}
             hiddenParts={effectiveHidden}
             editingEntity={editingEntity}
+            textPick={placingText}
+            onTextPick={placeTextInApp}
+            onTextCancel={() => setPlacingText(null)}
             onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
             onChange={setManifest}
           />

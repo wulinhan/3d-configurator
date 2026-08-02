@@ -30,6 +30,14 @@ input, select { font: inherit; }
 .axes-row .ui-select { margin-left: auto; }
 .error { color: var(--danger); font-size: 13px; }
 
+/* One 3D-text slot's controls in the part editor. */
+.text-slot {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px; margin-bottom: 8px;
+  border: 1.5px solid var(--line); border-radius: 10px; background: #fff;
+}
+.text-slot .structure-name { width: 100%; }
+
 /* ── shell ── */
 .studio { height: 100vh; display: flex; flex-direction: column; }
 .topbar {

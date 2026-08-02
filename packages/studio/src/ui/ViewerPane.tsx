@@ -32,6 +32,11 @@ export function ViewerPane(props: {
   /** An open assembly / variant set editor: its parts move as one via a
    * translate gizmo parked at the set's centre of mass. */
   editingEntity: { kind: 'group' | 'variant'; id: string; parts: string[] } | null;
+  /** Non-null arms text placement: the next click on a flat face of THIS
+   * part becomes a text slot's sketch plane. */
+  textPick: string | null;
+  onTextPick: (partId: string, place: { origin: [number, number, number]; normal: [number, number, number] }) => void;
+  onTextCancel: () => void;
   onSelectPart: (id: string | null) => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
@@ -59,6 +64,8 @@ export function ViewerPane(props: {
   onSelectRef.current = props.onSelectPart;
   const snapRef = useRef(snapArm);
   snapRef.current = snapArm;
+  const textPickRef = useRef(props.textPick);
+  textPickRef.current = props.textPick;
 
   // A drag commits against whatever the manifest is at release time, not at
   // gizmo construction — refs keep the callback current without rebuilding.
@@ -82,9 +89,9 @@ export function ViewerPane(props: {
       },
       resolveUrl: () => props.project.modelUrl,
       onSelectPart: (id) => {
-        // Neither a snap pick nor a click that landed on a gizmo handle is a
-        // selection gesture.
-        if (snapRef.current !== null) return;
+        // Neither a snap pick, a text placement, nor a click that landed on
+        // a gizmo handle is a selection gesture.
+        if (snapRef.current !== null || textPickRef.current) return;
         if (gizmoRef.current?.hovering) return;
         onSelectRef.current(id);
       },
@@ -340,6 +347,51 @@ export function ViewerPane(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapArm]);
 
+  // Text placement: same surface-glow interaction as Snap, but one pick on
+  // one named part — the clicked face's centroid and normal (already in the
+  // part's local space, thanks to surfaceAt) become the slot's sketch plane.
+  const textCtx = useRef({ textPick: props.textPick, onTextPick: props.onTextPick });
+  textCtx.current = { textPick: props.textPick, onTextPick: props.onTextPick };
+  useEffect(() => {
+    if (!props.textPick) return;
+    setSnapArm(null); // one surface tool at a time
+    const canvas = canvasRef.current!;
+    let lastHover = 0;
+    let down = { x: 0, y: 0 };
+    const hitOnTarget = (e: PointerEvent) => {
+      const hit = viewerRef.current?.surfaceAt(e.clientX, e.clientY);
+      return hit && hit.partId === textCtx.current.textPick ? hit : null;
+    };
+    const onMove = (e: PointerEvent) => {
+      const now = performance.now();
+      if (now - lastHover < 40) return;
+      lastHover = now;
+      viewerRef.current?.showSurfaceHighlight('hover', hitOnTarget(e));
+    };
+    const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
+    const onUp = (e: PointerEvent) => {
+      // An orbit drag that ends on the part isn't a pick.
+      if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
+      const hit = hitOnTarget(e);
+      if (!hit) return;
+      viewerRef.current?.clearSurfaceHighlights();
+      textCtx.current.onTextPick(hit.partId, { origin: hit.localCentre, normal: hit.localNormal });
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onTextCancel(); };
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointerup', onUp);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      viewerRef.current?.clearSurfaceHighlights();
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerdown', onDown);
+      canvas.removeEventListener('pointerup', onUp);
+      window.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.textPick]);
+
   const saveView = () => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -381,6 +433,12 @@ export function ViewerPane(props: {
         </div>
       )}
       {snapError && <div className="snap-hint error" role="alert">{snapError}</div>}
+      {props.textPick && (
+        <div className="snap-hint" data-testid="text-pick-hint">
+          Text: click a flat face on “{props.project.manifest.parts.find((p) => p.id === props.textPick)?.label ?? props.textPick}”
+          to place the text. Esc cancels.
+        </div>
+      )}
     </div>
   );
 }

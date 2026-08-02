@@ -128,6 +128,16 @@
 .cfg-choice.is-selected { border-color: var(--cfg-accent); background: var(--cfg-surface); }
 .cfg-choice-price { font-size: 11px; font-weight: 700; color: var(--cfg-muted); }
 
+.cfg-text { display: flex; flex-direction: column; gap: 8px; }
+.cfg-text-row { display: flex; align-items: center; gap: 8px; }
+.cfg-text-input {
+  flex: 1; min-width: 0; height: 34px; padding: 0 10px;
+  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  background: #fff; font: inherit; font-size: 13px;
+}
+.cfg-text-input:focus { outline: none; border-color: var(--cfg-accent); }
+.cfg-text-count { font-size: 11px; color: var(--cfg-muted); font-variant-numeric: tabular-nums; }
+
 .cfg-summary { border-top: 1px solid var(--cfg-line); padding-top: 12px; }
 .cfg-summary-label {
   font-size: 9px; font-weight: 700; letter-spacing: .8px;
