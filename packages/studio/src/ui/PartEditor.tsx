@@ -73,7 +73,7 @@ function RepeatSection(props: {
           <Select
             ariaLabel="Repeat pattern" testId="repeat-mode" compact
             value={mode}
-            options={[{ value: 'line', label: 'Along an axis' }, { value: 'circle', label: 'Around a circle' }]}
+            options={[{ value: 'line', label: 'Linear' }, { value: 'circle', label: 'Circular' }]}
             onChange={(v) => setMode(v as 'line' | 'circle')}
           />
         </label>
@@ -493,6 +493,15 @@ function TextSlotEditor(props: {
         />
       </label>
       <div className="field-row">
+        <label className="field">
+          <span className="field-label">Style</span>
+          <Select
+            ariaLabel="Text style" testId={`text-style-${slot.id}`} compact
+            value={slot.style ?? 'emboss'}
+            options={[{ value: 'emboss', label: 'Embossed' }, { value: 'deboss', label: 'Engraved' }]}
+            onChange={(v) => patch({ style: v as 'emboss' | 'deboss' })}
+          />
+        </label>
         <NumberField
           label="Size" value={slot.sizeMm} suffix="mm" testId={`text-size-${slot.id}`}
           onCommit={(v) => patch({ sizeMm: v })}
@@ -501,10 +510,12 @@ function TextSlotEditor(props: {
           label="Depth" value={slot.depthMm} suffix="mm" testId={`text-depth-${slot.id}`}
           onCommit={(v) => patch({ depthMm: v })}
         />
-        <NumberField
-          label="Sink" value={slot.sinkMm ?? 0} suffix="mm" testId={`text-sink-${slot.id}`}
-          onCommit={(v) => patch({ sinkMm: v })}
-        />
+        {(slot.style ?? 'emboss') === 'emboss' && (
+          <NumberField
+            label="Sink" value={slot.sinkMm ?? 0} suffix="mm" testId={`text-sink-${slot.id}`}
+            onCommit={(v) => patch({ sinkMm: v })}
+          />
+        )}
       </div>
       <div className="field-row">
         <NumberField
@@ -564,7 +575,7 @@ function TextSlotEditor(props: {
             <Select
               ariaLabel="Spawn pattern" testId={`text-spawn-mode-${slot.id}`} compact
               value={slot.perChar.mode ?? 'line'}
-              options={[{ value: 'line', label: 'Along an axis' }, { value: 'circle', label: 'Around a circle' }]}
+              options={[{ value: 'line', label: 'Linear' }, { value: 'circle', label: 'Circular' }]}
               onChange={(v) => patch({ perChar: { ...slot.perChar, mode: v as 'line' | 'circle' } })}
             />
           </label>

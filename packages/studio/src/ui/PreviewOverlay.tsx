@@ -38,6 +38,7 @@ export function PreviewOverlay(props: { project: Project; onClose: () => void })
       .then((handle) => {
         if (disposed) { handle.viewer.dispose(); return; }
         viewer = handle.viewer;
+        (window as any).__previewViewer = handle.viewer; // test hook
       })
       .catch((err) => { if (!disposed) setFailure(err instanceof Error ? err.message : String(err)); });
 
@@ -45,6 +46,7 @@ export function PreviewOverlay(props: { project: Project; onClose: () => void })
       disposed = true;
       root.removeEventListener('configurator:change', onChange);
       viewer?.dispose();
+      (window as any).__previewViewer = null;
       root.replaceChildren();
     };
   }, [props.project.manifest, props.project.modelUrl]);

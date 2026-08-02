@@ -219,8 +219,16 @@ export interface TextOption {
   sizeMm: number;
   /** Extrusion depth from the sketch plane, mm. */
   depthMm: number;
-  /** How far the sketch plane sinks into the part. Default 0. */
+  /** How far the sketch plane sinks into the part (emboss only). Default 0. */
   sinkMm?: number;
+  /**
+   * 'emboss' (default): the text extrudes proud of the surface.
+   * 'deboss': a real boolean DIFFERENCE — the glyph volume is subtracted
+   * from the part to `depthMm`, cutting an engraved pocket with visible
+   * walls. Computed at runtime (lazily loaded CSG), so it follows the
+   * customer's text live.
+   */
+  style?: 'emboss' | 'deboss';
   /** Default 20. */
   maxLength?: number;
   /** Ghost text in the input; also what the Studio previews on the model. */

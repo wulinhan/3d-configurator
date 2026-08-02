@@ -59,6 +59,9 @@ export async function mount(opts: MountOptions) {
   const viewer = new Viewer({
     canvas,
     manifest,
+    // A growing per-letter run keeps its centre of mass on the origin,
+    // easing there — the customer's product grows outward from the middle.
+    centreTextRuns: true,
     resolveUrl: (u) => (opts.baseUrl ? new URL(u, opts.baseUrl).href : u),
     onSelectPart: (partId) => {
       // A part whose visibility hangs on a choice (a variant, an add-on) opens

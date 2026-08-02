@@ -247,9 +247,12 @@ export function validateManifest(input: unknown): ValidationResult {
       }
       if (!(o.sizeMm > 0) || o.sizeMm > 200) err(`${at}.sizeMm`, 'must be between 0 and 200 millimetres');
       if (!(o.depthMm >= 0.2) || o.depthMm > 50) err(`${at}.depthMm`, 'must be between 0.2 and 50 millimetres');
+      if (o.style != null && !['emboss', 'deboss'].includes(o.style)) {
+        err(`${at}.style`, 'must be "emboss" or "deboss"');
+      }
       const sink = o.sinkMm ?? 0;
       if (!(sink >= 0) || !Number.isFinite(sink)) err(`${at}.sinkMm`, 'must be zero or more');
-      else if (Number.isFinite(o.depthMm) && sink >= o.depthMm) {
+      else if ((o.style ?? 'emboss') === 'emboss' && Number.isFinite(o.depthMm) && sink >= o.depthMm) {
         err(`${at}.sinkMm`, 'must be less than depthMm — sinking the whole extrusion leaves nothing visible');
       }
       if (o.rotationDeg != null && !Number.isFinite(o.rotationDeg)) err(`${at}.rotationDeg`, 'must be a number');
@@ -270,8 +273,9 @@ export function validateManifest(input: unknown): ValidationResult {
           err(`${at}.perChar.axis`, 'must be 0 (x), 1 (y) or 2 (z)');
         }
         const gap = o.perChar.gapMm;
-        if (gap != null && (typeof gap !== 'number' || !Number.isFinite(gap) || gap < 0 || gap > 500)) {
-          err(`${at}.perChar.gapMm`, 'must be a number between 0 and 500 millimetres');
+        // Negative gaps are legal — interlocking pieces overlap on purpose.
+        if (gap != null && (typeof gap !== 'number' || !Number.isFinite(gap) || gap < -500 || gap > 500)) {
+          err(`${at}.perChar.gapMm`, 'must be a number between -500 and 500 millimetres');
         }
         const step = o.perChar.stepDeg;
         if (step != null && (typeof step !== 'number' || !Number.isFinite(step) || step < 1 || step > 180)) {

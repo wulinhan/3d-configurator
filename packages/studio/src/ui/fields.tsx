@@ -41,6 +41,19 @@ export function NumberField(props: {
     }
   };
 
+  // Stepper arrows tweak from the last committed value — a click is "one
+  // step from where the manifest is", so it composes with typing and the
+  // gizmo rather than fighting a half-typed draft.
+  const stepBy = (dir: 1 | -1) => {
+    const next = round3(shown + dir * (props.step ?? 0.1));
+    try {
+      props.onCommit(next);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   return (
     <label className="field">
       <span className="field-label">{props.label}</span>
@@ -53,6 +66,22 @@ export function NumberField(props: {
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         />
         {props.suffix && <span className="field-suffix">{props.suffix}</span>}
+        <span className="field-steps">
+          <button
+            type="button" tabIndex={-1} aria-label="Increase"
+            data-testid={props.testId ? `${props.testId}-up` : undefined}
+            onClick={(e) => { e.preventDefault(); stepBy(1); }}
+          >
+            <svg width="7" height="5" viewBox="0 0 7 5" aria-hidden="true"><path d="M3.5 0.5 6.5 4.5 0.5 4.5z" fill="currentColor" /></svg>
+          </button>
+          <button
+            type="button" tabIndex={-1} aria-label="Decrease"
+            data-testid={props.testId ? `${props.testId}-down` : undefined}
+            onClick={(e) => { e.preventDefault(); stepBy(-1); }}
+          >
+            <svg width="7" height="5" viewBox="0 0 7 5" aria-hidden="true"><path d="M3.5 4.5 0.5 0.5 6.5 0.5z" fill="currentColor" /></svg>
+          </button>
+        </span>
       </span>
       {error && <span className="field-error" role="alert">{error}</span>}
     </label>

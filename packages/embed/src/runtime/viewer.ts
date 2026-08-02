@@ -124,12 +124,33 @@ export interface SurfaceHit {
   faces: number[];
 }
 
+/** One per-letter run's live state (see Viewer.syncPerChar). */
+interface PerCharEntry {
+  key: string;
+  part: string;
+  members: string[];
+  pieces: Array<Map<string, THREE.Mesh>>;
+  glyphs: THREE.Mesh[];
+  customMat?: THREE.MeshStandardMaterial;
+  /** Eased centring shift of the whole run along the row axis. */
+  offset?: { axis: number; current: number; target: number };
+  /** Geometries this entry created (deboss cuts) — disposed with it. */
+  ownGeometries?: THREE.BufferGeometry[];
+  debossedCarrier?: boolean;
+}
+
 export interface ViewerOptions {
   canvas: HTMLCanvasElement;
   manifest: Manifest;
   /** Resolves a manifest-relative model url. Defaults to the document base. */
   resolveUrl?: (url: string) => string;
   onSelectPart?: (partId: string | null) => void;
+  /**
+   * Customiser mode: a linear per-letter run keeps its centre of mass on the
+   * origin, easing there as the text grows or shrinks. Off in the Studio,
+   * where the merchant authors against fixed positions.
+   */
+  centreTextRuns?: boolean;
 }
 
 export class Viewer {
@@ -153,12 +174,16 @@ export class Viewer {
   private textMeshes = new Map<string, { mesh?: THREE.Mesh; key: string; customMat?: THREE.MeshStandardMaterial }>();
   /** optionId → per-letter template pieces + their glyphs (see syncPerChar).
    * pieces[k-1] maps template member part id → its clone for piece k. */
-  private perCharText = new Map<string, {
-    key: string;
-    pieces: Array<Map<string, THREE.Mesh>>;
-    glyphs: THREE.Mesh[];
-    customMat?: THREE.MeshStandardMaterial;
-  }>();
+  private perCharText = new Map<string, PerCharEntry>();
+  private readonly centreTextRuns: boolean;
+  private lastTick = 0;
+  /** partId → pristine geometry, captured before the first deboss cut. */
+  private debossBase = new Map<string, THREE.BufferGeometry>();
+  /** partId → signature of the single-slot deboss cuts currently applied. */
+  private debossSig = new Map<string, string>();
+  /** partId → the evaluated geometry currently on the mesh (disposable). */
+  private debossGeo = new Map<string, THREE.BufferGeometry>();
+  private csgModule?: Promise<typeof import('three-bvh-csg')>;
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
@@ -171,6 +196,7 @@ export class Viewer {
     this.manifest = opts.manifest;
     this.onSelectPart = opts.onSelectPart;
     this.resolveUrl = opts.resolveUrl ?? ((u) => u);
+    this.centreTextRuns = opts.centreTextRuns ?? false;
 
     const cam = opts.manifest.camera ?? {};
     this.renderer = new THREE.WebGLRenderer({ canvas: opts.canvas, antialias: true, preserveDrawingBuffer: true });
@@ -766,6 +792,7 @@ export class Viewer {
    */
   private syncText(selections: Selections): void {
     const wanted = new Set<string>();
+    const debossJobs = new Map<string, Array<{ spec: TextOption; text: string }>>();
     for (const option of this.manifest.options) {
       if (option.type !== 'text') continue;
       wanted.add(option.id);
@@ -782,6 +809,14 @@ export class Viewer {
       if (option.perChar) {
         this.dropTextMesh(option.id); // the slot may have just been switched over
         this.syncPerChar(option, carrier, text);
+      } else if ((option.style ?? 'emboss') === 'deboss') {
+        // Engraved: no glyph mesh at all — the part's own geometry is cut.
+        // Gathered per part so several slots compose one subtraction chain.
+        this.dropTextMesh(option.id);
+        this.dropPerChar(option.id);
+        const jobs = debossJobs.get(option.part) ?? [];
+        jobs.push({ spec: { ...option }, text });
+        debossJobs.set(option.part, jobs);
       } else {
         this.dropPerChar(option.id);
         this.syncSingle(option, carrier, text);
@@ -793,6 +828,90 @@ export class Viewer {
     }
     for (const id of [...this.perCharText.keys()]) {
       if (!wanted.has(id)) this.dropPerChar(id);
+    }
+    this.syncDebossParts(debossJobs);
+  }
+
+  private loadCsg() {
+    return this.csgModule ??= import('three-bvh-csg');
+  }
+
+  /**
+   * `source` minus the extruded text volume — a real boolean difference, in
+   * the carrier part's local space. The cutter is the glyph prism grown 0.2mm
+   * past the surface so the subtraction opens cleanly. On a CSG failure
+   * (hopelessly non-manifold merchant mesh) the part stays uncut.
+   */
+  private cutGeometry(
+    source: THREE.BufferGeometry,
+    text: string,
+    font: Font,
+    spec: TextOption,
+    csg: Awaited<ReturnType<Viewer['loadCsg']>>,
+  ): THREE.BufferGeometry {
+    const { Evaluator, Brush, SUBTRACTION } = csg;
+    const cutGeo = this.buildTextGeometry(text, font, { ...spec, depthMm: spec.depthMm + 0.2 });
+    try {
+      const evaluator = new Evaluator();
+      evaluator.attributes = ['position', 'normal'];
+      const posed = new THREE.Mesh(cutGeo);
+      this.placeGlyph(posed, { ...spec, sinkMm: spec.depthMm }); // cutter bottom at full depth
+      const a = new Brush(source);
+      a.updateMatrixWorld();
+      const b = new Brush(cutGeo);
+      b.position.copy(posed.position);
+      b.quaternion.copy(posed.quaternion);
+      b.updateMatrixWorld();
+      const out = evaluator.evaluate(a, b, SUBTRACTION);
+      return out.geometry;
+    } catch (err) {
+      console.warn('[configurator] engrave failed — showing the part uncut', err);
+      return source.clone();
+    } finally {
+      cutGeo.dispose();
+    }
+  }
+
+  /** Apply (or clear) the single-slot engraved cuts, one chain per part. */
+  private syncDebossParts(jobs: Map<string, Array<{ spec: TextOption; text: string }>>): void {
+    for (const partId of [...this.debossSig.keys()]) {
+      if (jobs.has(partId)) continue;
+      this.debossSig.delete(partId);
+      const base = this.debossBase.get(partId);
+      const mesh = this.meshes.get(partId);
+      if (base && mesh) {
+        mesh.geometry = base.clone();
+        this.debossGeo.get(partId)?.dispose();
+        this.debossGeo.set(partId, mesh.geometry);
+      }
+    }
+    for (const [partId, list] of jobs) {
+      const sig = JSON.stringify(list.map((j) => [
+        j.spec.id, j.text, j.spec.font, j.spec.sizeMm, j.spec.depthMm,
+        j.spec.rotationDeg, j.spec.origin, j.spec.normal,
+      ]));
+      if (this.debossSig.get(partId) === sig) continue;
+      this.debossSig.set(partId, sig);
+      const mesh = this.meshes.get(partId);
+      if (!mesh) continue;
+      if (!this.debossBase.has(partId)) {
+        this.debossBase.set(partId, (mesh.geometry as THREE.BufferGeometry).clone());
+      }
+      Promise.all([this.loadCsg(), ...list.map((j) => loadFont(j.spec.font ?? DEFAULT_FONT))]).then(([csg, ...fonts]) => {
+        if (this.debossSig.get(partId) !== sig) return; // superseded meanwhile
+        const base = this.debossBase.get(partId)!;
+        let geo: THREE.BufferGeometry = base;
+        list.forEach((j, i) => {
+          const next = this.cutGeometry(geo, j.text, fonts[i], j.spec, csg);
+          if (geo !== base) geo.dispose();
+          geo = next;
+        });
+        const target = this.meshes.get(partId);
+        if (!target) { if (geo !== base) geo.dispose(); return; }
+        target.geometry = geo === base ? base.clone() : geo;
+        this.debossGeo.get(partId)?.dispose();
+        this.debossGeo.set(partId, target.geometry);
+      });
     }
   }
 
@@ -866,7 +985,7 @@ export class Viewer {
     const existing = this.textMeshes.get(option.id);
     const key = JSON.stringify([
       text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
-      option.rotationDeg, option.origin, option.normal, option.part, option.colourHex,
+      option.rotationDeg, option.origin, option.normal, option.part, option.colourHex, option.style,
     ]);
     if (existing?.key === key) return;
     this.textMeshes.set(option.id, { mesh: existing?.mesh, key, customMat: existing?.customMat });
@@ -923,18 +1042,23 @@ export class Viewer {
     const axis = option.perChar?.axis ?? 0;
     const gap = option.perChar?.gapMm ?? 5;
     const stepDeg = option.perChar?.stepDeg ?? 30;
+    const deboss = (option.style ?? 'emboss') === 'deboss';
     const members = this.templateMembers(option.part);
     const chars = [...text];
 
     const key = JSON.stringify([
       text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
       option.rotationDeg, option.origin, option.normal, option.part,
-      option.colourHex, members, mode, axis, gap, stepDeg,
+      option.colourHex, option.style, members, mode, axis, gap, stepDeg,
     ]);
     let entry = this.perCharText.get(option.id);
     if (!entry || entry.key !== key) {
+      // The centring glide survives a rebuild — a keystroke should slide the
+      // run, not snap it.
+      const prevOffset = entry?.offset;
       this.dropPerChar(option.id);
-      entry = { key, pieces: [], glyphs: [] };
+      entry = { key, part: option.part, members, pieces: [], glyphs: [] };
+      if (prevOffset) entry.offset = prevOffset;
       this.perCharText.set(option.id, entry);
       for (let k = 1; k < chars.length; k++) {
         const clones = new Map<string, THREE.Mesh>();
@@ -954,33 +1078,107 @@ export class Viewer {
       }
       const current = entry;
       const spec = { ...option };
-      loadFont(option.font ?? DEFAULT_FONT).then((font) => {
-        if (this.perCharText.get(option.id) !== current) return; // superseded
-        const material = this.textMaterial(spec, current);
-        chars.forEach((ch, k) => {
-          if (ch === ' ') return; // a space is a blank piece
-          const parent = k === 0 ? carrier : current.pieces[k - 1]?.get(spec.part);
-          if (!parent) return;
-          const glyph = new THREE.Mesh(this.buildTextGeometry(ch, font, spec), material);
-          glyph.castShadow = glyph.receiveShadow = true;
-          glyph.raycast = () => {};
-          glyph.name = `text-${spec.id}-${k}`;
-          this.placeGlyph(glyph, spec);
-          parent.add(glyph);
-          current.glyphs.push(glyph);
+      if (deboss) {
+        // Engraved: each piece's carrier gets its own base-minus-letter
+        // geometry — a real boolean difference, so the pocket has walls.
+        if (!this.debossBase.has(spec.part)) {
+          this.debossBase.set(spec.part, (carrier.geometry as THREE.BufferGeometry).clone());
+        }
+        Promise.all([loadFont(option.font ?? DEFAULT_FONT), this.loadCsg()]).then(([font, csg]) => {
+          if (this.perCharText.get(option.id) !== current) return; // superseded
+          const base = this.debossBase.get(spec.part)!;
+          current.ownGeometries = [];
+          chars.forEach((ch, k) => {
+            const target = k === 0 ? carrier : current.pieces[k - 1]?.get(spec.part);
+            if (!target) return;
+            const geo = ch === ' ' ? base.clone() : this.cutGeometry(base, ch, font, spec, csg);
+            target.geometry = geo;
+            current.ownGeometries!.push(geo);
+          });
+          current.debossedCarrier = true;
         });
-      });
+      } else {
+        loadFont(option.font ?? DEFAULT_FONT).then((font) => {
+          if (this.perCharText.get(option.id) !== current) return; // superseded
+          const material = this.textMaterial(spec, current);
+          chars.forEach((ch, k) => {
+            if (ch === ' ') return; // a space is a blank piece
+            const parent = k === 0 ? carrier : current.pieces[k - 1]?.get(spec.part);
+            if (!parent) return;
+            const glyph = new THREE.Mesh(this.buildTextGeometry(ch, font, spec), material);
+            glyph.castShadow = glyph.receiveShadow = true;
+            glyph.raycast = () => {};
+            glyph.name = `text-${spec.id}-${k}`;
+            this.placeGlyph(glyph, spec);
+            parent.add(glyph);
+            current.glyphs.push(glyph);
+          });
+        });
+      }
+    }
+
+    // Centring: the run's centre of mass belongs ON THE WORLD ORIGIN in the
+    // customiser — piece k sits at centre + k·pitch, so the shift that puts
+    // the run's mean at zero is −(centre + pitch·(N−1)/2). The target moves
+    // with the piece count; the glide toward it happens frame by frame in
+    // updateTextRuns.
+    if (this.centreTextRuns && mode === 'line') {
+      const span = this.perCharSpan(members, axis, gap);
+      const target = -(span.centre + span.pitch * (chars.length - 1) / 2);
+      if (!entry.offset) entry.offset = { axis, current: 0, target };
+      else { entry.offset.axis = axis; entry.offset.target = target; }
+    } else {
+      entry.offset = undefined;
+    }
+
+    this.placePerCharPieces(option, entry);
+  }
+
+  /** The template's union extent along the row axis: piece pitch + centre. */
+  private perCharSpan(members: string[], axis: number, gap: number): { pitch: number; centre: number } {
+    let lo = Infinity, hi = -Infinity;
+    for (const memberId of members) {
+      const box = this.layout.get(memberId)?.box;
+      if (!box) continue;
+      lo = Math.min(lo, box.min[axis]);
+      hi = Math.max(hi, box.max[axis]);
+    }
+    if (!Number.isFinite(lo)) return { pitch: gap, centre: 0 };
+    return { pitch: hi - lo + gap, centre: (lo + hi) / 2 };
+  }
+
+  /** The authored (layout) position of a part — what setManifest writes. */
+  private layoutPosition(partId: string, out: THREE.Vector3): boolean {
+    const t = this.layout.get(partId);
+    const centre = this.centres.get(partId);
+    if (!t || !centre) return false;
+    out.set(centre[0] + t.translate[0], centre[1] + t.translate[1], centre[2] + t.translate[2]);
+    return true;
+  }
+
+  /** Position every piece of a per-letter run — called on apply and per
+   * animation frame while the centring offset glides. */
+  private placePerCharPieces(option: TextOption, entry: PerCharEntry): void {
+    const mode = option.perChar?.mode ?? 'line';
+    const axis = option.perChar?.axis ?? 0;
+    const gap = option.perChar?.gapMm ?? 5;
+    const stepDeg = option.perChar?.stepDeg ?? 30;
+    const members = entry.members;
+
+    // The originals shift by the eased offset (customiser only) — their
+    // authored position comes from the layout, so the shift never compounds.
+    const off = entry.offset?.current ?? 0;
+    if (this.centreTextRuns && mode === 'line') {
+      const base = new THREE.Vector3();
+      for (const memberId of members) {
+        const mesh = this.meshes.get(memberId);
+        if (!mesh || !this.layoutPosition(memberId, base)) continue;
+        mesh.position.setComponent(axis, base.getComponent(axis) + off);
+      }
     }
 
     if (mode === 'line') {
-      let lo = Infinity, hi = -Infinity;
-      for (const memberId of members) {
-        const box = this.layout.get(memberId)?.box;
-        if (!box) continue;
-        lo = Math.min(lo, box.min[axis]);
-        hi = Math.max(hi, box.max[axis]);
-      }
-      const pitch = (Number.isFinite(lo) ? hi - lo : 0) + gap;
+      const pitch = this.perCharSpan(members, axis, gap).pitch;
       entry.pieces.forEach((clones, i) => {
         for (const [memberId, copy] of clones) {
           const src = this.meshes.get(memberId);
@@ -1025,6 +1223,21 @@ export class Viewer {
     if (!entry) return;
     for (const glyph of entry.glyphs) { glyph.removeFromParent(); glyph.geometry.dispose(); }
     for (const clones of entry.pieces) for (const copy of clones.values()) copy.removeFromParent();
+    // An engraved carrier goes back to its pristine geometry…
+    if (entry.debossedCarrier) {
+      const base = this.debossBase.get(entry.part);
+      const mesh = this.meshes.get(entry.part);
+      if (base && mesh) mesh.geometry = base.clone();
+    }
+    for (const g of entry.ownGeometries ?? []) g.dispose();
+    // …and a centred run puts its members back where the layout says.
+    if (entry.offset && this.centreTextRuns) {
+      const base = new THREE.Vector3();
+      for (const memberId of entry.members) {
+        const mesh = this.meshes.get(memberId);
+        if (mesh && this.layoutPosition(memberId, base)) mesh.position.copy(base);
+      }
+    }
     entry.customMat?.dispose();
     this.perCharText.delete(optionId);
   }
@@ -1098,10 +1311,28 @@ export class Viewer {
   start(): void {
     const tick = () => {
       this.rafId = requestAnimationFrame(tick);
+      this.updateTextRuns(performance.now());
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
     };
     tick();
+  }
+
+  /** Ease each centred per-letter run toward its target shift (see
+   * centreTextRuns) — an exponential glide, frame-rate independent. */
+  private updateTextRuns(now: number): void {
+    const dt = Math.min((now - this.lastTick) / 1000, 0.1);
+    this.lastTick = now;
+    if (!this.centreTextRuns) return;
+    for (const [id, entry] of this.perCharText) {
+      const off = entry.offset;
+      if (!off || Math.abs(off.current - off.target) < 0.005) continue;
+      off.current += (off.target - off.current) * Math.min(1, dt * 9);
+      if (Math.abs(off.current - off.target) < 0.005) off.current = off.target;
+      const option = this.manifest.options.find((o) => o.id === id);
+      if (option?.type !== 'text') continue;
+      this.placePerCharPieces(option, entry);
+    }
   }
 
   stop(): void {

@@ -188,7 +188,7 @@ file is up) sits in the explorer and applies to the next file added.
 
 **Repeat** (in the part / assembly / variant-set editors, hidden from
 customers) stamps copies along an axis — pitched at the entry's own size
-plus a gap, edge-to-edge — or in a ring: a RIGID turn about the vertical
+plus a gap (negative gaps overlap pieces, for interlocking chains) — or in a ring: a RIGID turn about the vertical
 axis through the world origin, where the original is taken as facing the
 tangent and every copy (parts and whole assemblies alike) both orbits and
 spins by its share of the circle, keeping its face to the ring. Anchors on
@@ -218,10 +218,13 @@ the default, text recolours with it — or pin any palette finish of its
 own), the **typeface** (a dropdown of five bundled
 faces — Helvetiker regular/bold, Droid Sans bold, Gentilis regular/bold,
 trimmed to printable ASCII at 25–63 KB each and lazy-loaded only when a
-manifest uses text), glyph **size**, extrusion **depth**, a **sink** that
-lowers the sketch plane into the part Fusion-style (visible relief =
-depth − sink, so one slot does proud embossing or engraved-look inlays with
-no CSG), a spin about the normal, a length limit, example text (rendered as
+manifest uses text), the **style** — *Embossed* extrudes the glyphs proud
+of the surface (with a Fusion-style **sink** that lowers the sketch plane,
+relief = depth − sink), while *Engraved* is a REAL boolean difference: the
+glyph volume is subtracted from the part with three-bvh-csg (lazy-loaded,
+~115 KB only when a manifest engraves), so the pocket has actual walls and
+follows the customer's text live — glyph **size**, extrusion **depth**, a
+spin about the normal, a length limit, example text (rendered as
 the model's preview and the input's ghost), and pricing — flat and/or
 per-character, recomputed server-side like every other delta. The text mesh
 shares the carrier part's material, so it colours with the part; the payload
@@ -236,8 +239,13 @@ gap, exactly like the repeat tool; circle mode turns each piece a set
 step° further round the vertical axis through the origin (the original
 faces the tangent), the same rigid turn the repeat tool stamps. A space
 spawns a blank piece, the length limit caps the piece count, and
-per-character pricing makes each piece pay its way. The spawning happens
-in the viewer (the manifest stays static; selections drive the copies),
+per-character pricing makes each piece pay its way. In the customiser a
+linear run keeps its CENTRE OF MASS on the world origin, easing there as
+the text grows or shrinks — the product grows outward from the middle
+instead of marching off to one side (the Studio viewport keeps authored
+positions, so merchants author against fixed coordinates). The spawning
+happens in the viewer (the manifest stays static; selections drive the
+copies),
 so the same manifest renders one tile or twenty depending on what the
 customer types — the "type your name, get one clicker per letter" product
 is this toggle plus a text slot on the clicker assembly.
@@ -276,6 +284,11 @@ that only shared a plane left the part hanging in empty air beside its
 target, which read as "it just moved up". All three axes land as live
 anchors, so the joint holds when the target moves and the merchant can
 slide the offsets afterwards.
+
+Number fields across the panels carry small ▲▼ stepper triangles at their
+right edge — one click is one step from the last committed value, so quick
+tweaks need neither typing nor the gizmo. Errors surface inline exactly as
+typed commits do.
 
 ## Controls
 
@@ -367,14 +380,15 @@ test/structure.test.ts 34 — assemblies merge colours without double-painting,
                       deletes repair both structures, repeat patterns pitch
                       line copies at size+gap and turn ring copies rigidly
                       about the origin — assemblies orbit AND spin together
-test/text.test.ts      9 — text slots bind valid, tune through validation,
+test/text.test.ts     10 — text slots bind valid, tune through validation,
                       sanitise + clamp customer text, price flat + per
                       character, follow their carrier part (hidden = inert,
                       deleted = gone, renamed = renamed), per-letter
                       spawning toggles on/off through validation in both
-                      line and circle modes, and the slot's own colour
-                      pins and releases
-test/studio.smoke.mjs 158 browser assertions — the full merchant journey
+                      line and circle modes, negative gaps overlap on
+                      purpose, engraved style skips the emboss sink rule,
+                      and the slot's own colour pins and releases
+test/studio.smoke.mjs 163 browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and

@@ -133,10 +133,30 @@ test('perChar: toggles on with defaults, tunes axis and gap, toggles off clean',
   valid(m);
   assert.deepEqual(slotOf(m).perChar, { axis: 2, gapMm: 4 });
   assert.throws(() => setTextSlot(m, 'body-text', { perChar: { axis: 9 as never } }), /axis/);
-  assert.throws(() => setTextSlot(m, 'body-text', { perChar: { gapMm: -1 } }), /gapMm/);
+  // Negative gaps are legal — interlocking pieces overlap on purpose.
+  m = setTextSlot(m, 'body-text', { perChar: { gapMm: -2 } });
+  valid(m);
+  assert.equal(slotOf(m).perChar?.gapMm, -2);
+  assert.throws(() => setTextSlot(m, 'body-text', { perChar: { gapMm: -900 } }), /gapMm/);
   const off = setTextSlot(m, 'body-text', { perChar: null });
   valid(off);
   assert.equal(slotOf(off).perChar, undefined);
+});
+
+test('style: engraved validates, ignores the sink rule, and reverts to embossed', () => {
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  m = setTextSlot(m, 'body-text', { style: 'deboss' });
+  valid(m);
+  assert.equal(slotOf(m).style, 'deboss');
+  // Emboss's sink-vs-depth rule does not apply to an engraved slot…
+  m = setTextSlot(m, 'body-text', { sinkMm: 99 });
+  valid(m);
+  // …but snaps back into force when the style returns to embossed.
+  assert.throws(() => setTextSlot(m, 'body-text', { style: 'emboss' }), /sink/i);
+  const back = setTextSlot(m, 'body-text', { style: 'emboss', sinkMm: 0 });
+  valid(back);
+  assert.equal(slotOf(back).style, 'emboss');
+  assert.throws(() => setTextSlot(m, 'body-text', { style: 'etched' as never }), /style/);
 });
 
 test('perChar circle: mode and step validate; text colour pins and releases', () => {

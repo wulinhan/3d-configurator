@@ -177,6 +177,16 @@ check('unlocked: only H moves to 30', near(size.w, 80) && near(size.h, 30) && ne
 m = await manifest();
 check('scale stored as multipliers', near(m.parts[0].placement.scale[0], 2) && near(m.parts[0].placement.scale[1], 3), m.parts[0].placement.scale);
 
+// The stepper triangles tweak without typing: one click = one step.
+await page.click('[data-testid="rot-x-up"]');
+await page.waitForTimeout(150);
+m = await manifest();
+check('stepper arrows tweak a field (+5° on rotation X)', m.parts[0].placement?.rotation?.[0] === 5, m.parts[0].placement?.rotation);
+await page.click('[data-testid="rot-x-down"]');
+await page.waitForTimeout(150);
+m = await manifest();
+check('…and step it back to zero', (m.parts[0].placement?.rotation?.[0] ?? 0) === 0, m.parts[0].placement?.rotation);
+
 // ── 5. invalid size is rejected inline, manifest untouched ─────────────────
 await page.fill('[data-testid="size-w"]', '-5');
 await page.press('[data-testid="size-w"]', 'Enter');
@@ -1234,6 +1244,21 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   }, { timeout: 20000 });
   check('…and the glyph renders in it, independent of the part', true, '');
 
+  // Engraved: a real boolean difference — the letters are cut INTO the part.
+  const baseVerts = await page.evaluate(() => (window).__studioViewer.meshOf('base').geometry.attributes.position.count);
+  await pick('text-style-base-text', 'deboss');
+  await page.waitForFunction((before) => {
+    const v = (window).__studioViewer;
+    return !v.textMeshOf('base-text') && v.meshOf('base').geometry.attributes.position.count !== before;
+  }, baseVerts, { timeout: 30000 });
+  check('engraved style cuts the letters into the part — no glyph, new geometry', true, '');
+  await pick('text-style-base-text', 'emboss');
+  await page.waitForFunction((before) => {
+    const v = (window).__studioViewer;
+    return !!v.textMeshOf('base-text') && v.meshOf('base').geometry.attributes.position.count === before;
+  }, baseVerts, { timeout: 30000 });
+  check('back to embossed: pristine part restored, glyph returns', true, '');
+
   // One piece per letter: the template spawns a copy per placeholder char.
   await page.click('[data-testid="text-spawn-base-text"]');
   await page.fill('[data-testid="text-placeholder-base-text"]', 'AB');
@@ -1285,6 +1310,13 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   check('circle spawning keeps each piece at the template radius, spun to face round',
     near(ring.srcR, ring.copyR, 0.1) && Math.abs(ring.spunY) > 0.1, ring);
 
+  // Back to a linear run for the preview leg.
+  await pick('text-spawn-mode-base-text', 'line');
+  await page.waitForFunction(() => {
+    const copy = (window).__studioViewer?.scene?.getObjectByName('percopy-base-text-1');
+    return !!copy && Math.abs(copy.quaternion.y) < 0.01;
+  }, { timeout: 20000 });
+
   // Per-character pricing reaches the real embed in the preview.
   await page.fill('[data-testid="text-perchar-base-text"]', '2');
   await page.press('[data-testid="text-perchar-base-text"]', 'Enter');
@@ -1302,6 +1334,21 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     await page.evaluate(() => (window).__previewPayload?.selections?.['base-text'] === 'Hi'
       && (window).__previewPayload?.priceDeltas?.some((d) => d.optionId === 'base-text' && d.amount === 4)),
     await page.evaluate(() => (window).__previewPayload));
+  // The customiser recentres the growing run: its centre of mass eases onto
+  // the world origin rather than the row growing off to one side.
+  await page.waitForTimeout(900);
+  check('the growing run eases its centre of mass onto the origin',
+    await page.evaluate(() => {
+      const v = (window).__previewViewer;
+      const mesh = v?.meshOf?.('base');
+      const copy = v?.scene?.getObjectByName('percopy-base-text-1');
+      if (!mesh || !copy) return false;
+      return Math.abs((mesh.position.x + copy.position.x) / 2) < 0.5;
+    }),
+    await page.evaluate(() => ({
+      base: (window).__previewViewer?.meshOf?.('base')?.position?.x,
+      copy: (window).__previewViewer?.scene?.getObjectByName('percopy-base-text-1')?.position?.x,
+    })));
   await page.click('[data-testid="preview-close"]');
   await page.waitForTimeout(200);
 

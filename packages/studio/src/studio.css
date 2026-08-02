@@ -266,7 +266,15 @@ input, select { font: inherit; }
   font-variant-numeric: tabular-nums; font-size: 11px;
 }
 .field-box input::-webkit-outer-spin-button, .field-box input::-webkit-inner-spin-button { -webkit-appearance: none; }
-.field-suffix { padding: 0 7px 0 0; font-size: 10px; color: var(--ink2); white-space: nowrap; }
+.field-suffix { padding: 0 4px 0 0; font-size: 10px; color: var(--ink2); white-space: nowrap; }
+/* Custom stepper triangles at the field's far right — the tweak-without-
+ * typing path (the native spinners are hidden above). */
+.field-steps { display: flex; flex-direction: column; flex: none; border-left: 1px solid var(--line); }
+.field-steps button {
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; padding: 1px 5px; color: var(--ink2); cursor: pointer;
+}
+.field-steps button:hover { color: var(--ink); background: var(--surface); }
 .field-error { font-size: 11px; color: var(--danger); }
 .field.wide > input {
   border: 1.5px solid var(--line); border-radius: 8px; padding: 7px 10px;

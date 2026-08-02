@@ -18,10 +18,12 @@
     "@gltf-transform/extensions": "^4.4.2",
     "@gltf-transform/functions": "^4.4.2",
     "meshoptimizer": "^1.2.0",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "three-bvh-csg": "^0.0.18",
+    "three-mesh-bvh": "^0.9.14"
   },
   "devDependencies": {
-    "playwright-core": "^1.62.0",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "playwright-core": "^1.62.0"
   }
 }

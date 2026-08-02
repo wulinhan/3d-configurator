@@ -10,7 +10,8 @@ the order**. This document covers both halves.
 Host the two published files (`manifest.json`, `model.glb`) anywhere — your
 own domain, the platform's file storage, or a CDN — plus the embed bundle:
 `embed.js`, `embed.css`, and the `embed-*.js` chunks beside them. The chunks
-are lazy pieces (typeface data for 3D text, the mesh decompressor) that
+are lazy pieces (typeface data for 3D text, the engraving engine, the mesh
+decompressor) that
 `embed.js` fetches relative to its own URL only when a product needs them —
 keep the whole set in one folder and everything resolves. Then, on the
 product page:
