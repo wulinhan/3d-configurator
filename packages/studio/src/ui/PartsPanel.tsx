@@ -13,7 +13,7 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Manifest, ChoiceOption } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import {
-  renamePart, removePart,
+  renamePart, removePart, renameGroup, renameVariantSet,
   entriesOf, moveEntryTo, makeGroup, makeVariantChoice,
   ungroup, dissolveVariantChoice,
   addPartToGroup, removePartFromGroup, addPartToChoice, removePartFromChoice,
@@ -27,6 +27,20 @@ const EYE_OFF = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stro
 const DOTS = (
   <svg width="8" height="14" viewBox="0 0 8 14" aria-hidden="true">
     {[2, 7, 12].flatMap((cy) => [2, 6].map((cx) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1.3" fill="currentColor" />))}
+  </svg>
+);
+// Copy: two overlapping squares (the Lucide "copy" glyph).
+const DUP = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+// Dissolve/split: two squares moving apart (the Lucide "ungroup" glyph).
+const UNGROUP = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="4" width="8" height="8" rx="1.5" />
+    <rect x="13" y="12" width="8" height="8" rx="1.5" />
   </svg>
 );
 
@@ -55,6 +69,7 @@ export function PartsPanel(props: {
   onSetHidden: (ids: string[], hidden: boolean) => void;
   onSolo: (id: string | null) => void;
   onHideAll: (hide: boolean) => void;
+  onDuplicate: (entryId: string) => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
   const { manifest } = props.project;
@@ -235,6 +250,7 @@ export function PartsPanel(props: {
         {renaming === p.id ? (
           <input
             className="rename-input" autoFocus defaultValue={p.label} data-testid={`rename-input-${p.id}`}
+            size={Math.max(p.label.length + 2, 8)}
             onBlur={(e) => { setRenaming(null); if (e.target.value.trim() && e.target.value !== p.label) act(() => renamePart(manifest, p.id, e.target.value)); }}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRenaming(null); }}
           />
@@ -247,6 +263,14 @@ export function PartsPanel(props: {
             {opts.live !== undefined && <span className={`live-dot${opts.live ? ' is-live' : ''}`} title={opts.live ? 'Currently shown' : 'Hidden — click to show'} />}
             {p.label}
           </button>
+        )}
+        <span className="spacer" />
+        {!opts.member && (
+          <button
+            className="mini icon" data-testid={`duplicate-${p.id}`} aria-label={`Duplicate ${p.label}`}
+            title="Duplicate this part"
+            onClick={() => { try { props.onDuplicate(p.id); setError(null); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } }}
+          >{DUP}</button>
         )}
         <button
           className="mini icon danger" data-testid={`delete-${p.id}`} aria-label={`Delete ${p.label}`}
@@ -288,27 +312,52 @@ export function PartsPanel(props: {
             aria-label={allHidden ? `Show ${entry.label}` : `Hide ${entry.label}`}
             onClick={() => props.onSetHidden(entry.parts, !allHidden)}
           >{allHidden ? EYE_OFF : EYE}</button>
-          <button
-            className="part-name"
-            onClick={() => {
-              props.onSelectPart(null);
-              if (entry.kind === 'group') props.onEditGroup(entry.id);
-              else props.onEditVariant(entry.id);
-            }}
-          >
-            {entry.label}
-            <span className="tag">{entry.kind === 'group' ? 'assembly' : 'variants'}</span>
-          </button>
-          {entry.kind === 'group' ? (
-            <button
-              className="mini" data-testid={`ungroup-${entry.id}`} title="Split the assembly up; parts stay put"
-              onClick={() => { props.onEditGroup(null); act(() => ungroup(manifest, entry.id)); }}
-            >Split</button>
+          {renaming === entry.id ? (
+            <input
+              className="rename-input" autoFocus defaultValue={entry.label} data-testid={`rename-input-${entry.id}`}
+              size={Math.max(entry.label.length + 2, 8)}
+              onBlur={(e) => {
+                setRenaming(null);
+                if (e.target.value.trim() && e.target.value !== entry.label) {
+                  act(() => (entry.kind === 'group'
+                    ? renameGroup(manifest, entry.id, e.target.value)
+                    : renameVariantSet(manifest, entry.id, e.target.value)));
+                }
+              }}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRenaming(null); }}
+            />
           ) : (
             <button
-              className="mini" data-testid={`dissolve-${entry.id}`} title="Remove the choice; all parts always included"
-              onClick={() => act(() => dissolveVariantChoice(manifest, entry.id))}
-            >Dissolve</button>
+              className="part-name"
+              onClick={() => {
+                props.onSelectPart(null);
+                if (entry.kind === 'group') props.onEditGroup(entry.id);
+                else props.onEditVariant(entry.id);
+              }}
+              onDoubleClick={() => setRenaming(entry.id)}
+            >
+              {entry.label}
+              <span className="tag">{entry.kind === 'group' ? 'assembly' : 'variants'}</span>
+            </button>
+          )}
+          <span className="spacer" />
+          <button
+            className="mini icon" data-testid={`duplicate-${entry.id}`}
+            aria-label={`Duplicate ${entry.label}`} title="Duplicate the whole set"
+            onClick={() => { try { props.onDuplicate(entry.id); setError(null); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } }}
+          >{DUP}</button>
+          {entry.kind === 'group' ? (
+            <button
+              className="mini icon" data-testid={`ungroup-${entry.id}`}
+              aria-label={`Split ${entry.label} up`} title="Split the assembly up; parts stay put"
+              onClick={() => { props.onEditGroup(null); act(() => ungroup(manifest, entry.id)); }}
+            >{UNGROUP}</button>
+          ) : (
+            <button
+              className="mini icon" data-testid={`dissolve-${entry.id}`}
+              aria-label={`Dissolve ${entry.label}`} title="Remove the choice; all parts always included"
+              onClick={() => { props.onEditVariant(null); act(() => dissolveVariantChoice(manifest, entry.id)); }}
+            >{UNGROUP}</button>
           )}
         </div>
         {open && (

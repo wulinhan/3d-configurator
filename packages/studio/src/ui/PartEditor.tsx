@@ -53,16 +53,7 @@ export function GroupEditor(props: {
   return (
     <div className="part-editor" data-testid={`group-editor-${group.id}`}>
       <h3>{group.label} <span className="tag">assembly</span></h3>
-      <section>
-        <h4>Name</h4>
-        <label className="field wide">
-          <input
-            defaultValue={group.label} data-testid="group-name"
-            onBlur={(e) => { if (e.target.value.trim() && e.target.value !== group.label) act(() => renameGroup(manifest, group.id, e.target.value)); }}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          />
-        </label>
-      </section>
+      <p className="hint">Rename by double-clicking its name in the explorer.</p>
       <section>
         <h4>Move together</h4>
         <p className="hint">Shifts every part in the assembly by the given distance. Parts anchored to each other keep their joints.</p>
@@ -130,16 +121,7 @@ export function VariantEditor(props: {
   return (
     <div className="part-editor" data-testid={`variant-editor-${option.id}`}>
       <h3>{option.label} <span className="tag">variants</span></h3>
-      <section>
-        <h4>Name</h4>
-        <label className="field wide">
-          <input
-            defaultValue={option.label} data-testid="variant-name"
-            onBlur={(e) => { if (e.target.value.trim() && e.target.value !== option.label) act(() => renameVariantSet(manifest, option.id, e.target.value)); }}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          />
-        </label>
-      </section>
+      <p className="hint">Rename by double-clicking its name in the explorer.</p>
       <section>
         <h4>Move together</h4>
         <p className="hint">Shifts every variant by the given distance — they usually share one spot, so they travel as one.</p>

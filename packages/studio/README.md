@@ -116,9 +116,17 @@ offers both structures as buttons:
   set renders as ONE tab named "Set (Member)" where the member and its
   colour are picked together; renaming a part renames its entry in the set.
 
-Each part row keeps uniform square controls: an eyeball (hide/show — an
-assembly's eyeball hides every member), a solo toggle, and ✕ delete; rename
-is double-click on the name. Deleting asks with the Studio's own dialog
+Each row keeps uniform square icon controls: an eyeball (hide/show — an
+assembly's eyeball hides every member), a solo toggle (soloing a hidden
+variant member also selects it, switching the preview — otherwise solo
+would show nothing), a duplicate button (two overlapping squares; loose
+parts, assemblies and variant sets alike), and on bundles a split/dissolve
+button (two squares apart) or on parts a ✕ delete. Renaming — parts,
+assemblies and variant sets — is double-click on the name, with the input
+sized to its content; name pills hug their text. With a set's editor open,
+Transform parks a translate-only gizmo at the set's centre of mass, so the
+whole thing drags as one (the same nudge op the panel fields use — one
+undo step per drag). Deleting asks with the Studio's own dialog
 (never the browser prompt), and checking rows in the explorer offers a mass
 delete — one confirm, one undo step. Delete repairs every reference: parts
 anchored to the deleted one keep their world position, its options are
@@ -170,6 +178,12 @@ merges a second file into the project: names dedupe, the incoming parts get
 colour options on the existing palette, one GLB is rebuilt from the union,
 and — because every import is normalised — the new parts land centred on
 the flat axes, sitting on the ground.
+
+Publish lives in a floating modal off the topbar CTA (validation report,
+manifest and compressed-GLB downloads); the left panel keeps only Parts,
+Palette and Finish. See `docs/integrations.md` for wiring the published
+files into Shopify, WooCommerce or a plain HTML page, and for why the
+payload's totals must be recomputed server-side before charging.
 
 ## Anchors: summary first, controls on demand
 
@@ -284,13 +298,13 @@ test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
 test/parts.test.ts    15 — rename ripples (colour, add-on, variant entries),
                       delete repair, match-pose, absolute positioning, snap
-test/structure.test.ts 29 — assemblies merge colours without double-painting,
+test/structure.test.ts 30 — assemblies merge colours without double-painting,
                       variant sets are exclusive by construction (and absorb
                       add-on parts), drag-style add/remove membership repairs
                       colours both ways, group nudges never move an anchored
                       member twice, reordering drags the option order along,
                       deletes repair both structures
-test/studio.smoke.mjs 122 browser assertions — the full merchant journey
+test/studio.smoke.mjs 129 browser assertions — the full merchant journey
                       against the production build, including a real pointer
                       drag on the combined gizmo (and that one Ctrl+Z rewinds
                       the whole drag), view-cube navigation, the saved view

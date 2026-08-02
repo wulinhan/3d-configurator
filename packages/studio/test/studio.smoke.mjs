@@ -720,6 +720,10 @@ check('downloaded GLB is meshopt-compressed', glb.includes('EXT_meshopt_compress
 check('compression size note appears', /compressed, from/.test(await page.textContent('[data-testid="size-note"]') ?? ''),
   await page.textContent('[data-testid="size-note"]'));
 await shoot('4-publish.png');
+// Publish now lives in a floating modal off the CTA — close it to move on.
+await page.click('[data-testid="publish-close"]');
+await page.waitForTimeout(200);
+check('the publish modal closes', await page.evaluate(() => !document.querySelector('.publish-modal')), '');
 
 // ── 11. structure: undo/redo, reorder, variants, groups, preview ───────────
 {
@@ -774,6 +778,19 @@ await shoot('4-publish.png');
     boxes);
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(250);
+
+  // Duplicate a single part straight from its row button.
+  await page.click('[data-testid="duplicate-base"]');
+  await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 3, { timeout: 20000 });
+  await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  m = await manifest();
+  check('a loose part duplicates from its row',
+    m.parts.some((p) => p.id === 'base-copy') && m.options.some((o) => o.id === 'base-colour-copy'),
+    { parts: m.parts.map((p) => p.id) });
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  m = await manifest();
+  check('one undo removes the part copy', m.parts.length === 2, m.parts.map((p) => p.id));
 
   // A pointer drag from a six-dot handle to a target element. `place` picks
   // the drop band: above/below a row reorders, centre of a bundle joins it.
@@ -837,6 +854,31 @@ await shoot('4-publish.png');
     { variant, options: m.options.map((o) => o.id) });
   check('choices are mutually exclusive — only the default shows',
     (await visible('base')) === true && (await visible('cap')) === false, '');
+
+  // Double-click renames the set inline, right in the explorer.
+  await page.dblclick('.part-name:has-text("Body style")');
+  await page.fill('[data-testid="rename-input-body-style"]', 'Tile');
+  await page.press('[data-testid="rename-input-body-style"]', 'Enter');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  check('double-click renames the variant set inline',
+    m.options.find((o) => o.id === 'body-style')?.label === 'Tile', m.options.find((o) => o.id === 'body-style')?.label);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(200);
+  m = await manifest();
+  check('…and the rename is one undo step',
+    m.options.find((o) => o.id === 'body-style')?.label === 'Body style',
+    m.options.find((o) => o.id === 'body-style')?.label);
+
+  // Soloing a HIDDEN variant member selects it too — otherwise solo shows
+  // nothing, since the member's visibleWhen still hides it.
+  await page.click('[data-testid="solo-cap"]');
+  await page.waitForTimeout(300);
+  check('soloing a hidden variant member shows it (solo selects it as well)',
+    (await visible('cap')) === true && (await visible('base')) === false, '');
+  await page.click('[data-testid="show-all"]');
+  await page.waitForTimeout(200);
+
   await page.click('.entry-members .part-name:has-text("Cap")');
   await page.waitForTimeout(300);
   check('clicking the hidden choice swaps which one shows',
@@ -932,6 +974,21 @@ await shoot('4-publish.png');
     && shellColour?.parts?.length === 2
     && !m.options.some((o) => o.id === 'base-colour' || o.id === 'cap-colour'),
     { groups: m.groups, options: m.options.map((o) => o.id) });
+
+  // Opening the assembly's editor + Transform parks a translate-only gizmo
+  // at the set's centre of mass.
+  await page.click('.part-name:has-text("Shell")');
+  await page.waitForTimeout(200);
+  await page.click('[data-testid="gizmo-transform"]');
+  await page.waitForTimeout(300);
+  const setGizmo = await page.evaluate(() => ({
+    translate: !!window.__studioGizmo.translate.object,
+    rotate: !!window.__studioGizmo.rotate.object,
+  }));
+  check('a translate-only gizmo parks at the assembly\'s centre of mass',
+    setGizmo.translate && !setGizmo.rotate, setGizmo);
+  await page.click('[data-testid="gizmo-off"]');
+  await page.waitForTimeout(150);
   await page.click('[data-testid="eye-shell"]');
   await page.waitForTimeout(200);
   check('assembly eyeball hides every member',

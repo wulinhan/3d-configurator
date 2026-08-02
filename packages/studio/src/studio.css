@@ -161,14 +161,22 @@ input, select { font: inherit; }
 .part-rows { display: flex; flex-direction: column; gap: 4px; }
 .part-row { display: flex; align-items: center; gap: 5px; }
 .part-row.is-hidden .part-name { opacity: .45; }
+/* Name pills hug their text (never a full-width bar); the row's spacer
+ * pushes the action buttons to a uniform right edge. */
 .part-name {
-  flex: 1; min-width: 0; text-align: left;
+  flex: 0 1 auto; min-width: 3ch; max-width: calc(100% - 96px); text-align: left;
   border: 1.5px solid var(--line); border-radius: 8px; background: #fff;
   padding: 6px 10px; font-size: 12px; display: inline-flex; gap: 6px; align-items: center;
+  overflow: hidden;
 }
+.part-name > :first-child { flex: none; }
+.part-row .spacer { flex: 1; min-width: 4px; }
 .part-row.is-active .part-name { border-color: var(--accent); background: var(--surface); font-weight: 600; }
+/* Sized by its content via the `size` attribute — as wide as the name
+ * needs, never a runaway full-width field. */
 .rename-input {
-  flex: 1; min-width: 0; border: 1.5px solid var(--accent); border-radius: 8px;
+  flex: 0 1 auto; width: auto; min-width: 8ch; max-width: calc(100% - 96px);
+  border: 1.5px solid var(--accent); border-radius: 8px;
   padding: 6px 10px; font-size: 12px;
 }
 .entry { display: flex; flex-direction: column; gap: 4px; position: relative; }
@@ -431,6 +439,19 @@ input, select { font: inherit; }
   padding: 9px 14px; font-size: 13px; font-weight: 600;
 }
 .danger-btn:hover { background: #9d3626; }
+
+/* ── publish modal ── */
+.publish-modal {
+  width: min(600px, 94vw); max-height: 86vh; overflow-y: auto;
+  background: #fff; border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .22);
+  animation: dialog-in .16s cubic-bezier(.3, 1.2, .5, 1);
+}
+.publish-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px 0;
+}
+.publish-modal-head h3 { margin: 0; font-size: 16px; }
 
 /* ── customer preview overlay ── */
 .preview-overlay {

@@ -43,7 +43,7 @@ export interface SetManifestOptions {
   transient?: boolean;
 }
 
-const TABS = ['Parts', 'Palette', 'Finish', 'Publish'] as const;
+const TABS = ['Parts', 'Palette', 'Finish'] as const;
 type Tab = typeof TABS[number];
 const HISTORY_LIMIT = 100;
 const PANEL_MIN = 280;
@@ -78,6 +78,7 @@ export function App() {
   const [solo, setSolo] = useState<string | null>(null);
   const [axes, setAxes] = useState<string>(AXIS_PRESETS[1].axes); // 3D-print files dominate
   const [previewing, setPreviewing] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
   // Which choice each pick-one option shows while authoring — the merchant's
@@ -211,6 +212,13 @@ export function App() {
     return hiddenParts;
   }, [project?.manifest, hiddenParts, solo]);
 
+  // Soloing a hidden variant member would show NOTHING (its visibleWhen still
+  // hides it) — so solo also selects it, which switches the preview to it.
+  const soloPart = useCallback((id: string | null) => {
+    setSolo(id);
+    if (id) selectPart(id);
+  }, [selectPart]);
+
   const setHidden = useCallback((ids: string[], hidden: boolean) => {
     setHiddenParts((old) => {
       const next = new Set(old);
@@ -295,6 +303,21 @@ export function App() {
     } : null;
   }, [project, setManifest, undo, redo]);
 
+  // The set an open editor is working on — ViewerPane parks a translate
+  // gizmo at its centre of mass so the whole thing moves as one.
+  const editingEntity = useMemo(() => {
+    if (!project) return null;
+    if (editingGroup) {
+      const g = project.manifest.groups?.find((x) => x.id === editingGroup);
+      return g ? { kind: 'group' as const, id: g.id, parts: g.parts } : null;
+    }
+    if (editingVariant) {
+      const parts = project.manifest.parts.filter((p) => p.visibleWhen?.option === editingVariant).map((p) => p.id);
+      return parts.length ? { kind: 'variant' as const, id: editingVariant, parts } : null;
+    }
+    return null;
+  }, [project?.manifest, editingGroup, editingVariant]);
+
   // The floating properties panel: slides in when something is selected,
   // slides out (keeping its last content while it goes) when nothing is.
   const floatContent = project && tab === 'Parts'
@@ -366,10 +389,7 @@ export function App() {
         <button className="ghost preview-btn" data-testid="preview-open" onClick={() => setPreviewing(true)}>
           Preview
         </button>
-        <button
-          className="cta" data-testid="publish-cta"
-          onClick={() => { setPanelOpen(true); setTab('Publish'); }}
-        >
+        <button className="cta" data-testid="publish-cta" onClick={() => setPublishing(true)}>
           Publish
         </button>
       </header>
@@ -395,14 +415,14 @@ export function App() {
               onEditVariant={(id) => { setEditingVariant(id); if (id) { setEditingGroup(null); setSelectedPart(null); } }}
               onAddModel={addModelParts}
               onSetHidden={setHidden}
-              onSolo={setSolo}
+              onSolo={soloPart}
               onHideAll={(hide) => { setSolo(null); setHiddenParts(hide ? new Set(project.manifest.parts.map((p) => p.id)) : new Set()); }}
+              onDuplicate={duplicateEntryInApp}
               onChange={setManifest}
             />
           )}
           {tab === 'Palette' && <PalettePanel project={project} onChange={setManifest} />}
           {tab === 'Finish' && <FinishPanel project={project} onChange={setManifest} />}
-          {tab === 'Publish' && <PublishPanel project={project} onChange={setManifest} />}
         </aside>
 
         <div
@@ -421,6 +441,7 @@ export function App() {
             key={project.modelUrl}
             project={project} selections={selections} selectedPart={selectedPart}
             hiddenParts={effectiveHidden}
+            editingEntity={editingEntity}
             onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
             onChange={setManifest}
           />
@@ -430,6 +451,17 @@ export function App() {
         </div>
       </div>
       {previewing && <PreviewOverlay project={project} onClose={() => setPreviewing(false)} />}
+      {publishing && (
+        <div className="dialog-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) setPublishing(false); }}>
+          <div className="publish-modal" role="dialog" aria-modal="true" aria-label="Publish">
+            <div className="publish-modal-head">
+              <h3>Publish</h3>
+              <button className="ghost" data-testid="publish-close" onClick={() => setPublishing(false)}>Close</button>
+            </div>
+            <PublishPanel project={project} onChange={setManifest} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

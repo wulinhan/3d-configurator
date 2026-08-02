@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
-import { applyGizmoPose, setCameraView, snapFaces, type GizmoPose } from '../lib/manifest-edit.ts';
+import { applyGizmoPose, setCameraView, snapFaces, nudgeGroup, nudgeVariant, type GizmoPose } from '../lib/manifest-edit.ts';
 import { Gizmo, type GizmoMode, type CommitPhase } from './gizmo.ts';
 import { ViewCube } from './view-cube.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -29,6 +29,9 @@ export function ViewerPane(props: {
   selections: Selections;
   selectedPart: string | null;
   hiddenParts: Set<string>;
+  /** An open assembly / variant set editor: its parts move as one via a
+   * translate gizmo parked at the set's centre of mass. */
+  editingEntity: { kind: 'group' | 'variant'; id: string; parts: string[] } | null;
   onSelectPart: (id: string | null) => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
@@ -59,8 +62,10 @@ export function ViewerPane(props: {
 
   // A drag commits against whatever the manifest is at release time, not at
   // gizmo construction — refs keep the callback current without rebuilding.
-  const commitCtx = useRef({ project: props.project, selectedPart: props.selectedPart, onChange: props.onChange });
-  commitCtx.current = { project: props.project, selectedPart: props.selectedPart, onChange: props.onChange };
+  const commitCtx = useRef({ project: props.project, selectedPart: props.selectedPart, editingEntity: props.editingEntity, onChange: props.onChange });
+  commitCtx.current = { project: props.project, selectedPart: props.selectedPart, editingEntity: props.editingEntity, onChange: props.onChange };
+  const proxyRef = useRef<THREE.Object3D | null>(null);
+  const proxyBaseRef = useRef<[number, number, number] | null>(null);
 
   // One viewer + gizmo per loaded model (keyed by the blob URL).
   useEffect(() => {
@@ -93,11 +98,26 @@ export function ViewerPane(props: {
     // history, every later live commit (and the release) replaces in place.
     let midDrag = false;
     const gizmo = new Gizmo(viewer, canvas, (pose: GizmoPose, phase: CommitPhase) => {
-      const { project, selectedPart, onChange } = commitCtx.current;
-      if (!selectedPart) return;
+      const { project, selectedPart, editingEntity, onChange } = commitCtx.current;
       const transient = midDrag;
       midDrag = phase !== 'end';
       try {
+        if (editingEntity) {
+          // The proxy's travel since the last commit becomes a whole-set
+          // nudge — the same op the panel's Move-together fields use.
+          const base = proxyBaseRef.current;
+          if (!base) return;
+          const deltas: [number, number, number] = [
+            pose.position[0] - base[0], pose.position[1] - base[1], pose.position[2] - base[2],
+          ];
+          proxyBaseRef.current = [...pose.position];
+          if (deltas.every((d) => Math.abs(d) < 1e-9)) return;
+          onChange(editingEntity.kind === 'group'
+            ? nudgeGroup(project.manifest, editingEntity.id, deltas)
+            : nudgeVariant(project.manifest, editingEntity.id, deltas), { transient });
+          return;
+        }
+        if (!selectedPart) return;
         onChange(applyGizmoPose(project.manifest, selectedPart, project.raw, pose), { transient });
       } catch {
         // A pose the edit layer refuses (degenerate scale, detached part):
@@ -107,6 +127,10 @@ export function ViewerPane(props: {
       }
     });
     gizmoRef.current = gizmo;
+
+    const proxy = new THREE.Object3D();
+    viewer.scene.add(proxy);
+    proxyRef.current = proxy;
 
     const viewCube = new ViewCube(viewer, cubeRef.current!);
     (window as any).__studioViewCube = viewCube; // test hook
@@ -155,6 +179,8 @@ export function ViewerPane(props: {
       gizmo.dispose();
       gizmoRef.current = null;
       axesRef.current = null;
+      proxy.removeFromParent();
+      proxyRef.current = null;
       grid.geometry.dispose();
       viewer.dispose();
       viewerRef.current = null;
@@ -220,8 +246,38 @@ export function ViewerPane(props: {
   // attached, it IS the axes; the origin ones step aside.
   useEffect(() => {
     const axes = axesRef.current;
-    if (axes) axes.visible = !(props.selectedPart && mode === 'transform');
-  }, [props.selectedPart, mode, props.project.modelUrl]);
+    if (axes) axes.visible = !((props.selectedPart || props.editingEntity) && mode === 'transform');
+  }, [props.selectedPart, props.editingEntity, mode, props.project.modelUrl]);
+
+  // An open assembly / variant set editor + Transform mode = a translate
+  // gizmo at the set's centre of mass, moving all members as one.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const gizmo = gizmoRef.current;
+    const proxy = proxyRef.current;
+    if (!viewer || !gizmo || !proxy) return;
+    if (gizmo.dragging) return; // never re-seat the proxy under a live drag
+    const entity = props.editingEntity;
+    if (!entity || mode !== 'transform') {
+      if (!props.selectedPart) gizmo.attach(null);
+      return;
+    }
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (const partId of entity.parts) {
+      const box = viewer.partBox(partId);
+      if (!box) continue;
+      for (const a of [0, 1, 2]) {
+        min[a] = Math.min(min[a], box.min[a]);
+        max[a] = Math.max(max[a], box.max[a]);
+      }
+    }
+    if (!Number.isFinite(min[0])) return;
+    const centre: [number, number, number] = [0, 1, 2].map((a) => (min[a] + max[a]) / 2) as [number, number, number];
+    proxy.position.set(...centre);
+    proxyBaseRef.current = centre;
+    gizmo.attachTranslate(proxy);
+  }, [props.editingEntity, mode, props.project.manifest, props.selectedPart]);
 
   // The dark pill glides between Orbit / Transform / Snap (the framer-motion
   // layoutId tab pattern, done with a measured absolute span).

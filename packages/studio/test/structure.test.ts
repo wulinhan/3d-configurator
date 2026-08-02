@@ -267,6 +267,14 @@ test('duplicateEntry copies a variant set with its own exclusive choice option',
   assert.ok(!visible.has('flat-lid') && !visible.has('flat-lid-copy'), 'both stay exclusive');
 });
 
+test('duplicateEntry also copies a loose part with its colour option', () => {
+  const m = duplicateEntry(fresh(), 'badge', RAW);
+  valid(m);
+  assert.ok(m.parts.some((p) => p.id === 'badge-copy'));
+  assert.equal(m.parts.find((p) => p.id === 'badge-copy')!.label, 'Badge copy');
+  assert.ok(m.options.some((o) => o.id === 'badge-colour-copy'));
+});
+
 test('nudgeVariant and variantToOrigin move every member as one rigid thing', () => {
   let m = makeVariantChoice(fresh(), ['lid', 'flat-lid'], 'Lid style');
   m = nudgeVariant(m, 'lid-style', [10, 0, 4]);

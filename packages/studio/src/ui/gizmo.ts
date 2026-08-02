@@ -225,6 +225,19 @@ export class Gizmo {
     for (const h of this.helpers) h.visible = true;
   }
 
+  /**
+   * Attach ONLY the translate arrows to an arbitrary object — the proxy an
+   * assembly or variant set parks at its centre of mass. Rotation and scale
+   * of a whole set aren't single-mesh operations, so their handles stay away.
+   */
+  attachTranslate(object: THREE.Object3D | null): void {
+    for (const c of this.all) c.detach();
+    for (const h of this.helpers) h.visible = false;
+    if (!object || this.mode === 'off') return;
+    this.all[0].attach(object);
+    this.helpers[0].visible = true;
+  }
+
   dispose(): void {
     this.canvas.removeEventListener('pointerdown', this.arbitrate, true);
     this.canvas.removeEventListener('pointerup', this.release);
