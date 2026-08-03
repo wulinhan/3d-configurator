@@ -14,6 +14,7 @@ import {
   matchPose, partCentreMm, setPartCentre,
   nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
   setTextSlot, removeTextSlot, type TextSlotPatch,
+  entrySizeMm, withEntrySizeMm,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -43,6 +44,47 @@ const axisTint = (label: 'X' | 'Y' | 'Z') => (
 );
 
 export type RepeatOpts = { count: number; mode: 'line' | 'circle'; axis?: Axis; gapMm?: number };
+
+// Size fields for a whole assembly / variant set — the same W/H/D-with-lock
+// interaction a single part has, scaling members and their spacing rigidly
+// about the set's centre.
+function EntrySizeSection(props: {
+  entryId: string;
+  project: Project;
+  act: (fn: () => Manifest) => void;
+}) {
+  const [lock, setLock] = useState(true);
+  let size: [number, number, number];
+  try {
+    size = entrySizeMm(props.project.manifest, props.entryId, props.project.raw);
+  } catch {
+    return null;
+  }
+  return (
+    <section>
+      <div className="section-head">
+        <h4>Size</h4>
+        <label className="lock">
+          <input
+            type="checkbox" checked={lock} data-testid="set-lock-aspect"
+            onChange={(e) => setLock(e.target.checked)}
+          />
+          Lock proportions
+        </label>
+      </div>
+      <div className="field-row">
+        {AXIS_LABELS.map((label, axis) => (
+          <NumberField
+            key={label} label={label} value={size[axis]} suffix="mm"
+            testId={`set-size-${label.toLowerCase()}`}
+            onCommit={(mm) => props.act(() =>
+              withEntrySizeMm(props.project.manifest, props.entryId, axis as Axis, mm, props.project.raw, lock))}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
 
 // The pattern tool: stamp copies of a part / assembly / variant set along an
 // axis or around the origin. Merchant-only — the copies land as ordinary
@@ -89,7 +131,7 @@ function RepeatSection(props: {
             <Select
               ariaLabel="Repeat axis" testId="repeat-axis" compact
               value={String(axis)}
-              options={UI_AXES.map(({ label, axis: a }) => ({ value: String(a), label, chip: AXIS_COLOURS[label] }))}
+              options={UI_AXES.map(({ label, axis: a }) => ({ value: String(a), label, tint: AXIS_COLOURS[label] }))}
               onChange={(v) => setAxis(Number(v) as Axis)}
             />
           </label>
@@ -141,6 +183,7 @@ export function GroupEditor(props: {
     <div className="part-editor" data-testid={`group-editor-${group.id}`}>
       <h3>{group.label} <span className="tag">assembly</span></h3>
       <p className="hint">Rename by double-clicking its name in the explorer.</p>
+      <EntrySizeSection entryId={group.id} project={props.project} act={act} />
       <section>
         <h4>Move together</h4>
         <p className="hint">Shifts every part in the assembly by the given distance. Parts anchored to each other keep their joints.</p>
@@ -211,6 +254,7 @@ export function VariantEditor(props: {
     <div className="part-editor" data-testid={`variant-editor-${option.id}`}>
       <h3>{option.label} <span className="tag">variants</span></h3>
       <p className="hint">Rename by double-clicking its name in the explorer.</p>
+      <EntrySizeSection entryId={option.id} project={props.project} act={act} />
       <section>
         <h4>Move together</h4>
         <p className="hint">Shifts every variant by the given distance — they usually share one spot, so they travel as one.</p>
@@ -586,7 +630,7 @@ function TextSlotEditor(props: {
                 <Select
                   ariaLabel="Row axis" testId={`text-spawn-axis-${slot.id}`} compact
                   value={String(slot.perChar.axis ?? 0)}
-                  options={UI_AXES.map(({ label, axis }) => ({ value: String(axis), label, chip: AXIS_COLOURS[label] }))}
+                  options={UI_AXES.map(({ label, axis }) => ({ value: String(axis), label, tint: AXIS_COLOURS[label] }))}
                   onChange={(v) => patch({ perChar: { ...slot.perChar, axis: Number(v) as Axis } })}
                 />
               </label>

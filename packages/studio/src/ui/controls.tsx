@@ -16,6 +16,8 @@ export interface SelectOption {
   label: string;
   /** Optional colour chip shown before the label (swatch pickers). */
   chip?: string;
+  /** Colour the label TEXT itself (axis pickers) — no chip. */
+  tint?: string;
 }
 
 export function Select(props: {
@@ -93,7 +95,10 @@ export function Select(props: {
         onClick={() => setOpen((o) => !o)} onKeyDown={onKey}
       >
         {current?.chip !== undefined && <span className="chip small" style={{ background: current.chip }} />}
-        <span className="ui-select-label">{current?.label ?? props.placeholder ?? ''}</span>
+        <span
+          className="ui-select-label"
+          style={current?.tint ? { color: current.tint, fontWeight: 700 } : undefined}
+        >{current?.label ?? props.placeholder ?? ''}</span>
         <svg className="ui-select-caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
           <path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -109,7 +114,10 @@ export function Select(props: {
               onClick={() => choose(o.value)}
             >
               {o.chip !== undefined && <span className="chip small" style={{ background: o.chip }} />}
-              <span className="ui-select-label">{o.label}</span>
+              <span
+                className="ui-select-label"
+                style={o.tint ? { color: o.tint, fontWeight: 700 } : undefined}
+              >{o.label}</span>
               {o.value === props.value && <span className="ui-select-tick">✓</span>}
             </button>
           ))}

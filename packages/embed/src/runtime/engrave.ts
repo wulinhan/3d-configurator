@@ -66,12 +66,11 @@ export function trianglesOfGroup(geo: THREE.BufferGeometry, materialIndex: numbe
   return out;
 }
 
-/**
- * The engraved pocket's own surface: the glyph prism's side walls plus its
- * bottom lid (the floor), posed exactly where the cut runs — everything
- * but the top lid, which is the opening.
- */
-export function pocketLining(text: string, font: Font, spec: TextOption): number[] {
+/** Triangles of the posed glyph prism, filtered to one region: its side
+ * walls, or its bottom lid (the pocket floor). The top lid — the opening —
+ * is never kept. ExtrudeGeometry groups: 0 = the two lids, 1 = the walls;
+ * the lids separate cleanly by extrusion depth. */
+function prismTriangles(text: string, font: Font, spec: TextOption, keep: 'walls' | 'floor'): number[] {
   const prism = buildTextGeometry(text, font, spec); // exact depth, flush with the surface
   const posed = new THREE.Mesh(prism);
   placeGlyph(posed, { ...spec, sinkMm: spec.depthMm });
@@ -80,11 +79,11 @@ export function pocketLining(text: string, font: Font, spec: TextOption): number
   const pos = prism.attributes.position;
   const out: number[] = [];
   const v = new THREE.Vector3();
-  // ExtrudeGeometry groups: 0 = the two lids, 1 = the side walls. The lids
-  // separate cleanly by extrusion depth (bottom at z≈0, top at z≈depth).
   for (const group of prism.groups) {
+    const isWalls = group.materialIndex === 1;
+    if ((keep === 'walls') !== isWalls) continue;
     for (let i = group.start; i < group.start + group.count; i += 3) {
-      if (group.materialIndex === 0) {
+      if (keep === 'floor') {
         const cap = Math.max(pos.getZ(i), pos.getZ(i + 1), pos.getZ(i + 2));
         if (cap > spec.depthMm / 2) continue; // top lid — the opening
       }
@@ -96,6 +95,23 @@ export function pocketLining(text: string, font: Font, spec: TextOption): number
   }
   prism.dispose();
   return out;
+}
+
+/** The engraved pocket's side walls, posed where the cut runs. The floor is
+ * NOT included — it renders as its own mesh so it can carry the slot's text
+ * colour (see pocketFloor). */
+export function pocketLining(text: string, font: Font, spec: TextOption): number[] {
+  return prismTriangles(text, font, spec, 'walls');
+}
+
+/** The pocket's flat floor as its own geometry, in the carrier's local
+ * space — the face that carries the slot's text colour. */
+export function pocketFloor(text: string, font: Font, spec: TextOption): THREE.BufferGeometry {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position',
+    new THREE.BufferAttribute(Float32Array.from(prismTriangles(text, font, spec, 'floor')), 3));
+  geo.computeVertexNormals();
+  return geo;
 }
 
 /**

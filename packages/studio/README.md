@@ -101,9 +101,12 @@ offers both structures as buttons:
 - **Assembly** records `manifest.groups` — the members move, duplicate and
   repeat as one thing, but every part KEEPS its own colour option (a
   clicker's base and button are one object with two finishes). Its editor
-  renames, nudges every member together (members anchored to each other
-  move once, not twice — the anchor already carries them), and splits the
-  assembly up; splitting touches nothing but the grouping.
+  renames, RESIZES the whole set (the same W/H/D-with-lock fields a part
+  has — members and their spacing scale rigidly about the set's centre,
+  anchors surviving via offset slides), nudges every member together
+  (members anchored to each other move once, not twice — the anchor
+  already carries them), and splits the assembly up; splitting touches
+  nothing but the grouping. Variant sets get the same size fields.
 - **Variant set** builds a `choice` option with `role: 'variant'` and
   points each member's `visibleWhen` at it — mutual exclusivity by
   construction, no runtime special-casing. A part that was an optional
@@ -232,7 +235,10 @@ glyph volume is subtracted from the part with three-bvh-csg (lazy-loaded,
 an exact lining — walls and floor built from the glyph prism itself — so
 engraving stays occluded and solid even on merchant meshes with open
 shells or flipped winding, where raw CSG loses its inside/outside bearings
-and leaves see-through pockets. Follows the customer's text live — glyph **size**, extrusion **depth**, a
+and leaves see-through pockets. The pocket FLOOR — the flat face, not the
+walls — renders as its own mesh in the slot's text colour, so engraved
+letters read in colour at the bottom of the cut while the walls stay the
+part's material. Follows the customer's text live — glyph **size**, extrusion **depth**, a
 spin about the normal, a length limit, example text (rendered as
 the model's preview and the input's ghost), and pricing — flat and/or
 per-character, recomputed server-side like every other delta. The text mesh
@@ -381,7 +387,7 @@ test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
 test/parts.test.ts    15 — rename ripples (colour, add-on, variant entries),
                       delete repair, match-pose, absolute positioning, snap
-test/structure.test.ts 35 — assemblies merge colours without double-painting,
+test/structure.test.ts 36 — assemblies merge colours without double-painting,
                       variant sets are exclusive by construction (and absorb
                       add-on parts), drag-style add/remove membership repairs
                       colours both ways, group nudges never move an anchored

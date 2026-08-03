@@ -18,6 +18,7 @@ import {
   entriesOf, moveEntry, moveEntryTo, withAnchor, makePartOptional, EditError,
   partToOrigin, groupToOrigin, nudge, renamePart, setPartMaterial,
   duplicateEntry, repeatEntry, nudgeVariant, variantToOrigin, renameVariantSet, setScene,
+  entrySizeMm, withEntrySizeMm,
 } from '../src/lib/manifest-edit.ts';
 import { mergeModel } from '../src/lib/manifest-init.ts';
 
@@ -387,6 +388,36 @@ test('setPartMaterial applies and clears procedural textures through validation'
   const cleared = setPartMaterial(m, 'body', { texture: null });
   valid(cleared);
   assert.equal(cleared.parts.find((p) => p.id === 'body')!.material?.texture, undefined);
+});
+
+test('withEntrySizeMm scales an assembly rigidly about its centre, anchors intact', () => {
+  // badge (4 wide) rides 1mm above the body (40 wide): doubling the width
+  // locked doubles every member and the spacing, keeps the ride height
+  // relationship, and the union centre stays put.
+  let m = withAnchor(fresh(), 'badge', 1, { align: 'min', to: 'body', edge: 'max', offset: 1 });
+  m = makeGroup(m, ['body', 'badge'], 'Shell');
+  const before = entrySizeMm(m, 'shell', RAW);
+  m = withEntrySizeMm(m, 'shell', 0, before[0] * 2, RAW, true);
+  valid(m);
+  const after = entrySizeMm(m, 'shell', RAW);
+  near(after[0], before[0] * 2);
+  near(after[1], before[1] * 2);
+  near(after[2], before[2] * 2);
+  const layout = resolveLayout(m, RAW);
+  // Members really scaled (not just spread): body is 40 raw → 80 laid out.
+  near(layout.get('body')!.box.max[0] - layout.get('body')!.box.min[0], 80);
+  // The badge still sits ON the body — the anchor survived the resize.
+  assert.equal(m.parts.find((p) => p.id === 'badge')!.placement!.y!.to, 'body:max');
+
+  // Unlocked: one axis moves, the others hold.
+  let u = makeGroup(fresh(), ['body', 'badge'], 'Shell');
+  const b0 = entrySizeMm(u, 'shell', RAW);
+  u = withEntrySizeMm(u, 'shell', 2, b0[2] * 3, RAW, false);
+  valid(u);
+  const a0 = entrySizeMm(u, 'shell', RAW);
+  near(a0[0], b0[0]);
+  near(a0[2], b0[2] * 3);
+  assert.throws(() => withEntrySizeMm(u, 'shell', 0, -5, RAW, true), EditError);
 });
 
 test('setScene merges knobs and the validator holds the ranges', () => {

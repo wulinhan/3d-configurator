@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
 import * as csg from 'three-bvh-csg';
-import { cutTextGeometry, buildTextGeometry, placeGlyph } from '../src/runtime/engrave.ts';
+import { cutTextGeometry, buildTextGeometry, placeGlyph, pocketFloor } from '../src/runtime/engrave.ts';
 import fontData from '../src/fonts/sans-bold.ts';
 import type { TextOption } from '../src/manifest/types.ts';
 
@@ -30,10 +30,18 @@ const countAtY = (geo: THREE.BufferGeometry, y: number): number => {
   return tris;
 };
 
-test('a closed part cuts to an open hole with walls and a floor', () => {
+test('a closed part cuts to an open hole with walls; the floor is its own mesh', () => {
   const out = cutTextGeometry(new THREE.BoxGeometry(40, 10, 20), 'T', font, SPEC, csg);
   assert.ok(countAtY(out, 5) > 0, 'the top surface survives around the hole');
-  assert.ok(countAtY(out, 3) > 0, 'the pocket floor exists at full depth');
+  // The floor is deliberately NOT part of the cut geometry — it renders as
+  // its own mesh so it can carry the slot's text colour.
+  assert.equal(countAtY(out, 3), 0, 'no floor inside the cut itself');
+  const floor = pocketFloor('T', font, SPEC);
+  assert.ok(countAtY(floor, 3) > 0, 'the floor mesh sits at full depth');
+  const pos = floor.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    assert.ok(Math.abs(pos.getY(i) - 3) < 1e-4, 'the floor is ONLY the flat face — no walls');
+  }
 });
 
 test('an OPEN shell still gets a closed pocket — the lining does not depend on the mesh', () => {
@@ -49,7 +57,13 @@ test('an OPEN shell still gets a closed pocket — the lining does not depend on
   shell.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(kept), 3));
 
   const out = cutTextGeometry(shell, 'T', font, SPEC, csg);
-  assert.ok(countAtY(out, 3) > 0, 'the pocket floor exists even on the open shell');
+  // Walls span the full pocket height even on the open shell…
+  const outPos = out.attributes.position;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < outPos.count; i++) { lo = Math.min(lo, outPos.getY(i)); hi = Math.max(hi, outPos.getY(i)); }
+  assert.ok(lo <= 3 + 1e-4 && hi >= 5 - 1e-4, 'the pocket walls reach from floor depth to the surface');
+  // …and the floor mesh closes the bottom independent of the mesh quality.
+  assert.ok(countAtY(pocketFloor('T', font, SPEC), 3) > 0, 'the floor mesh exists regardless');
 });
 
 test('the glyph prism poses onto the sketch plane with sink lowering it', () => {

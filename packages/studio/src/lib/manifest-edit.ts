@@ -84,6 +84,86 @@ export function withSizeMm(
   });
 }
 
+/** Union size of an explorer entry (assembly / variant set) in laid-out mm. */
+export function entrySizeMm(manifest: Manifest, entryId: string, raw: Map<string, PartBounds>): [number, number, number] {
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  const layout = resolveLayout(manifest, raw);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const id of entry.parts) {
+    const box = layout.get(id)?.box;
+    if (!box) continue;
+    for (const a of [0, 1, 2]) {
+      min[a] = Math.min(min[a], box.min[a]);
+      max[a] = Math.max(max[a], box.max[a]);
+    }
+  }
+  if (!Number.isFinite(min[0])) throw new EditError('no geometry to size');
+  return [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+}
+
+/**
+ * Resize a whole entry the way one part resizes: every member's scale
+ * multiplies by the same ratio and member centres converge on (or spread
+ * from) the entry's union centre by it, so the entry scales rigidly about
+ * its own middle. Centres land through the same offset slides the position
+ * fields use, so anchors survive — the centre pass runs twice because
+ * sliding an anchored member before the part it rides has settled would
+ * leave it a step behind.
+ */
+export function withEntrySizeMm(
+  manifest: Manifest, entryId: string, axis: Axis, mm: number, raw: Map<string, PartBounds>, lock: boolean,
+): Manifest {
+  if (!Number.isFinite(mm) || mm <= 0) throw new EditError(`size must be a positive number of millimetres, got ${mm}`);
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  const layout = resolveLayout(manifest, raw);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const id of entry.parts) {
+    const box = layout.get(id)?.box;
+    if (!box) continue;
+    for (const a of [0, 1, 2]) {
+      min[a] = Math.min(min[a], box.min[a]);
+      max[a] = Math.max(max[a], box.max[a]);
+    }
+  }
+  const base = max[axis] - min[axis];
+  if (!Number.isFinite(base) || base <= 0) throw new EditError('the set is flat on that axis — it cannot be sized along it');
+  const r = mm / base;
+  const factors: [number, number, number] = lock ? [r, r, r] : [1, 1, 1];
+  if (!lock) factors[axis] = r;
+  const unionCentre = [0, 1, 2].map((a) => (min[a] + max[a]) / 2);
+
+  // Targets from the layout BEFORE anything moves.
+  const targets = new Map<string, number[]>();
+  for (const id of entry.parts) {
+    const box = layout.get(id)?.box;
+    if (!box) continue;
+    const centre = [0, 1, 2].map((a) => (box.min[a] + box.max[a]) / 2);
+    targets.set(id, [0, 1, 2].map((a) => unionCentre[a] + (centre[a] - unionCentre[a]) * factors[a]));
+  }
+
+  let next = edit(manifest, (draft) => {
+    for (const id of entry.parts) {
+      const part = partOf(draft, id);
+      const scale = [...(part.placement?.scale ?? [1, 1, 1])] as [number, number, number];
+      for (let a = 0; a < 3; a++) scale[a] *= factors[a];
+      part.placement = { ...part.placement, scale };
+    }
+  });
+  for (let pass = 0; pass < 2; pass++) {
+    for (const [id, target] of targets) {
+      for (const a of [0, 1, 2] as Axis[]) {
+        if (factors[a] === 1) continue; // untouched axis — centres stay put
+        next = setPartCentre(next, id, a, round3(target[a]), raw);
+      }
+    }
+  }
+  return next;
+}
+
 // ── position ────────────────────────────────────────────────────────────────
 
 /**

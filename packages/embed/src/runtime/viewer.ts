@@ -15,7 +15,7 @@ import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, type Selections } from './state.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
 import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
-import { buildTextGeometry, placeGlyph, cutTextGeometry } from './engrave.ts';
+import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor } from './engrave.ts';
 
 /**
  * three.js r155 switched to physically-based light units: a directional
@@ -186,6 +186,9 @@ export class Viewer {
   private csgModule?: Promise<typeof import('three-bvh-csg')>;
   /** partId → its cloned normal-map texture (own repeat per part). */
   private partTextures = new Map<string, THREE.Texture>();
+  /** optionId → the engraved pocket's floor mesh (single-slot mode) — the
+   * flat face that carries the slot's text colour. */
+  private debossFloors = new Map<string, { mesh: THREE.Mesh; key: string; customMat?: THREE.MeshStandardMaterial }>();
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
@@ -811,13 +814,16 @@ export class Viewer {
       if (!carrier || !text) {
         this.dropTextMesh(option.id);
         this.dropPerChar(option.id);
+        this.dropDebossFloor(option.id);
         continue;
       }
       if (option.perChar) {
         this.dropTextMesh(option.id); // the slot may have just been switched over
+        this.dropDebossFloor(option.id);
         this.syncPerChar(option, carrier, text);
       } else if ((option.style ?? 'emboss') === 'deboss') {
-        // Engraved: no glyph mesh at all — the part's own geometry is cut.
+        // Engraved: no glyph mesh — the part's own geometry is cut, and the
+        // pocket floor rides as its own mesh in the slot's text colour.
         // Gathered per part so several slots compose one subtraction chain.
         this.dropTextMesh(option.id);
         this.dropPerChar(option.id);
@@ -826,6 +832,7 @@ export class Viewer {
         debossJobs.set(option.part, jobs);
       } else {
         this.dropPerChar(option.id);
+        this.dropDebossFloor(option.id);
         this.syncSingle(option, carrier, text);
       }
     }
@@ -835,6 +842,9 @@ export class Viewer {
     }
     for (const id of [...this.perCharText.keys()]) {
       if (!wanted.has(id)) this.dropPerChar(id);
+    }
+    for (const id of [...this.debossFloors.keys()]) {
+      if (!wanted.has(id)) this.dropDebossFloor(id);
     }
     this.syncDebossParts(debossJobs);
   }
@@ -883,6 +893,26 @@ export class Viewer {
         target.geometry = geo === base ? base.clone() : geo;
         this.debossGeo.get(partId)?.dispose();
         this.debossGeo.set(partId, target.geometry);
+
+        // The pocket floor — the flat face, not the walls — carries the
+        // slot's text colour, as its own mesh riding the carrier.
+        list.forEach((j, i) => {
+          const floorKey = JSON.stringify([
+            j.text, j.spec.font, j.spec.sizeMm, j.spec.depthMm,
+            j.spec.rotationDeg, j.spec.origin, j.spec.normal, j.spec.colourHex,
+          ]);
+          let entry = this.debossFloors.get(j.spec.id);
+          if (entry?.key === floorKey && entry.mesh.parent === target) return;
+          if (entry) { entry.mesh.removeFromParent(); entry.mesh.geometry.dispose(); }
+          const holder = { customMat: entry?.customMat };
+          const mesh = new THREE.Mesh(pocketFloor(j.text, fonts[i], j.spec), undefined as unknown as THREE.Material);
+          mesh.material = this.textMaterial(j.spec, holder) ?? mesh.material;
+          mesh.castShadow = mesh.receiveShadow = true;
+          mesh.raycast = () => {};
+          mesh.name = `text-${j.spec.id}`;
+          target.add(mesh); // pre-posed in carrier-local space
+          this.debossFloors.set(j.spec.id, { mesh, key: floorKey, customMat: holder.customMat });
+        });
       });
     }
   }
@@ -1055,6 +1085,7 @@ export class Viewer {
           if (this.perCharText.get(option.id) !== current) return; // superseded
           const base = this.debossBase.get(spec.part)!;
           current.ownGeometries = [];
+          const floorMaterial = this.textMaterial(spec, current);
           chars.forEach((ch, k) => {
             const target = k === 0 ? carrier : current.pieces[k - 1]?.get(spec.part);
             if (!target) return;
@@ -1062,6 +1093,15 @@ export class Viewer {
             if (ch !== ' ') applyBoxUvs(geo);
             target.geometry = geo;
             current.ownGeometries!.push(geo);
+            if (ch !== ' ') {
+              // Each piece's pocket floor carries the text colour.
+              const floor = new THREE.Mesh(pocketFloor(ch, font, spec), floorMaterial);
+              floor.castShadow = floor.receiveShadow = true;
+              floor.raycast = () => {};
+              floor.name = `text-${spec.id}-${k}`;
+              target.add(floor); // pre-posed in carrier-local space
+              current.glyphs.push(floor);
+            }
           });
           current.debossedCarrier = true;
         });
@@ -1184,6 +1224,15 @@ export class Viewer {
     entry.mesh?.geometry.dispose();
     entry.customMat?.dispose();
     this.textMeshes.delete(optionId);
+  }
+
+  private dropDebossFloor(optionId: string): void {
+    const entry = this.debossFloors.get(optionId);
+    if (!entry) return;
+    entry.mesh.removeFromParent();
+    entry.mesh.geometry.dispose();
+    entry.customMat?.dispose();
+    this.debossFloors.delete(optionId);
   }
 
   private dropPerChar(optionId: string): void {
