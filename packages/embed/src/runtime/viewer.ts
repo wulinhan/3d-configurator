@@ -10,15 +10,12 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
-import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
-import { cullHiddenFromProjector } from './decal.ts';
 import type { Manifest, Part, TextOption, UploadOption } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
-import { partColours, visibleParts, parseUploadState, type Selections } from './state.ts';
+import { partColours, visibleParts, parseUploadState, type UploadState, type Selections } from './state.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
-import {
-  proceduralNormalMap, applyBoxUvs, zoneFrameTexture, boundaryFrameTexture, boundaryMaskTexture, BASE_TILE_MM,
-} from './textures.ts';
+import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
+import { tracePath } from './curve.ts';
 import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor } from './engrave.ts';
 
 /**
@@ -193,16 +190,18 @@ export class Viewer {
   /** optionId → the engraved pocket's floor mesh (single-slot mode) — the
    * flat face that carries the slot's text colour. */
   private debossFloors = new Map<string, { mesh: THREE.Mesh; key: string; customMat?: THREE.MeshStandardMaterial }>();
-  /** optionId → the image zone's decal + dashed boundary frame. */
-  private imageDecals = new Map<string, {
+  /** optionId → the image zone's overlay plane and its paint state. */
+  private imageZones = new Map<string, {
+    /** Pose signature — zone geometry + carrier transform. */
     key: string;
-    decal?: THREE.Mesh;
-    frame?: THREE.Mesh;
-    texture?: THREE.Texture;
-    /** Per-shape textures (custom boundary outline / clip mask) — unlike the
-     * shared dashed-rectangle frame, these are owned and disposed here. */
-    frameTexture?: THREE.Texture;
-    maskTexture?: THREE.Texture;
+    /** Paint signature — image, offset, size, boundary. */
+    paint: string;
+    mesh?: THREE.Mesh;
+    canvas?: HTMLCanvasElement;
+    texture?: THREE.CanvasTexture;
+    imgEl?: HTMLImageElement;
+    imgSrc?: string;
+    hasImage?: boolean;
   }>();
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
@@ -222,7 +221,8 @@ export class Viewer {
     this.renderer = new THREE.WebGLRenderer({ canvas: opts.canvas, antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio ?? 1, 2));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // PCFSoftShadowMap is deprecated (r180+ warns and falls back to PCF).
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // Highlight rolloff instead of hard clipping — the reason white parts
     // show their chamfers and logos rather than rendering as a flat sheet.
     // The clear colour bypasses tone mapping, so the background is unchanged.
@@ -808,12 +808,15 @@ export class Viewer {
   }
 
   /**
-   * Customer images land as DECALS: the image is projected through a box
-   * onto whatever geometry sits inside the zone, so flat, curved and
-   * double-curved surfaces all take it — no UV unwrapping involved. The
-   * dashed frame decal shows the zone while no image is uploaded. Decals
-   * are generated in world space, so they rebuild whenever the carrier's
-   * transform, the zone, or the customer's image/position/size changes.
+   * Customer images render the way the shipped storefront configurators do:
+   * one PLANE the exact size of the zone, hovering 0.3 mm off the surface,
+   * carrying a canvas texture the zone's aspect ratio. The image is DRAWN
+   * into the canvas at its offset/size (and clipped by the boundary curve),
+   * so repositioning and resizing repaint a canvas instead of rebuilding
+   * geometry — no projection artefacts, no z-fighting, no per-move geometry
+   * churn. While no image is uploaded the same canvas shows the dashed
+   * zone outline. The plane rebuilds only when the zone or the carrier's
+   * transform changes.
    */
   private syncImages(selections: Selections): void {
     const wanted = new Set<string>();
@@ -821,151 +824,166 @@ export class Viewer {
       if (option.type !== 'upload') continue;
       wanted.add(option.id);
       const carrier = this.meshes.get(option.part);
-      const entry = this.imageDecals.get(option.id) ?? { key: '' };
-      this.imageDecals.set(option.id, entry);
       if (!carrier) { this.dropImage(option.id); continue; }
       carrier.updateMatrixWorld();
       const state = parseUploadState(selections[option.id]);
+      let entry = this.imageZones.get(option.id);
+      if (!entry) {
+        entry = { key: '', paint: '' };
+        this.imageZones.set(option.id, entry);
+      }
+
+      // Pose key: the plane itself only rebuilds when the zone moves.
       const key = JSON.stringify([
-        option.origin, option.normal, option.rotationDeg, option.widthMm, option.heightMm,
-        option.wrapMm, option.part, option.boundary,
-        state ? [state.img.length, state.img.slice(-48), state.u, state.v, state.s] : null,
+        option.origin, option.normal, option.rotationDeg, option.widthMm, option.heightMm, option.part,
         carrier.matrixWorld.elements.map((e) => Math.round(e * 1000)),
       ]);
-      if (entry.key === key) {
-        if (entry.decal) entry.decal.visible = carrier.visible;
-        if (entry.frame) entry.frame.visible = carrier.visible && !state;
-        continue;
-      }
-      this.dropImage(option.id);
-      const fresh: NonNullable<ReturnType<typeof this.imageDecals.get>> = { key };
-      this.imageDecals.set(option.id, fresh);
+      if (entry.key !== key) {
+        entry.mesh?.removeFromParent();
+        entry.mesh?.geometry.dispose();
+        (entry.mesh?.material as THREE.Material | undefined)?.dispose();
+        entry.texture?.dispose();
 
-      // The zone frame — always built; hidden while an image is showing. A
-      // reshaped zone draws its curve; a plain one the shared dashed rect.
-      const frameTex = option.boundary
-        ? boundaryFrameTexture(option.boundary, option.widthMm, option.heightMm)
-        : zoneFrameTexture();
-      if (option.boundary) fresh.frameTexture = frameTex;
-      const frame = this.buildDecal(carrier, option, 0, 0, option.widthMm, option.heightMm, frameTex);
-      if (frame) {
-        frame.name = `image-frame-${option.id}`;
-        frame.visible = carrier.visible && !state;
-        this.group.add(frame);
-        fresh.frame = frame;
-      }
-      if (!state) continue;
-
-      const spec = { ...option };
-      new THREE.TextureLoader().load(state.img, (texture) => {
-        if (this.imageDecals.get(option.id) !== fresh) { texture.dispose(); return; } // superseded
+        // Canvas matched to the zone's aspect so nothing distorts.
+        const canvas = document.createElement('canvas');
+        const aspect = option.widthMm / option.heightMm;
+        canvas.width = aspect >= 1 ? 1024 : Math.max(64, Math.round(1024 * aspect));
+        canvas.height = aspect >= 1 ? Math.max(64, Math.round(1024 / aspect)) : 1024;
+        const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace;
         texture.anisotropy = 4;
-        const img = texture.image as { width: number; height: number };
-        const aspect = img.width / Math.max(1, img.height);
-        // 100% = the largest fit inside the zone, aspect preserved.
-        let w = Math.min(spec.widthMm, spec.heightMm * aspect);
-        let h = w / aspect;
-        w *= state.s / 100; h *= state.s / 100;
-        // The image stays inside the zone whatever the stored offset says.
-        const u = Math.max(-(spec.widthMm - w) / 2, Math.min((spec.widthMm - w) / 2, state.u));
-        const v = Math.max(-(spec.heightMm - h) / 2, Math.min((spec.heightMm - h) / 2, state.v));
-        const target = this.meshes.get(spec.part);
-        if (!target) { texture.dispose(); return; }
-        // A reshaped boundary clips the image: the mask covers the decal's
-        // own rectangle, so only the part of the image inside the curve shows.
-        let mask: THREE.Texture | undefined;
-        if (spec.boundary) {
-          mask = boundaryMaskTexture(spec.boundary, { cx: u, cy: v, w, h });
-          fresh.maskTexture = mask;
+
+        // Unlit, like the storefront's logo overlay — the customer's artwork
+        // keeps its true colours regardless of scene lighting.
+        const material = new THREE.MeshBasicMaterial({
+          map: texture, transparent: true, depthWrite: false, alphaTest: 0.005,
+          polygonOffset: true, polygonOffsetFactor: -4,
+        });
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(option.widthMm, option.heightMm), material);
+        // Zone pose in world space — same basis convention as glyphs.
+        const n = new THREE.Vector3(...option.normal).normalize();
+        const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+        const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
+        const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
+        const localQuat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, n));
+        if (option.rotationDeg) {
+          localQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180));
         }
-        const decal = this.buildDecal(target, spec, u, v, w, h, texture, mask);
-        if (!decal) { texture.dispose(); mask?.dispose(); return; }
-        decal.name = `image-${spec.id}`;
-        decal.visible = target.visible;
-        this.group.add(decal);
-        fresh.decal = decal;
-        fresh.texture = texture;
-        if (fresh.frame) fresh.frame.visible = false;
-      });
+        const localPos = new THREE.Vector3(...option.origin).addScaledVector(n, 0.3); // hover off the surface
+        mesh.position.copy(carrier.localToWorld(localPos));
+        mesh.quaternion.copy(carrier.getWorldQuaternion(new THREE.Quaternion()).multiply(localQuat));
+        mesh.name = `image-zone-${option.id}`;
+        mesh.renderOrder = 2;
+        mesh.raycast = () => {};
+        this.group.add(mesh);
+        Object.assign(entry, { key, paint: '', mesh, canvas, texture });
+      }
+      entry.mesh!.visible = carrier.visible;
+
+      // Paint key: image, offset, size and boundary only repaint the canvas.
+      const paint = JSON.stringify([
+        option.boundary, option.widthMm, option.heightMm,
+        state ? [state.img.length, state.img.slice(-48), state.u, state.v, state.s] : null,
+      ]);
+      if (entry.paint === paint) continue;
+      entry.paint = paint;
+      if (!state) {
+        delete entry.imgEl;
+        delete entry.imgSrc;
+        this.paintZone(option, entry, null);
+        continue;
+      }
+      if (entry.imgSrc === state.img && entry.imgEl) {
+        this.paintZone(option, entry, state);
+      } else {
+        // New image: show the frame while it decodes, then paint.
+        this.paintZone(option, entry, null);
+        const img = new Image();
+        entry.imgSrc = state.img;
+        img.onload = () => {
+          const now = this.imageZones.get(option.id);
+          if (now !== entry || entry.imgSrc !== state.img) return; // superseded
+          entry.imgEl = img;
+          this.paintZone(option, entry, parseUploadState(this.lastSelections[option.id]));
+        };
+        img.src = state.img;
+      }
     }
-    for (const id of [...this.imageDecals.keys()]) {
+    for (const id of [...this.imageZones.keys()]) {
       if (!wanted.has(id)) this.dropImage(id);
     }
   }
 
+  /** Draw the zone's current face: the customer's image at its offset and
+   * size, clipped by the boundary curve — or the dashed outline when there
+   * is no image yet. All in zone millimetres mapped onto the canvas. */
+  private paintZone(
+    option: UploadOption,
+    entry: { canvas?: HTMLCanvasElement; texture?: THREE.CanvasTexture; imgEl?: HTMLImageElement; hasImage?: boolean },
+    state: UploadState | null,
+  ): void {
+    const canvas = entry.canvas;
+    const texture = entry.texture;
+    if (!canvas || !texture) return;
+    const ctx = canvas.getContext('2d')!;
+    const cw = canvas.width, ch = canvas.height;
+    const map = ([u, v]: [number, number]): [number, number] =>
+      [(u / option.widthMm + 0.5) * cw, (0.5 - v / option.heightMm) * ch];
+    ctx.clearRect(0, 0, cw, ch);
+
+    if (state && entry.imgEl) {
+      ctx.save();
+      if (option.boundary) {
+        ctx.beginPath();
+        tracePath(ctx, option.boundary as Array<[number, number]>, map);
+        ctx.clip();
+      }
+      const img = entry.imgEl;
+      const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
+      // 100% = the largest fit inside the zone, aspect preserved.
+      let w = Math.min(option.widthMm, option.heightMm * aspect);
+      let h = w / aspect;
+      w *= state.s / 100;
+      h *= state.s / 100;
+      // The image stays inside the zone whatever the stored offset says.
+      const u = Math.max(-(option.widthMm - w) / 2, Math.min((option.widthMm - w) / 2, state.u));
+      const v = Math.max(-(option.heightMm - h) / 2, Math.min((option.heightMm - h) / 2, state.v));
+      const [dx, dy] = map([u - w / 2, v + h / 2]);
+      ctx.drawImage(img, dx, dy, (w / option.widthMm) * cw, (h / option.heightMm) * ch);
+      ctx.restore();
+      entry.hasImage = true;
+    } else {
+      ctx.strokeStyle = 'rgba(30, 41, 59, 0.9)';
+      ctx.lineWidth = 4;
+      ctx.setLineDash([12, 8]);
+      ctx.beginPath();
+      if (option.boundary) {
+        tracePath(ctx, option.boundary as Array<[number, number]>, map);
+      } else {
+        ctx.rect(2, 2, cw - 4, ch - 4);
+      }
+      ctx.stroke();
+      entry.hasImage = false;
+    }
+    texture.needsUpdate = true;
+  }
+
   /** One projected decal over the zone's surface, offset (u,v) mm from its
    * centre in the zone plane, sized w×h mm. */
-  private buildDecal(
-    carrier: THREE.Mesh, option: UploadOption,
-    u: number, v: number, w: number, h: number, texture: THREE.Texture,
-    alphaMap?: THREE.Texture,
-  ): THREE.Mesh | null {
-    try {
-      // Zone basis in the carrier's local space — same convention as glyphs.
-      const n = new THREE.Vector3(...option.normal).normalize();
-      const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
-      const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
-      const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
-      const localQuat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, n));
-      if (option.rotationDeg) {
-        localQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180));
-      }
-      const rot = new THREE.Vector3().copy(xAxis).multiplyScalar(u).addScaledVector(yAxis, v);
-      const localPos = new THREE.Vector3(...option.origin).add(
-        rot.applyQuaternion(new THREE.Quaternion().setFromAxisAngle(n, (option.rotationDeg ?? 0) * Math.PI / 180)));
-      const worldPos = carrier.localToWorld(localPos.clone());
-      const worldQuat = carrier.getWorldQuaternion(new THREE.Quaternion()).multiply(localQuat);
-      const euler = new THREE.Euler().setFromQuaternion(worldQuat);
-      const wrap = option.wrapMm ?? Math.max(option.widthMm, option.heightMm);
-      const raw = new DecalGeometry(carrier, worldPos, euler, new THREE.Vector3(w, h, wrap));
-      // The projection box reaches THROUGH the part; without this, walls and
-      // the underside inside the box would take the image too (a QR stamped
-      // on the top face bleeding out of every edge). Keep only what the
-      // projector can actually see.
-      const geometry = cullHiddenFromProjector(raw, new THREE.Vector3(0, 0, 1).applyEuler(euler), carrier);
-      raw.dispose();
-      if (!geometry || !geometry.attributes.position || geometry.attributes.position.count === 0) {
-        geometry?.dispose();
-        return null;
-      }
-      const material = new THREE.MeshStandardMaterial({
-        map: texture,
-        alphaMap: alphaMap ?? null,
-        transparent: true,
-        roughness: 0.8,
-        metalness: 0,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -4,
-      });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.raycast = () => {};
-      mesh.renderOrder = 2;
-      return mesh;
-    } catch {
-      return null;
-    }
-  }
-
   private dropImage(optionId: string): void {
-    const entry = this.imageDecals.get(optionId);
+    const entry = this.imageZones.get(optionId);
     if (!entry) return;
-    for (const mesh of [entry.decal, entry.frame]) {
-      if (!mesh) continue;
-      mesh.removeFromParent();
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
-    }
+    entry.mesh?.removeFromParent();
+    entry.mesh?.geometry.dispose();
+    (entry.mesh?.material as THREE.Material | undefined)?.dispose();
     entry.texture?.dispose();
-    entry.frameTexture?.dispose();
-    entry.maskTexture?.dispose();
-    this.imageDecals.delete(optionId);
+    this.imageZones.delete(optionId);
   }
 
-  /** The rendered image decal of an upload option — a test hook. */
+  /** The zone's plane while a customer image is showing — a test hook. */
   imageDecalOf(optionId: string): THREE.Mesh | undefined {
-    return this.imageDecals.get(optionId)?.decal;
+    const entry = this.imageZones.get(optionId);
+    return entry?.hasImage ? entry.mesh : undefined;
   }
 
   /**
@@ -1483,8 +1501,14 @@ export class Viewer {
       return hits.length ? (hits[0].object.userData.part as string) : null;
     };
 
-    canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.button === 0) down = { x: e.clientX, y: e.clientY };
+    });
     canvas.addEventListener('pointerup', (e) => {
+      // Only the LEFT button selects (or deselects). Right/middle belong to
+      // the camera — a right-click pan must never drop the selection and
+      // yank the orbit centre back to the origin under the merchant.
+      if (e.button !== 0) return;
       // An orbit drag that happens to end on the model isn't a click.
       if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
       // null on empty space: hosts that care (the Studio) deselect; the embed

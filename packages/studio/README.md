@@ -274,18 +274,17 @@ in mm, plus a spin about the normal) inside which the customer's uploaded
 image lands. The customiser shows the zone as a dashed frame until an image
 arrives.
 
-The image is applied as a **projected decal** (three.js DecalGeometry), not
-a UV texture: the picture is projected through a box onto whatever geometry
-sits inside the zone, and the decal mesh generates its own UVs from the
-projection. That is what makes curved and even double-curved surfaces work —
-parts ship without authored UV maps (the texture library box-projects its
-own, too coarse for imagery), and projection needs none. **Depth** controls
-how far the projection reaches through curvature; 0 picks a sensible
-automatic (the larger zone dimension). **Slide** nudges the zone across its
-surface plane after placement. The projector only paints what it can see:
-triangles raked more than ~80° away from the projection direction are
-culled, so an image on the top face never bleeds onto side walls or the
-underside even though the projection box passes through them.
+The image renders the way the shipped storefront configurators render logo
+uploads (their proven approach): ONE plane the exact size of the zone,
+hovering 0.3 mm off the picked surface, carrying an unlit canvas texture
+in the zone's aspect ratio. The customer's image is DRAWN into that canvas
+at its offset and size — repositioning and resizing repaint a canvas
+instead of rebuilding geometry, so there are no projection artefacts, no
+z-fighting, and nothing can ever bleed onto side walls or the underside
+(the earlier DecalGeometry projection stamped everything inside its
+projection box, which did exactly that). Unlit means the artwork keeps its
+true colours regardless of scene lighting, like a printed sticker.
+**Slide** nudges the zone across its surface plane after placement.
 
 **Edit shape** turns the rectangle into a freeform outline: draggable
 anchor dots appear pinned to the model's surface, and the boundary is the

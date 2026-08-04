@@ -54,17 +54,15 @@ test('addImageZone binds a valid zone with merchant-ready defaults', () => {
 
 test('setImageZone tunes fields through validation; bad values throw whole', () => {
   let m = addImageZone(fresh(), 'body', PLACE);
-  m = setImageZone(m, 'body-image', { widthMm: 60, heightMm: 40, wrapMm: 12, rotationDeg: 45, priceDelta: 5 });
+  m = setImageZone(m, 'body-image', { widthMm: 60, heightMm: 40, rotationDeg: 45, priceDelta: 5 });
   valid(m);
   const zone = zoneOf(m);
   assert.equal(zone.widthMm, 60);
   assert.equal(zone.heightMm, 40);
-  assert.equal(zone.wrapMm, 12);
   assert.equal(zone.rotationDeg, 45);
   assert.equal(zone.priceDelta, 5);
   // Zeroing an optional field clears it back to its default.
-  const cleared = setImageZone(m, 'body-image', { wrapMm: 0, rotationDeg: 0, priceDelta: 0 });
-  assert.equal(zoneOf(cleared).wrapMm, undefined);
+  const cleared = setImageZone(m, 'body-image', { rotationDeg: 0, priceDelta: 0 });
   assert.equal(zoneOf(cleared).rotationDeg, undefined);
   assert.equal(zoneOf(cleared).priceDelta, undefined);
   // Out-of-range sizes never reach the manifest.

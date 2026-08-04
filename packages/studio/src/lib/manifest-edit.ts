@@ -1386,7 +1386,7 @@ export function addImageZone(
 
 /** The fields a merchant tunes after placing an image zone. */
 export type ImageZonePatch = Partial<Pick<UploadOption,
-  'widthMm' | 'heightMm' | 'wrapMm' | 'rotationDeg' | 'priceDelta' | 'maxBytes' | 'label'>>;
+  'widthMm' | 'heightMm' | 'rotationDeg' | 'priceDelta' | 'maxBytes' | 'label'>>;
 
 export function setImageZone(manifest: Manifest, optionId: string, patch: ImageZonePatch): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
@@ -1395,7 +1395,7 @@ export function setImageZone(manifest: Manifest, optionId: string, patch: ImageZ
     const o = draft.options.find((x) => x.id === optionId) as UploadOption;
     Object.assign(o, patch);
     // An emptied field falls back to its default rather than validating as 0.
-    for (const key of ['wrapMm', 'rotationDeg', 'priceDelta'] as const) {
+    for (const key of ['rotationDeg', 'priceDelta'] as const) {
       if (o[key] === 0) delete o[key];
     }
   });

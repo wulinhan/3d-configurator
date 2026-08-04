@@ -1472,38 +1472,20 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   const zoneVerdict = validateManifest(m);
   check('manifest still valid with the image zone', zoneVerdict.ok, zoneVerdict.errors);
 
-  // With no image uploaded, the zone shows as a dashed frame decal.
+  // With no image uploaded, the zone renders as ONE plane hovering just off
+  // the picked surface, its canvas showing the dashed outline. A flat plane
+  // by construction cannot bleed onto walls or the underside.
   await page.waitForFunction(() => {
-    const f = (window).__studioViewer?.scene?.getObjectByName('image-frame-base-image');
-    return !!f && f.visible && f.geometry.attributes.position.count > 0;
+    const f = (window).__studioViewer?.scene?.getObjectByName('image-zone-base-image');
+    return !!f && f.visible && f.geometry.attributes.position.count === 4;
   }, { timeout: 20000 });
-  check('the dashed zone frame projects onto the part', true, '');
-  // The projection box reaches through the part — but only the TOP surface
-  // may take the decal. Every triangle must face the projector (up), or the
-  // frame (and later the customer's image) bleeds out of walls and underside.
-  // Winding is untrustworthy on merchant meshes, so assert geometry: every
-  // decal triangle's PLANE is near-horizontal (no side walls) and every
-  // centroid sits at the same height (no underside — that would spread the
-  // heights by the part's whole thickness).
-  const facing = await page.evaluate(() => {
-    const pos = (window).__studioViewer.scene.getObjectByName('image-frame-base-image').geometry.attributes.position;
-    let minAbs = 1, minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i + 2 < pos.count; i += 3) {
-      const p = (k) => [pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k)];
-      const [a, b, c] = [p(0), p(1), p(2)];
-      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-      const len = Math.hypot(...n) || 1;
-      minAbs = Math.min(minAbs, Math.abs(n[1]) / len);
-      const cy = (a[1] + b[1] + c[1]) / 3;
-      minY = Math.min(minY, cy);
-      maxY = Math.max(maxY, cy);
-    }
-    return { minAbs, spread: maxY - minY };
+  const zonePose = await page.evaluate(() => {
+    const f = (window).__studioViewer.scene.getObjectByName('image-zone-base-image');
+    const box = (window).__studioViewer.partBox('base');
+    return { y: f.position.y, top: box.max[1] };
   });
-  check('…and only onto the top surface — no wall or underside bleed',
-    facing.minAbs > 0.1 && facing.spread < 0.5, facing);
+  check('the zone renders as a single plane hovering just off the top surface',
+    zonePose.y > zonePose.top && zonePose.y < zonePose.top + 1, zonePose);
 
   // Zone width is merchant-editable and regenerates the frame.
   await page.fill('[data-testid="image-width-base-image"]', '40');
@@ -1557,11 +1539,19 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     const d = (window).__previewViewer?.imageDecalOf?.('base-image');
     return !!d && d.geometry.attributes.position.count > 0;
   }, { timeout: 20000 });
-  check('the uploaded image lands as a projected decal on the part', true, '');
-  check('…clipped by the reshaped boundary (alpha mask on the decal)',
-    await page.evaluate(() => !!(window).__previewViewer.imageDecalOf('base-image').material.alphaMap), '');
-  check('…and the dashed frame hides while an image is showing',
-    await page.evaluate(() => (window).__previewViewer.scene.getObjectByName('image-frame-base-image')?.visible === false), '');
+  check('the uploaded image lands on the zone plane', true, '');
+  // The boundary clip happens in the canvas: with the reshaped curve active,
+  // the zone's corners are OUTSIDE it (transparent) while the centre carries
+  // the image's pixels.
+  const clipped = await page.evaluate(() => {
+    const canvas = (window).__previewViewer.imageDecalOf('base-image').material.map.image;
+    const ctx = canvas.getContext('2d');
+    const corner = ctx.getImageData(2, 2, 1, 1).data[3];
+    const centre = ctx.getImageData(Math.round(canvas.width / 2), Math.round(canvas.height / 2), 1, 1).data[3];
+    return { corner, centre };
+  });
+  check('…clipped by the reshaped boundary (corner transparent, centre painted)',
+    clipped.corner === 0 && clipped.centre > 0, clipped);
   const sel0 = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
   check('the payload carries the image at full size, centred',
     sel0.img.startsWith('data:image/') && sel0.u === 0 && sel0.v === 0 && sel0.s === 100, sel0);
@@ -1581,9 +1571,9 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.waitForFunction(() => {
     const v = (window).__previewViewer;
     return !v.imageDecalOf('base-image')
-      && v.scene.getObjectByName('image-frame-base-image')?.visible === true;
+      && v.scene.getObjectByName('image-zone-base-image')?.visible === true;
   }, { timeout: 20000 });
-  check('Remove image clears the decal and brings the zone frame back',
+  check('Remove image clears the picture and brings the dashed outline back',
     await page.evaluate(() => (window).__previewPayload.selections['base-image'] === ''), '');
   await page.click('[data-testid="preview-close"]');
   await page.waitForTimeout(200);
@@ -1593,11 +1583,11 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.waitForFunction(() => !(window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.boundary, { timeout: 20000 });
   check('Reset shape clears the boundary back to the full rectangle', true, '');
 
-  // Removing the zone clears the option and its frame.
+  // Removing the zone clears the option and its plane.
   await page.click('[data-testid="image-remove-base-image"]');
   await page.waitForFunction(() => !(window).__studio?.manifest?.options?.some((o) => o.type === 'upload'), { timeout: 20000 });
-  await page.waitForFunction(() => !(window).__studioViewer?.scene?.getObjectByName('image-frame-base-image'), { timeout: 20000 });
-  check('removing the zone clears the option and the frame decal', true, '');
+  await page.waitForFunction(() => !(window).__studioViewer?.scene?.getObjectByName('image-zone-base-image'), { timeout: 20000 });
+  check('removing the zone clears the option and the zone plane', true, '');
 }
 
 check('material has the studio environment (dull-gloss plastic)',

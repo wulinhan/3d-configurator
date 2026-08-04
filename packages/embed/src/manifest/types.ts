@@ -185,16 +185,14 @@ export interface ChoiceOption {
 }
 
 /**
- * Customer-supplied artwork PROJECTED onto a part's surface.
+ * Customer-supplied artwork laid onto a part's surface.
  *
  * The merchant picks the surface in the Studio; `origin`/`normal` record the
- * projection plane in the part's local mesh space (exactly like a text
- * slot), and `widthMm`/`heightMm` bound the ZONE the image must stay
- * within. Rendering is a decal projection — the image is beamed through a
- * box onto whatever geometry is underneath, so flat, curved and
- * double-curved surfaces all take it without any UV unwrapping;
- * `wrapMm` is how deep the projector reaches (default: the zone's larger
- * side, enough to wrap typical curvature).
+ * zone plane in the part's local mesh space (exactly like a text slot), and
+ * `widthMm`/`heightMm` bound the ZONE the image must stay within. Rendering
+ * is a zone-sized overlay plane hovering fractionally off the surface,
+ * carrying a canvas the image is drawn into — the storefront configurators'
+ * proven logo approach: repositioning repaints a canvas, no geometry churn.
  *
  * The customer's value in `selections` is a JSON string:
  * `{ "img": <data URL>, "u": mm, "v": mm, "s": percent }` — offset within
@@ -216,8 +214,6 @@ export interface UploadOption {
   /** Zone bounds on the surface, mm. */
   widthMm: number;
   heightMm: number;
-  /** Projection depth for curved surfaces, mm. Default max(width, height). */
-  wrapMm?: number;
   /**
    * Optional reshaped outline: anchor points in zone-plane millimetres
    * (u across, v up, origin at the zone centre). The boundary is the closed

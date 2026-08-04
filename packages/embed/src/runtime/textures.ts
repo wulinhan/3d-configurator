@@ -9,7 +9,6 @@
 
 import * as THREE from 'three';
 import type { TextureType } from '../manifest/types.ts';
-import { tracePath, type Pt } from './curve.ts';
 
 export const TEXTURE_CHOICES: Array<{ id: TextureType; label: string }> = [
   { id: 'leather', label: 'Fine leather' },
@@ -159,72 +158,6 @@ export function proceduralNormalMap(type: TextureType): THREE.CanvasTexture {
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   cache.set(type, texture);
   return texture;
-}
-
-let frameTexture: THREE.CanvasTexture | undefined;
-
-/**
- * A zone's reshaped boundary as a dashed outline — the frame decal's texture
- * when the merchant has drawn a custom shape. Zone-space millimetres map
- * onto the canvas; canvas top row is the zone's +v edge (flipY texture).
- * Not cached: each boundary is its own shape, the caller owns disposal.
- */
-export function boundaryFrameTexture(boundary: Pt[], widthMm: number, heightMm: number): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = SIZE;
-  const ctx = canvas.getContext('2d')!;
-  ctx.clearRect(0, 0, SIZE, SIZE);
-  ctx.strokeStyle = 'rgba(30, 41, 59, 0.9)';
-  ctx.lineWidth = 4;
-  ctx.setLineDash([12, 8]);
-  ctx.beginPath();
-  tracePath(ctx, boundary, ([u, v]) => [(u / widthMm + 0.5) * SIZE, (0.5 - v / heightMm) * SIZE]);
-  ctx.stroke();
-  return new THREE.CanvasTexture(canvas);
-}
-
-/**
- * The boundary as an alpha mask over an arbitrary rectangle of the zone —
- * the customer's image decal covers `rect` (centre cx,cy, size w×h, all in
- * zone millimetres), and only the part of it inside the curve should show.
- * White inside, black outside; MeshStandardMaterial's alphaMap reads the
- * green channel. The caller owns disposal.
- */
-export function boundaryMaskTexture(
-  boundary: Pt[], rect: { cx: number; cy: number; w: number; h: number },
-): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = SIZE;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, SIZE, SIZE);
-  ctx.fillStyle = '#fff';
-  ctx.beginPath();
-  tracePath(ctx, boundary, ([u, v]) => [
-    ((u - rect.cx) / rect.w + 0.5) * SIZE,
-    (0.5 - (v - rect.cy) / rect.h) * SIZE,
-  ]);
-  ctx.fill();
-  return new THREE.CanvasTexture(canvas);
-}
-
-/**
- * The dashed rectangular border shown over an image zone while nothing is
- * uploaded — a transparent canvas with a dashed outline, projected as a
- * decal the exact size of the zone. Cached: one canvas per page, ever.
- */
-export function zoneFrameTexture(): THREE.CanvasTexture {
-  if (frameTexture) return frameTexture;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = SIZE;
-  const ctx = canvas.getContext('2d')!;
-  ctx.clearRect(0, 0, SIZE, SIZE);
-  ctx.strokeStyle = 'rgba(30, 41, 59, 0.9)';
-  ctx.lineWidth = 4;
-  ctx.setLineDash([12, 8]);
-  ctx.strokeRect(4, 4, SIZE - 8, SIZE - 8);
-  frameTexture = new THREE.CanvasTexture(canvas);
-  return frameTexture;
 }
 
 /**

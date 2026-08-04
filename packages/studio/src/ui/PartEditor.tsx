@@ -728,14 +728,9 @@ function ImageZoneEditor(props: {
           key={`v-${tick}`} label="Slide ↕" value={0} suffix="mm" testId={`image-slide-v-${zone.id}`}
           onCommit={(v) => { if (v) slide(0, v); }}
         />
-        <NumberField
-          label="Depth" value={zone.wrapMm ?? 0} suffix="mm" testId={`image-wrap-${zone.id}`}
-          onCommit={(v) => patch({ wrapMm: v })}
-        />
       </div>
       <p className="hint">
-        Slide moves the zone across its surface; Depth is how far the image
-        projects through curvature (0 = automatic).
+        Slide moves the zone across its surface.
       </p>
       <div className="field-row">
         <NumberField

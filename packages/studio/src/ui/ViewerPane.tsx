@@ -359,6 +359,7 @@ export function ViewerPane(props: {
       viewerRef.current?.showSurfaceHighlight('hover', viewerRef.current.surfaceAt(e.clientX, e.clientY));
     };
     const onClick = (e: PointerEvent) => {
+      if (e.button !== 0) return; // right-drag pans, it never picks
       const viewer = viewerRef.current;
       const hit = viewer?.surfaceAt(e.clientX, e.clientY);
       if (!hit || !viewer) return;
@@ -408,9 +409,11 @@ export function ViewerPane(props: {
       lastHover = now;
       viewerRef.current?.showSurfaceHighlight('hover', hitOnTarget(e));
     };
-    const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
+    const onDown = (e: PointerEvent) => { if (e.button === 0) down = { x: e.clientX, y: e.clientY }; };
     const onUp = (e: PointerEvent) => {
-      // An orbit drag that ends on the part isn't a pick.
+      // Right/middle buttons belong to the camera; an orbit drag that ends
+      // on the part isn't a pick either.
+      if (e.button !== 0) return;
       if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
       const hit = hitOnTarget(e);
       if (!hit) return;
@@ -508,6 +511,7 @@ export function ViewerPane(props: {
     let dragMoved = false;
 
     const startDrag = (index: number) => (e: PointerEvent) => {
+      if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       dragging = index;
