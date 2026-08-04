@@ -13,7 +13,8 @@ import {
 } from '../../embed/src/runtime/state.ts';
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
-  addImageZone, setImageZone, nudgeImageZone, removeImageZone, removePart, renamePart, EditError,
+  addImageZone, setImageZone, nudgeImageZone, removeImageZone, setImageZoneBoundary,
+  removePart, renamePart, EditError,
 } from '../src/lib/manifest-edit.ts';
 
 const tri = (positions: number[]) => ({
@@ -128,6 +129,23 @@ test('customer selections clamp to the zone and price when used', () => {
   assert.equal(s['body-image'], '');
   applySelection(m, s, 'body-image', JSON.stringify({ img: 'javascript:alert(1)', u: 0, v: 0, s: 100 }));
   assert.equal(s['body-image'], '');
+});
+
+test('setImageZoneBoundary shapes, rounds, validates and clears', () => {
+  let m = addImageZone(fresh(), 'body', PLACE);
+  m = setImageZoneBoundary(m, 'body-image', [[-10, -5.00049], [10, -5], [0, 8]]);
+  valid(m);
+  assert.deepEqual(zoneOf(m).boundary, [[-10, -5], [10, -5], [0, 8]], 'points round to 3 decimals');
+
+  const cleared = setImageZoneBoundary(m, 'body-image', null);
+  valid(cleared);
+  assert.equal(zoneOf(cleared).boundary, undefined);
+
+  // A boundary that is not a closed shape (or not numbers) never lands.
+  assert.throws(() => setImageZoneBoundary(m, 'body-image', [[0, 0], [1, 1]]), EditError, 'two points');
+  assert.throws(() => setImageZoneBoundary(m, 'body-image', [[0, 0], [1, 1], [NaN, 2]]), EditError);
+  assert.throws(() => setImageZoneBoundary(m, 'body-image', [[0, 0], [1, 1], [600, 2]]), EditError, 'out of range');
+  assert.throws(() => setImageZoneBoundary(m, 'ghost', [[0, 0], [1, 1], [2, 2]]), EditError);
 });
 
 test('validator rejects broken zones', () => {

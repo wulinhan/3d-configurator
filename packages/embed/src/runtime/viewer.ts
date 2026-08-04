@@ -15,7 +15,9 @@ import type { Manifest, Part, TextOption, UploadOption } from '../manifest/types
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, parseUploadState, type Selections } from './state.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
-import { proceduralNormalMap, applyBoxUvs, zoneFrameTexture, BASE_TILE_MM } from './textures.ts';
+import {
+  proceduralNormalMap, applyBoxUvs, zoneFrameTexture, boundaryFrameTexture, boundaryMaskTexture, BASE_TILE_MM,
+} from './textures.ts';
 import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor } from './engrave.ts';
 
 /**
@@ -196,6 +198,10 @@ export class Viewer {
     decal?: THREE.Mesh;
     frame?: THREE.Mesh;
     texture?: THREE.Texture;
+    /** Per-shape textures (custom boundary outline / clip mask) — unlike the
+     * shared dashed-rectangle frame, these are owned and disposed here. */
+    frameTexture?: THREE.Texture;
+    maskTexture?: THREE.Texture;
   }>();
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
@@ -821,7 +827,7 @@ export class Viewer {
       const state = parseUploadState(selections[option.id]);
       const key = JSON.stringify([
         option.origin, option.normal, option.rotationDeg, option.widthMm, option.heightMm,
-        option.wrapMm, option.part,
+        option.wrapMm, option.part, option.boundary,
         state ? [state.img.length, state.img.slice(-48), state.u, state.v, state.s] : null,
         carrier.matrixWorld.elements.map((e) => Math.round(e * 1000)),
       ]);
@@ -834,8 +840,13 @@ export class Viewer {
       const fresh: NonNullable<ReturnType<typeof this.imageDecals.get>> = { key };
       this.imageDecals.set(option.id, fresh);
 
-      // The zone frame — always built; hidden while an image is showing.
-      const frame = this.buildDecal(carrier, option, 0, 0, option.widthMm, option.heightMm, zoneFrameTexture());
+      // The zone frame — always built; hidden while an image is showing. A
+      // reshaped zone draws its curve; a plain one the shared dashed rect.
+      const frameTex = option.boundary
+        ? boundaryFrameTexture(option.boundary, option.widthMm, option.heightMm)
+        : zoneFrameTexture();
+      if (option.boundary) fresh.frameTexture = frameTex;
+      const frame = this.buildDecal(carrier, option, 0, 0, option.widthMm, option.heightMm, frameTex);
       if (frame) {
         frame.name = `image-frame-${option.id}`;
         frame.visible = carrier.visible && !state;
@@ -860,8 +871,15 @@ export class Viewer {
         const v = Math.max(-(spec.heightMm - h) / 2, Math.min((spec.heightMm - h) / 2, state.v));
         const target = this.meshes.get(spec.part);
         if (!target) { texture.dispose(); return; }
-        const decal = this.buildDecal(target, spec, u, v, w, h, texture);
-        if (!decal) { texture.dispose(); return; }
+        // A reshaped boundary clips the image: the mask covers the decal's
+        // own rectangle, so only the part of the image inside the curve shows.
+        let mask: THREE.Texture | undefined;
+        if (spec.boundary) {
+          mask = boundaryMaskTexture(spec.boundary, { cx: u, cy: v, w, h });
+          fresh.maskTexture = mask;
+        }
+        const decal = this.buildDecal(target, spec, u, v, w, h, texture, mask);
+        if (!decal) { texture.dispose(); mask?.dispose(); return; }
         decal.name = `image-${spec.id}`;
         decal.visible = target.visible;
         this.group.add(decal);
@@ -880,6 +898,7 @@ export class Viewer {
   private buildDecal(
     carrier: THREE.Mesh, option: UploadOption,
     u: number, v: number, w: number, h: number, texture: THREE.Texture,
+    alphaMap?: THREE.Texture,
   ): THREE.Mesh | null {
     try {
       // Zone basis in the carrier's local space — same convention as glyphs.
@@ -905,6 +924,7 @@ export class Viewer {
       }
       const material = new THREE.MeshStandardMaterial({
         map: texture,
+        alphaMap: alphaMap ?? null,
         transparent: true,
         roughness: 0.8,
         metalness: 0,
@@ -931,6 +951,8 @@ export class Viewer {
       (mesh.material as THREE.Material).dispose();
     }
     entry.texture?.dispose();
+    entry.frameTexture?.dispose();
+    entry.maskTexture?.dispose();
     this.imageDecals.delete(optionId);
   }
 

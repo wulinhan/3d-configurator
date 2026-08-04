@@ -284,6 +284,17 @@ how far the projection reaches through curvature; 0 picks a sensible
 automatic (the larger zone dimension). **Slide** nudges the zone across its
 surface plane after placement.
 
+**Edit shape** turns the rectangle into a freeform outline: draggable
+anchor dots appear pinned to the model's surface, and the boundary is the
+closed Catmull-Rom/Bézier curve through them (runtime/curve.ts) — drag a
+dot to reshape, click the smaller midpoint dot on any segment to add an
+anchor, double-click an anchor to remove it (three minimum), Esc or *Done
+shaping* to finish, *Reset shape* to return to the full rectangle. The
+dashed frame decal redraws live during the drag, so the curve is previewed
+on the actual surface — curved or not. At render time the curve becomes an
+alpha mask multiplied into the customer's image decal, so only the part of
+the image inside the outline shows; a whole drag is one undo step.
+
 Customers get the storefront upload pattern: an *Upload image* button
 (downscaled client-side to ≤1024 px and re-encoded under the zone's byte
 budget before it ever leaves the browser), a POSITION arrow pad (a tap moves
@@ -432,7 +443,7 @@ test/text.test.ts     10 — text slots bind valid, tune through validation,
                       line and circle modes, negative gaps overlap on
                       purpose, engraved style skips the emboss sink rule,
                       and the slot's own colour pins and releases
-test/image.test.ts     7 — image zones bind valid with defaults, tune and
+test/image.test.ts     8 — image zones bind valid with defaults, tune and
                       nudge through validation (the nudge slides in the
                       zone's own surface plane, both face orientations),
                       follow their carrier part (deleted = gone, renamed =
@@ -442,7 +453,7 @@ test/engrave (embed)   3 — the boolean cut comes back CLOSED: surface,
                       walls and floor — even on an open-shell mesh where
                       raw CSG loses its bearings (the see-through-pocket
                       regression, asserted headless)
-test/studio.smoke.mjs 183 browser assertions — the full merchant journey
+test/studio.smoke.mjs 197 browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and
@@ -462,9 +473,13 @@ test/studio.smoke.mjs 183 browser assertions — the full merchant journey
                       typing priced per character in the real embed → removal
                       clearing slot, extrusion and spawned pieces), and image
                       zones end to end (face pick → dashed frame decal →
-                      customer upload landing as a projected decal → arrow-pad
-                      repositioning and stepped resizing → removal restoring
-                      the frame, then the zone itself)
+                      boundary shaping with dragged/inserted anchors → customer
+                      upload landing as a projected decal clipped by the curve
+                      → arrow-pad repositioning and stepped resizing → removal
+                      restoring the frame, then the zone itself), plus the
+                      viewport chrome rules: no Orbit tab (Transform toggles,
+                      deselect disarms it, tools disabled with no parts) and
+                      the ground grid growing to cover a repeated row
 ```
 
 The browser test exists because two real defects passed every unit test: the

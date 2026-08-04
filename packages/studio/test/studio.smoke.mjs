@@ -109,6 +109,12 @@ check('orientation preset lives in the explorer', await page.isVisible('[data-te
 let m = await manifest();
 check('empty project is a valid manifest with no parts or models',
   m?.parts?.length === 0 && m?.models?.length === 0, { parts: m?.parts?.length, models: m?.models?.length });
+check('no Orbit tab — orbiting is the default, not a mode',
+  !(await page.$('[data-testid="gizmo-off"]')), '');
+check('with nothing imported the viewport tools are disabled',
+  await page.evaluate(() =>
+    document.querySelector('[data-testid="gizmo-transform"]')?.disabled === true
+    && document.querySelector('[data-testid="snap-tool"]')?.disabled === true), '');
 await shoot('0-empty.png');
 
 await page.setInputFiles('[data-testid="add-model-input"]', {
@@ -465,7 +471,40 @@ await shoot('2-anchored.png');
   check('tool row sits right above the properties panel, same width and edge',
     chrome.widthDiff < 2 && chrome.rightDiff < 2 && chrome.stacked, chrome);
   check('view cube lives in the top-left corner', chrome.cubeFromLeft < 120, chrome.cubeFromLeft);
-  await page.click('[data-testid="gizmo-off"]');
+  // No Orbit tab any more — Transform is a toggle, and the deselect a few
+  // checks back already disarmed it on its own.
+  check('deselecting disarmed Transform (orbit is the default state)',
+    await page.evaluate(() => !document.querySelector('[data-testid="gizmo-transform"].is-active')), '');
+  await page.click('[data-testid="gizmo-transform"]');
+  await page.waitForTimeout(200);
+  check('Transform arms on click',
+    await page.evaluate(() => !!document.querySelector('[data-testid="gizmo-transform"].is-active')
+      && !!window.__studioGizmo.translate.object), '');
+  await page.click('[data-testid="gizmo-transform"]');
+  await page.waitForTimeout(200);
+  check('…and toggles back off on a second click',
+    await page.evaluate(() => !document.querySelector('[data-testid="gizmo-transform"].is-active')
+      && !window.__studioGizmo.translate.object), '');
+
+  // …and clicking empty space deselects, which disarms Transform by itself.
+  await page.click('[data-testid="gizmo-transform"]');
+  await page.waitForTimeout(150);
+  const bareSpot = await page.evaluate(() => {
+    const r = document.querySelector('.stage canvas').getBoundingClientRect();
+    for (let fy = 0.15; fy < 0.95; fy += 0.1) {
+      for (let fx = 0.05; fx < 0.6; fx += 0.08) {
+        if (fy < 0.25 && (fx < 0.35 || fx > 0.75)) continue;
+        const x = r.left + r.width * fx, y = r.top + r.height * fy;
+        if (!window.__studioViewer.pickFaceAt(x, y)) return [x, y];
+      }
+    }
+    return null;
+  });
+  await page.mouse.click(bareSpot[0], bareSpot[1]);
+  await page.waitForTimeout(600);
+  check('clicking away from the part drops back to orbiting',
+    await page.evaluate(() => !document.querySelector('[data-testid="gizmo-transform"].is-active')
+      && !window.__studioGizmo.translate.object), '');
 }
 
 // ── 6d. view cube: quick views by face and corner ──────────────────────────
@@ -1040,7 +1079,7 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   }));
   check('a translate-only gizmo parks at the assembly\'s centre of mass',
     setGizmo.translate && !setGizmo.rotate, setGizmo);
-  await page.click('[data-testid="gizmo-off"]');
+  await page.click('[data-testid="gizmo-transform"]');
   await page.waitForTimeout(150);
   await page.click('[data-testid="eye-shell"]');
   await page.waitForTimeout(200);
@@ -1165,6 +1204,7 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.press('[data-testid="repeat-count"]', 'Enter');
   await page.fill('[data-testid="repeat-gap"]', '6');
   await page.press('[data-testid="repeat-gap"]', 'Enter');
+  const gridBefore = await page.evaluate(() => window.__studioGrid.scale.x);
   await page.click('[data-testid="repeat-apply"]');
   await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 4, { timeout: 20000 });
   await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
@@ -1191,6 +1231,18 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     centres.every((c) => c !== null)
     && near(centres[1] - centres[0], width + 6, 0.1) && near(centres[2] - centres[1], width + 6, 0.1),
     { centres, width });
+  // The desk grows under the marching copies: the grid must now cover the
+  // full row, not just the original part.
+  const gridAfter = await page.evaluate(() => ({
+    scale: window.__studioGrid.scale.x,
+    reach: Math.max(...['base', 'base-copy', 'base-copy-2'].flatMap((id) => {
+      const b = window.__studioViewer.partBox(id);
+      return b ? [Math.abs(b.min[0]), Math.abs(b.max[0])] : [0];
+    })),
+  }));
+  check('the ground grid expands to cover the repeated row',
+    gridAfter.scale > gridBefore && gridAfter.scale / 2 >= gridAfter.reach,
+    { gridBefore, ...gridAfter });
 
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(300);
@@ -1433,6 +1485,39 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.waitForFunction(() => (window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.widthMm === 40, { timeout: 20000 });
   check('the width field writes the zone size', true, '');
 
+  // Reshape the boundary: Edit shape seeds a smooth 8-anchor loop and pins
+  // draggable handles to the surface.
+  await page.click('[data-testid="image-shape-base-image"]');
+  await page.waitForFunction(() => (window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.boundary?.length === 8, { timeout: 20000 });
+  await page.waitForSelector('[data-testid="shape-anchor-0"]', { timeout: 20000 });
+  check('Edit shape seeds an eight-anchor boundary with live handles',
+    (await page.$$('.shape-anchor')).length === 8 && (await page.$$('.shape-mid')).length === 8, '');
+
+  const anchorBefore = await page.evaluate(() => (window).__studio.manifest.options.find((o) => o.type === 'upload').boundary[0]);
+  const handle = await page.locator('[data-testid="shape-anchor-0"]').boundingBox();
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2 + 30, handle.y + handle.height / 2 + 25, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const anchorAfter = await page.evaluate(() => (window).__studio.manifest.options.find((o) => o.type === 'upload').boundary[0]);
+  check('dragging a handle reshapes the boundary in the manifest',
+    Math.abs(anchorAfter[0] - anchorBefore[0]) > 0.5 || Math.abs(anchorAfter[1] - anchorBefore[1]) > 0.5,
+    { anchorBefore, anchorAfter });
+  m = await manifest();
+  const shapedVerdict = validateManifest(m);
+  check('manifest still valid with the reshaped boundary', shapedVerdict.ok, shapedVerdict.errors);
+
+  // A midpoint on the zone's LEFT edge — the right-side ones can sit under
+  // the floating properties panel, which would swallow the click.
+  await page.click('[data-testid="shape-mid-6"]');
+  await page.waitForFunction(() => (window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.boundary?.length === 9, { timeout: 20000 });
+  check('clicking a midpoint dot inserts an anchor on the curve', true, '');
+
+  await page.click('[data-testid="image-shape-base-image"]');
+  await page.waitForTimeout(200);
+  check('Done shaping dismisses the handles', !(await page.$('[data-testid="shape-overlay"]')), '');
+
   // The customer flow: upload → decal appears → reposition → resize → remove.
   await page.click('[data-testid="preview-open"]');
   await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
@@ -1447,6 +1532,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     return !!d && d.geometry.attributes.position.count > 0;
   }, { timeout: 20000 });
   check('the uploaded image lands as a projected decal on the part', true, '');
+  check('…clipped by the reshaped boundary (alpha mask on the decal)',
+    await page.evaluate(() => !!(window).__previewViewer.imageDecalOf('base-image').material.alphaMap), '');
   check('…and the dashed frame hides while an image is showing',
     await page.evaluate(() => (window).__previewViewer.scene.getObjectByName('image-frame-base-image')?.visible === false), '');
   const sel0 = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
@@ -1474,6 +1561,11 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     await page.evaluate(() => (window).__previewPayload.selections['base-image'] === ''), '');
   await page.click('[data-testid="preview-close"]');
   await page.waitForTimeout(200);
+
+  // Reset shape returns the zone to the plain rectangle.
+  await page.click('[data-testid="image-shape-reset-base-image"]');
+  await page.waitForFunction(() => !(window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.boundary, { timeout: 20000 });
+  check('Reset shape clears the boundary back to the full rectangle', true, '');
 
   // Removing the zone clears the option and its frame.
   await page.click('[data-testid="image-remove-base-image"]');

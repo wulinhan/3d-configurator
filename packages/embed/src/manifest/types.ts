@@ -218,6 +218,13 @@ export interface UploadOption {
   heightMm: number;
   /** Projection depth for curved surfaces, mm. Default max(width, height). */
   wrapMm?: number;
+  /**
+   * Optional reshaped outline: anchor points in zone-plane millimetres
+   * (u across, v up, origin at the zone centre). The boundary is the closed
+   * Catmull-Rom/Bézier curve through them (see runtime/curve.ts); the
+   * customer's image renders only inside it. Absent = the full rectangle.
+   */
+  boundary?: Array<[number, number]>;
   accept?: string[];        // default ['image/png', 'image/jpeg']
   /** Cap on the stored image, after client-side downscaling. Default ~1.5MB. */
   maxBytes?: number;

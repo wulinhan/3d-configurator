@@ -1427,6 +1427,23 @@ export function nudgeImageZone(manifest: Manifest, optionId: string, du: number,
   });
 }
 
+/**
+ * Replace a zone's reshaped outline wholesale — the Studio's handle drags
+ * send the whole anchor list every time. `null` clears the shape back to
+ * the plain rectangle.
+ */
+export function setImageZoneBoundary(
+  manifest: Manifest, optionId: string, boundary: Array<[number, number]> | null,
+): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);
+  return edit(manifest, (draft) => {
+    const o = draft.options.find((x) => x.id === optionId) as UploadOption;
+    if (boundary === null) delete o.boundary;
+    else o.boundary = boundary.map((p) => [round3(p[0]), round3(p[1])] as [number, number]);
+  });
+}
+
 export function removeImageZone(manifest: Manifest, optionId: string): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);

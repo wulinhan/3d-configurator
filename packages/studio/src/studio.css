@@ -84,6 +84,8 @@ input, select { font: inherit; }
 }
 .gizmo-bar button { position: relative; z-index: 1; transition: color .18s; }
 .gizmo-bar button:hover { background: var(--surface); }
+.gizmo-bar button:disabled { color: var(--line); cursor: default; }
+.gizmo-bar button:disabled:hover { background: none; }
 .gizmo-bar button.is-active { background: none; color: #fff; font-weight: 600; }
 .gizmo-bar button.is-active:hover { background: none; }
 /* The sliding pill behind the active mode — measured span, eased travel. */
@@ -93,6 +95,23 @@ input, select { font: inherit; }
   transition: left .22s cubic-bezier(.4, 0, .2, 1), width .22s cubic-bezier(.4, 0, .2, 1);
 }
 .gizmo-sep { width: 1px; flex: none; align-self: stretch; margin: 4px 3px; background: var(--line); }
+/* Boundary-shaping handles: anchors are solid draggable dots, midpoints are
+ * hollow insert dots. The overlay itself never eats pointer events — only
+ * the dots do — so orbiting between handles still works. */
+.shape-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.shape-anchor {
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; border: 2px solid #fff; background: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+  pointer-events: auto; cursor: grab; padding: 0;
+}
+.shape-anchor:active { cursor: grabbing; }
+.shape-mid {
+  position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px;
+  border-radius: 50%; border: 2px solid var(--accent); background: #fff;
+  opacity: .7; pointer-events: auto; cursor: copy; padding: 0;
+}
+.shape-mid:hover { opacity: 1; }
 /* Must out-rank `.stage canvas`'s 100% sizing or the overlay swallows the
  * whole stage — and with it, every pointer event the gizmo needs. */
 .stage canvas.viewcube {
@@ -154,6 +173,7 @@ input, select { font: inherit; }
 }
 .mini.danger { color: var(--danger); border-color: #e5c8c2; }
 .mini.icon.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.mini.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .mini.danger:hover { color: var(--danger); border-color: var(--danger); }
 .mini:disabled { opacity: .4; }
 .part-rows { display: flex; flex-direction: column; gap: 4px; }

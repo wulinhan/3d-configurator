@@ -16,13 +16,15 @@ import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
 import { applyGizmoPose, setCameraView, snapFaces, nudgeGroup, nudgeVariant, type GizmoPose } from '../lib/manifest-edit.ts';
 import { Gizmo, type GizmoMode, type CommitPhase } from './gizmo.ts';
+import { closedCurveSegments, curvePoint, type Pt } from '../../../embed/src/runtime/curve.ts';
+import { setImageZoneBoundary } from '../lib/manifest-edit.ts';
+import type { UploadOption } from '../../../embed/src/manifest/types.ts';
 import { ViewCube } from './view-cube.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
 
-const MODES: Array<{ id: GizmoMode; label: string }> = [
-  { id: 'off', label: 'Orbit' },
-  { id: 'transform', label: 'Transform' },
-];
+// Orbit is not a tool — it is what the viewport does when no tool is armed.
+// The bar only carries the tools themselves; deselecting (clicking empty
+// space) drops back to orbiting automatically.
 
 export function ViewerPane(props: {
   project: Project;
@@ -37,6 +39,9 @@ export function ViewerPane(props: {
   surfacePick: { kind: 'text' | 'image'; partId: string } | null;
   onSurfacePick: (partId: string, place: { origin: [number, number, number]; normal: [number, number, number] }) => void;
   onSurfaceCancel: () => void;
+  /** Upload option whose boundary handles are live in the viewport. */
+  shapeZone: string | null;
+  onShapeDone: () => void;
   onSelectPart: (id: string | null) => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
@@ -50,6 +55,9 @@ export function ViewerPane(props: {
   const barRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLSpanElement>(null);
   const [mode, setMode] = useState<GizmoMode>('off');
+  // No parts, no tools: with nothing to transform or snap, the bar is inert.
+  const hasParts = props.project.manifest.parts.length > 0;
+  const gridRef = useRef<THREE.GridHelper | null>(null);
   // Face-snap: null = off; 'first' = waiting for the surface that moves;
   // a SurfaceHit = that surface is chosen (and stays highlighted) while the
   // merchant picks the one it should meet.
@@ -66,6 +74,28 @@ export function ViewerPane(props: {
   snapRef.current = snapArm;
   const surfacePickRef = useRef(props.surfacePick);
   surfacePickRef.current = props.surfacePick;
+
+  // The ground grid tracks the model's reach across the ground plane —
+  // measured from the origin, since that is where the grid is centred. A
+  // repeat row marching off along X grows the desk under it; the grid
+  // shrinks back at rest but never below the hand-scale opening size.
+  const fitGrid = (b: { min: number[]; max: number[] }) => {
+    const grid = gridRef.current;
+    const axes = axesRef.current;
+    if (!grid || !axes) return;
+    const reach = Number.isFinite(b.min[0])
+      ? Math.max(Math.abs(b.min[0]), Math.abs(b.max[0]), Math.abs(b.min[2]), Math.abs(b.max[2]), 60)
+      : 60;
+    const size = reach * 2 * 1.6;
+    // Mid-drag the grid only grows — shrinking under a live gesture flickers.
+    if (gizmoRef.current?.dragging && size <= grid.scale.x) return;
+    grid.scale.setScalar(size);
+    axes.scale.setScalar(size * 0.22);
+    // Grid slightly below ground, axes slightly above: exactly coplanar
+    // lines fight in the depth buffer and shimmer as the camera moves.
+    grid.position.y = -size * 0.0025;
+    axes.position.y = size * 0.0025;
+  };
 
   // A drag commits against whatever the manifest is at release time, not at
   // gizmo construction — refs keep the callback current without rebuilding.
@@ -156,7 +186,9 @@ export function ViewerPane(props: {
     axes.setColors(new THREE.Color(0xd44a3a), new THREE.Color(0x3a6fd4), new THREE.Color(0x4a9a44));
     viewer.scene.add(grid, axes);
     axesRef.current = axes;
+    gridRef.current = grid;
     (window as any).__studioAxes = axes; // test hook
+    (window as any).__studioGrid = grid; // test hook
 
     viewer.load().then(() => {
       if (disposed) return;
@@ -171,12 +203,7 @@ export function ViewerPane(props: {
         ? Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2])
         : 120;
       spanRef.current = span;
-      grid.scale.setScalar(span * 1.6);
-      axes.scale.setScalar(span * 0.35);
-      // Grid slightly below ground, axes slightly above: exactly coplanar
-      // lines fight in the depth buffer and shimmer as the camera moves.
-      grid.position.y = -span * 0.004;
-      axes.position.y = span * 0.004;
+      fitGrid(b);
       (window as any).__studioViewerReady = true;
     });
 
@@ -191,6 +218,7 @@ export function ViewerPane(props: {
       axesRef.current = null;
       proxy.removeFromParent();
       proxyRef.current = null;
+      gridRef.current = null;
       grid.geometry.dispose();
       viewer.dispose();
       viewerRef.current = null;
@@ -209,6 +237,7 @@ export function ViewerPane(props: {
     viewer.setManifest(props.project.manifest);
     viewer.apply(props.selections);
     const b = viewer.layoutBounds();
+    fitGrid(b);
     if (Number.isFinite(b.min[0]) && spanRef.current > 0 && !gizmoRef.current?.dragging) {
       const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
       if (span > spanRef.current * 1.25 || span < spanRef.current * 0.6) {
@@ -251,6 +280,13 @@ export function ViewerPane(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  // Clicking away from a part IS the switch back to orbiting: with nothing
+  // selected and no set editor open, Transform has no target, so it disarms
+  // itself instead of lying in wait for the next selection.
+  useEffect(() => {
+    if (!props.selectedPart && !props.editingEntity) setMode('off');
+  }, [props.selectedPart, props.editingEntity]);
+
   // The origin axes and the gizmo's coloured axes say the same thing in the
   // same colours — both visible at once reads as flicker. While the gizmo is
   // attached, it IS the axes; the origin ones step aside.
@@ -289,15 +325,19 @@ export function ViewerPane(props: {
     gizmo.attachTranslate(proxy);
   }, [props.editingEntity, mode, props.project.manifest, props.selectedPart]);
 
-  // The dark pill glides between Orbit / Transform / Snap (the framer-motion
-  // layoutId tab pattern, done with a measured absolute span).
+  // The dark pill glides onto the armed tool (the framer-motion layoutId tab
+  // pattern, done with a measured absolute span) and collapses away when no
+  // tool is armed — orbiting has no button to sit on.
   useLayoutEffect(() => {
     const bar = barRef.current;
     const pill = pillRef.current;
     if (!bar || !pill) return;
-    const activeId = snapArm !== null ? 'snap-tool' : mode === 'off' ? 'gizmo-off' : 'gizmo-transform';
-    const btn = bar.querySelector<HTMLButtonElement>(`[data-testid="${activeId}"]`);
-    if (!btn) return;
+    const activeId = snapArm !== null ? 'snap-tool' : mode === 'transform' ? 'gizmo-transform' : null;
+    const btn = activeId && bar.querySelector<HTMLButtonElement>(`[data-testid="${activeId}"]`);
+    if (!btn) {
+      pill.style.width = '0px';
+      return;
+    }
     pill.style.left = `${btn.offsetLeft}px`;
     pill.style.width = `${btn.offsetWidth}px`;
   }, [mode, snapArm]);
@@ -392,6 +432,182 @@ export function ViewerPane(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.surfacePick]);
 
+  // Boundary shaping: every anchor of the zone's closed curve becomes a
+  // draggable dot in the viewport, positioned by projecting its zone-plane
+  // (u,v) through the carrier's transform every frame (so orbiting keeps the
+  // dots pinned to the surface). Dragging raycasts the cursor back onto the
+  // zone plane; smaller dots at each segment midpoint insert a new anchor,
+  // double-clicking an anchor removes it. The dashed frame decal re-renders
+  // on every commit, so the curve itself is previewed on the model live.
+  useEffect(() => {
+    const optionId = props.shapeZone;
+    if (!optionId) return;
+    setSnapArm(null);
+    setMode('off');
+    const stage = stageRef.current!;
+    const canvas = canvasRef.current!;
+    const overlay = document.createElement('div');
+    overlay.className = 'shape-overlay';
+    overlay.setAttribute('data-testid', 'shape-overlay');
+    stage.append(overlay);
+
+    interface Basis {
+      option: UploadOption; viewer: Viewer; carrier: THREE.Mesh;
+      origin: THREE.Vector3; x: THREE.Vector3; y: THREE.Vector3; n: THREE.Vector3;
+    }
+    const basisOf = (): Basis | null => {
+      const option = commitCtx.current.project.manifest.options.find(
+        (o): o is UploadOption => o.id === optionId && o.type === 'upload');
+      const viewer = viewerRef.current;
+      const carrier = option && (viewer?.meshOf(option.part) as THREE.Mesh | undefined);
+      if (!option || !viewer || !carrier) return null;
+      const n = new THREE.Vector3(...option.normal).normalize();
+      const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+      const x = new THREE.Vector3().crossVectors(upRef, n).normalize();
+      const y = new THREE.Vector3().crossVectors(n, x).normalize();
+      if (option.rotationDeg) {
+        const spin = new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180);
+        x.applyQuaternion(spin);
+        y.applyQuaternion(spin);
+      }
+      return { option, viewer, carrier, origin: new THREE.Vector3(...option.origin), x, y, n };
+    };
+    const toWorld = (b: Basis, u: number, v: number) =>
+      b.carrier.localToWorld(b.origin.clone().addScaledVector(b.x, u).addScaledVector(b.y, v));
+    const toScreen = (b: Basis, world: THREE.Vector3) => {
+      const p = world.clone().project(b.viewer.camera);
+      const r = canvas.getBoundingClientRect();
+      const s = stage.getBoundingClientRect();
+      return { left: (p.x + 1) / 2 * r.width + (r.left - s.left), top: (1 - p.y) / 2 * r.height + (r.top - s.top) };
+    };
+    const raycaster = new THREE.Raycaster();
+    const toZone = (b: Basis, clientX: number, clientY: number): Pt | null => {
+      const r = canvas.getBoundingClientRect();
+      raycaster.setFromCamera(new THREE.Vector2(
+        ((clientX - r.left) / r.width) * 2 - 1,
+        -((clientY - r.top) / r.height) * 2 + 1,
+      ), b.viewer.camera);
+      const worldN = b.n.clone().transformDirection(b.carrier.matrixWorld);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(worldN, toWorld(b, 0, 0));
+      const hit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, hit)) return null;
+      const local = b.carrier.worldToLocal(hit).sub(b.origin);
+      return [local.dot(b.x), local.dot(b.y)];
+    };
+
+    const commit = (boundary: Pt[], transient: boolean) => {
+      const { project, onChange } = commitCtx.current;
+      try {
+        onChange(setImageZoneBoundary(project.manifest, optionId, boundary as Array<[number, number]>), { transient });
+      } catch { /* a refused shape never reaches the manifest */ }
+    };
+
+    let anchors: HTMLButtonElement[] = [];
+    let mids: HTMLButtonElement[] = [];
+    let dragging = -1;
+    let dragMoved = false;
+
+    const startDrag = (index: number) => (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = index;
+      dragMoved = false;
+      anchors[index]?.setPointerCapture?.(e.pointerId);
+    };
+    const onDragMove = (e: PointerEvent) => {
+      if (dragging < 0) return;
+      const b = basisOf();
+      if (!b) return;
+      const uv = toZone(b, e.clientX, e.clientY);
+      if (!uv) return;
+      const halfW = b.option.widthMm / 2, halfH = b.option.heightMm / 2;
+      const next = (b.option.boundary ?? []).map((p, i) => (i === dragging
+        ? [Math.max(-halfW, Math.min(halfW, uv[0])), Math.max(-halfH, Math.min(halfH, uv[1]))] as Pt
+        : p as Pt));
+      // First move of a gesture records the undo step; the rest ride it.
+      commit(next, dragMoved);
+      dragMoved = true;
+    };
+    const endDrag = () => { dragging = -1; };
+
+    const removeAnchor = (index: number) => {
+      const b = basisOf();
+      if (!b || (b.option.boundary ?? []).length <= 3) return;
+      commit((b.option.boundary ?? []).filter((_, i) => i !== index) as Pt[], false);
+    };
+    const insertAnchor = (index: number) => (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const b = basisOf();
+      if (!b) return;
+      const boundary = (b.option.boundary ?? []) as Pt[];
+      const segs = closedCurveSegments(boundary);
+      if (!segs[index]) return;
+      const mid = curvePoint(segs[index], 0.5);
+      commit([...boundary.slice(0, index + 1), mid, ...boundary.slice(index + 1)], false);
+    };
+
+    const ensureHandles = (anchorCount: number) => {
+      while (anchors.length < anchorCount) {
+        const i = anchors.length;
+        const dot = document.createElement('button');
+        dot.className = 'shape-anchor';
+        dot.setAttribute('data-testid', `shape-anchor-${i}`);
+        dot.title = 'Drag to reshape — double-click to remove';
+        dot.addEventListener('pointerdown', startDrag(i));
+        dot.addEventListener('dblclick', () => removeAnchor(i));
+        overlay.append(dot);
+        anchors.push(dot);
+      }
+      while (anchors.length > anchorCount) anchors.pop()!.remove();
+      while (mids.length < anchorCount) {
+        const i = mids.length;
+        const dot = document.createElement('button');
+        dot.className = 'shape-mid';
+        dot.setAttribute('data-testid', `shape-mid-${i}`);
+        dot.title = 'Add a point here';
+        dot.addEventListener('pointerdown', insertAnchor(i));
+        overlay.append(dot);
+        mids.push(dot);
+      }
+      while (mids.length > anchorCount) mids.pop()!.remove();
+    };
+
+    let raf = 0;
+    const layout = () => {
+      const b = basisOf();
+      if (!b || !b.option.boundary?.length) { props.onShapeDone(); return; }
+      const boundary = b.option.boundary as Pt[];
+      ensureHandles(boundary.length);
+      boundary.forEach((p, i) => {
+        const s = toScreen(b, toWorld(b, p[0], p[1]));
+        anchors[i].style.left = `${s.left}px`;
+        anchors[i].style.top = `${s.top}px`;
+      });
+      closedCurveSegments(boundary).forEach((seg, i) => {
+        const [mu, mv] = curvePoint(seg, 0.5);
+        const s = toScreen(b, toWorld(b, mu, mv));
+        mids[i].style.left = `${s.left}px`;
+        mids[i].style.top = `${s.top}px`;
+      });
+      raf = requestAnimationFrame(layout);
+    };
+    raf = requestAnimationFrame(layout);
+
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onShapeDone(); };
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('keydown', onKey);
+      overlay.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.shapeZone]);
+
   const saveView = () => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -405,23 +621,22 @@ export function ViewerPane(props: {
     <div className="stage" ref={stageRef}>
       <canvas ref={canvasRef} />
       <canvas ref={cubeRef} className="viewcube" width={92} height={92} data-testid="view-cube" />
-      <div className="gizmo-bar" role="toolbar" aria-label="Transform mode" ref={barRef}>
+      <div className="gizmo-bar" role="toolbar" aria-label="Viewport tools" ref={barRef}>
         <span className="mode-pill" ref={pillRef} aria-hidden="true" />
-        {MODES.map((m) => (
-          <button
-            key={m.id} data-testid={`gizmo-${m.id}`}
-            className={snapArm === null && mode === m.id ? 'is-active' : ''}
-            onClick={() => { setMode(m.id); setSnapArm(null); }}
-          >{m.label}</button>
-        ))}
         <button
-          data-testid="snap-tool"
+          data-testid="gizmo-transform" disabled={!hasParts}
+          className={snapArm === null && mode === 'transform' ? 'is-active' : ''}
+          title="Move, rotate and scale the selected part — click again (or click empty space) to go back to orbiting"
+          onClick={() => { setMode(mode === 'transform' ? 'off' : 'transform'); setSnapArm(null); }}
+        >Transform</button>
+        <button
+          data-testid="snap-tool" disabled={!hasParts}
           className={snapArm !== null ? 'is-active' : ''}
           onClick={() => { setSnapArm(snapArm === null ? 'first' : null); setSnapError(null); }}
           title="Click a face on the part to move, then the face it should sit against"
         >Snap</button>
         <span className="gizmo-sep" />
-        <button data-testid="save-view" onClick={saveView} title="Customers will open the configurator from this angle">
+        <button data-testid="save-view" disabled={!hasParts} onClick={saveView} title="Customers will open the configurator from this angle">
           {viewSaved ? 'Saved ✓' : 'Save view'}
         </button>
       </div>

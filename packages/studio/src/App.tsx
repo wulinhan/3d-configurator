@@ -93,6 +93,8 @@ export function App() {
   const [publishing, setPublishing] = useState(false);
   // Armed "click a face to place …" tool: what lands there and on which part.
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
+  // Image-zone whose boundary handles are live in the viewport.
+  const [shapingZone, setShapingZone] = useState<string | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
   // Which choice each pick-one option shows while authoring — the merchant's
@@ -121,6 +123,7 @@ export function App() {
     setPreviewing(false);
     setPublishing(false);
     setPlacing(null);
+    setShapingZone(null);
     setTab('Parts');
   }, []);
 
@@ -135,6 +138,13 @@ export function App() {
     }
     setProject({ ...old, manifest });
   }, []);
+
+  // Shape editing lives in the selected part's editor — deselecting the part
+  // (or removing the zone) closes the handle overlay with it.
+  useEffect(() => {
+    if (!selectedPart) { setShapingZone(null); return; }
+    if (shapingZone && !project.manifest.options.some((o) => o.id === shapingZone)) setShapingZone(null);
+  }, [selectedPart, shapingZone, project.manifest]);
 
   const undo = useCallback(() => {
     const old = projectRef.current;
@@ -371,6 +381,8 @@ export function App() {
               key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} onRepeat={repeatEntryInApp}
               onPlaceText={(id) => setPlacing({ kind: 'text', partId: id })}
               onPlaceImage={(id) => setPlacing({ kind: 'image', partId: id })}
+              shapingZone={shapingZone}
+              onEditShape={(optionId) => setShapingZone((cur) => (cur === optionId ? null : optionId))}
             />
           : null)
     : null;
@@ -463,6 +475,8 @@ export function App() {
             surfacePick={placing}
             onSurfacePick={placeSurfaceInApp}
             onSurfaceCancel={() => setPlacing(null)}
+            shapeZone={shapingZone}
+            onShapeDone={() => setShapingZone(null)}
             onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
             onChange={setManifest}
           />
