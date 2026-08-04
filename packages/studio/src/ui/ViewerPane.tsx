@@ -37,7 +37,16 @@ export function ViewerPane(props: {
   /** Non-null arms surface placement: the next click on a face of THIS part
    * becomes a text slot's or image zone's sketch plane. */
   surfacePick: { kind: 'text' | 'image'; partId: string } | null;
-  onSurfacePick: (partId: string, place: { origin: [number, number, number]; normal: [number, number, number] }) => void;
+  onSurfacePick: (partId: string, place: {
+    origin: [number, number, number];
+    normal: [number, number, number];
+    /** Face-hugging rectangle, when the pick could measure one — an image
+     * zone conforms to it (centre, edge alignment, extents, rim mask). */
+    zone?: {
+      centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number;
+      outline?: Array<[number, number]>;
+    };
+  }) => void;
   onSurfaceCancel: () => void;
   /** Upload option whose boundary handles are live in the viewport. */
   shapeZone: string | null;
@@ -418,7 +427,7 @@ export function ViewerPane(props: {
       const hit = hitOnTarget(e);
       if (!hit) return;
       viewerRef.current?.clearSurfaceHighlights();
-      pickCtx.current.onSurfacePick(hit.partId, { origin: hit.localCentre, normal: hit.localNormal });
+      pickCtx.current.onSurfacePick(hit.partId, { origin: hit.localCentre, normal: hit.localNormal, zone: hit.zone ?? undefined });
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onSurfaceCancel(); };
     canvas.addEventListener('pointermove', onMove);

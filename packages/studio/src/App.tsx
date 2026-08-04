@@ -291,11 +291,30 @@ export function App() {
   // A placement click in the viewport lands here: the picked face's sketch
   // plane becomes a text slot or image zone via the tested edit op.
   // setManifest records the history step; nothing needs a viewer remount.
-  const placeSurfaceInApp = useCallback((partId: string, place: { origin: [number, number, number]; normal: [number, number, number] }) => {
+  const placeSurfaceInApp = useCallback((partId: string, place: {
+    origin: [number, number, number];
+    normal: [number, number, number];
+    zone?: {
+      centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number;
+      outline?: Array<[number, number]>;
+    };
+  }) => {
     const old = projectRef.current;
     const kind = placing?.kind ?? 'text';
     try {
-      setManifest(kind === 'image' ? addImageZone(old.manifest, partId, place) : addTextSlot(old.manifest, partId, place));
+      // An image zone CONFORMS to the picked face: centred on it, aligned
+      // with its edges, opened to its true extents — and when the face is
+      // not a plain rectangle, masked to its actual rim.
+      setManifest(kind === 'image'
+        ? addImageZone(old.manifest, partId, {
+          origin: place.zone?.centre ?? place.origin,
+          normal: place.normal,
+          widthMm: place.zone?.widthMm,
+          heightMm: place.zone?.heightMm,
+          rotationDeg: place.zone?.angleDeg,
+          boundary: place.zone?.outline,
+        })
+        : addTextSlot(old.manifest, partId, place));
       setSelectedPart(partId); // keep the slot's editor on screen
     } finally {
       setPlacing(null);

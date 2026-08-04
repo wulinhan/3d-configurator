@@ -20,15 +20,20 @@ mkdirSync(OUT, { recursive: true });
 const boxXml = (verts, tris) =>
   `<vertices>${verts.map(([x, y, z]) => `<vertex x="${x}" y="${y}" z="${z}"/>`).join('')}</vertices>` +
   `<triangles>${tris.map(([a, b, c]) => `<triangle v1="${a}" v2="${b}" v3="${c}"/>`).join('')}</triangles>`;
-const boxGeom = (w, h, d) => {
-  const verts = [[0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0], [0, 0, d], [w, 0, d], [w, h, d], [0, h, d]];
-  const tris = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [2, 3, 7], [2, 7, 6], [0, 4, 7], [0, 7, 3], [1, 2, 6], [1, 6, 5]];
+// A 60×45×12 plate with 10mm chamfered corners — the top face is an
+// octagon, so the placed zone must bring the rim along as its mask.
+const OCT = [[10, 0], [50, 0], [60, 10], [60, 35], [50, 45], [10, 45], [0, 35], [0, 10]];
+const octPrism = () => {
+  const verts = [...OCT.map(([x, y]) => [x, y, 0]), ...OCT.map(([x, y]) => [x, y, 12])];
+  const tris = [];
+  for (let i = 1; i < 7; i++) { tris.push([8, 8 + i, 8 + i + 1], [0, i + 1, i]); }
+  for (let i = 0; i < 8; i++) { const j = (i + 1) % 8; tris.push([i, j, 8 + j], [i, 8 + j, 8 + i]); }
   return boxXml(verts, tris);
 };
 const FIXTURE_3MF = zipSync({
   '3D/3dmodel.model': new TextEncoder().encode(
     `<?xml version="1.0"?><model unit="millimeter">
-     <resources><object id="1" name="Base" type="model"><mesh>${boxGeom(60, 45, 12)}</mesh></object></resources>
+     <resources><object id="1" name="Base" type="model"><mesh>${octPrism()}</mesh></object></resources>
      <build><item objectid="1"/></build>
     </model>`),
 });
@@ -65,25 +70,45 @@ await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 
 await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 30000 });
 
 // Place the zone on the top face (top-down click at the part's centre).
+const settleCamera = async () => {
+  let settled = '';
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(120);
+    const now = JSON.stringify(await page.evaluate(() => window.__studioViewer.cameraView()));
+    if (now === settled) break;
+    settled = now;
+  }
+};
+const clickBaseCentre = async () => {
+  const at = await page.evaluate(() => {
+    const v = window.__studioViewer;
+    const q = v.meshOf('base').position.clone().project(v.camera);
+    const r = document.querySelector('.stage canvas').getBoundingClientRect();
+    return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height];
+  });
+  await page.mouse.click(at[0], at[1]);
+};
 await page.click('.part-name:has-text("Base")');
 await page.waitForTimeout(200);
 await page.click('[data-testid="place-image"]');
 await page.evaluate(() => window.__studioViewCube.go('Top'));
-let settled = '';
-for (let i = 0; i < 30; i++) {
-  await page.waitForTimeout(120);
-  const now = JSON.stringify(await page.evaluate(() => window.__studioViewer.cameraView()));
-  if (now === settled) break;
-  settled = now;
-}
-const at = await page.evaluate(() => {
-  const v = window.__studioViewer;
-  const q = v.meshOf('base').position.clone().project(v.camera);
-  const r = document.querySelector('.stage canvas').getBoundingClientRect();
-  return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height];
-});
-await page.mouse.click(at[0], at[1]);
+await settleCamera();
+await clickBaseCentre();
 await page.waitForFunction(() => (window).__studio?.manifest?.options?.some((o) => o.type === 'upload'), { timeout: 20000 });
+
+// The placed zone conforms to the picked 60×45 chamfered top face.
+const fitted = await page.evaluate(() => {
+  const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');
+  return { w: z.widthMm, h: z.heightMm, spin: z.rotationDeg ?? 0, mask: z.boundary?.length ?? 0 };
+});
+check('zone conforms to the picked face (60×45, no spin)',
+  Math.abs(fitted.w - 60) < 0.6 && Math.abs(fitted.h - 45) < 0.6 && Math.abs(fitted.spin) < 0.5, fitted);
+check('…and the chamfered rim arrives as the zone mask', fitted.mask >= 6 && fitted.mask <= 24, fitted);
+check('mask anchors cut the corners — nothing overhangs the chamfers',
+  await page.evaluate(() => {
+    const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');
+    return z.boundary.every(([u, v]) => Math.abs(u) + Math.abs(v) < 45 && Math.abs(u) <= 30.1 && Math.abs(v) <= 22.6);
+  }), '');
 
 // Widen the zone, then check the plane pose.
 await page.fill('[data-testid="image-width-base-image"]', '45');
@@ -111,10 +136,13 @@ const paint = await page.evaluate(() => {
   const canvas = mesh.material.map.image;
   const ctx = canvas.getContext('2d');
   const centre = ctx.getImageData(Math.round(canvas.width / 2), Math.round(canvas.height / 2), 1, 1).data[3];
-  return { centre, quad: mesh.geometry.attributes.position.count };
+  const corner = ctx.getImageData(2, 2, 1, 1).data[3];
+  return { centre, corner, quad: mesh.geometry.attributes.position.count };
 });
 check('uploaded logo paints the zone canvas (single quad, centre opaque)',
   paint.quad === 4 && paint.centre > 0, paint);
+check('…masked to the face rim: the chamfered corner stays transparent',
+  paint.corner === 0, paint);
 
 // Arrow + size still work (canvas repaint, no geometry change).
 await page.click('.preview-overlay .cfg-arrow-right');
@@ -139,6 +167,36 @@ await page.evaluate(() => {
 });
 await page.waitForTimeout(400);
 await page.screenshot({ path: join(OUT, 'zone-top.png') });
+
+// ── rotated part: the zone must conform to the ROTATED face ────────────────
+await page.click('[data-testid="preview-close"]');
+await page.waitForTimeout(300);
+await page.click('[data-testid="image-remove-base-image"]');
+await page.waitForFunction(() => !(window).__studio?.manifest?.options?.some((o) => o.type === 'upload'), { timeout: 20000 });
+await page.fill('[data-testid="rot-z"]', '25'); // spin 25° about the vertical
+await page.press('[data-testid="rot-z"]', 'Enter');
+await page.waitForTimeout(400);
+await page.click('[data-testid="place-image"]');
+await page.evaluate(() => window.__studioViewCube.go('Top'));
+await settleCamera();
+await clickBaseCentre();
+await page.waitForFunction(() => (window).__studio?.manifest?.options?.some((o) => o.type === 'upload'), { timeout: 20000 });
+await page.waitForTimeout(300);
+const spun = await page.evaluate(() => {
+  const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');
+  const mesh = (window).__studioViewer.scene.getObjectByName(`image-zone-${z.id}`);
+  const Vec = mesh.position.constructor;
+  const ax = new Vec(1, 0, 0).applyQuaternion(mesh.quaternion);
+  let deg = Math.atan2(-ax.z, ax.x) * 180 / Math.PI; // in-plane world angle
+  deg = ((deg % 90) + 90) % 90; // edge direction, mod the rectangle's symmetry
+  return { w: z.widthMm, h: z.heightMm, deg: Math.min(deg, 90 - deg) };
+});
+check('on a rotated part the zone runs with the face edges (25° world spin)',
+  Math.abs(spun.deg - 25) < 1
+  && ((Math.abs(spun.w - 60) < 0.6 && Math.abs(spun.h - 45) < 0.6)
+    || (Math.abs(spun.w - 45) < 0.6 && Math.abs(spun.h - 60) < 0.6)),
+  spun);
+await page.screenshot({ path: join(OUT, 'zone-rotated.png') });
 
 const noisy = errors.filter((e) => /ShadowMap|deprecated/i.test(e));
 check('no shadow-map deprecation warning on the console', noisy.length === 0, noisy);

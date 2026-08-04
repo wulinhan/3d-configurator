@@ -1465,8 +1465,13 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.waitForFunction(() => (window).__studio?.manifest?.options?.some((o) => o.type === 'upload'), { timeout: 20000 });
   m = await manifest();
   const zone = m.options.find((o) => o.type === 'upload');
-  check('the zone binds to the base with merchant-ready defaults',
-    zone.part === 'base' && zone.widthMm === 30 && zone.heightMm === 20 && zone.label === 'Base image', zone);
+  const zbox = await page.evaluate(() => window.__studioViewer.partBox('base'));
+  const spanX = zbox.max[0] - zbox.min[0], spanZ = zbox.max[2] - zbox.min[2];
+  check('the zone conforms to the picked top face: sized to its edges',
+    zone.part === 'base' && zone.label === 'Base image'
+    && ((Math.abs(zone.widthMm - spanX) < 0.6 && Math.abs(zone.heightMm - spanZ) < 0.6)
+      || (Math.abs(zone.widthMm - spanZ) < 0.6 && Math.abs(zone.heightMm - spanX) < 0.6)),
+    { zone: { w: zone.widthMm, h: zone.heightMm }, spanX, spanZ });
   check('the zone plane is the picked TOP face (local +Y normal, on the surface)',
     Math.abs(zone.normal[1] - 1) < 0.01 && zone.origin[1] > 0, { origin: zone.origin, normal: zone.normal });
   const zoneVerdict = validateManifest(m);

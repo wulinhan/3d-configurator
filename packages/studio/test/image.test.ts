@@ -71,6 +71,23 @@ test('setImageZone tunes fields through validation; bad values throw whole', () 
   assert.throws(() => setImageZone(m, 'body-text', { widthMm: 10 }), EditError, 'not an image zone');
 });
 
+test('placement conforms to a measured face: size, spin, clamps', () => {
+  const m = addImageZone(fresh(), 'body', {
+    ...PLACE, widthMm: 38.5, heightMm: 21.2, rotationDeg: 30,
+  });
+  valid(m);
+  const zone = zoneOf(m);
+  assert.equal(zone.widthMm, 38.5);
+  assert.equal(zone.heightMm, 21.2);
+  assert.equal(zone.rotationDeg, 30);
+  // Out-of-range measurements clamp instead of failing the placement.
+  const clamped = zoneOf(addImageZone(fresh(), 'body', { ...PLACE, widthMm: 900, heightMm: 0.2 }));
+  assert.equal(clamped.widthMm, 500);
+  assert.equal(clamped.heightMm, 1);
+  // A zero angle is the absent default, not a stored field.
+  assert.equal(zoneOf(addImageZone(fresh(), 'body', { ...PLACE, rotationDeg: 0 })).rotationDeg, undefined);
+});
+
 test('nudgeImageZone slides the origin in the zone surface plane', () => {
   // Normal +Z: the zone's on-surface axes are world X (du) and Y (dv).
   let m = addImageZone(fresh(), 'body', PLACE);
@@ -85,6 +102,12 @@ test('nudgeImageZone slides the origin in the zone surface plane', () => {
   assert.deepEqual(zoneOf(top).origin, [4, 20, -5]);
 
   assert.throws(() => nudgeImageZone(m, 'body-image', NaN, 0), EditError);
+
+  // A spun zone slides along ITS OWN axes: with 90° of spin, "across"
+  // is the plane's y direction.
+  let spun = addImageZone(fresh(), 'body', { ...PLACE, rotationDeg: 90 });
+  spun = nudgeImageZone(spun, 'body-image', 3, 0);
+  assert.deepEqual(zoneOf(spun).origin, [0, 13, 5]);
 });
 
 test('removeImageZone deletes the option; removePart takes its zones with it', () => {

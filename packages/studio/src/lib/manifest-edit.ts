@@ -1360,17 +1360,34 @@ const IMAGE_DEFAULTS = { widthMm: 30, heightMm: 20 } as const;
 
 /**
  * Bind an image zone to a picked surface of a part. Like text slots, `origin`
- * and `normal` are in the part's local mesh space; the customer's uploaded
- * image is projected as a decal through the zone, so curved surfaces work.
+ * and `normal` are in the part's local mesh space. When the pick measured
+ * the face (see fitZoneToRegion), the zone CONFORMS to it — centred on the
+ * face, aligned with its edges, opened to its extents; otherwise it opens
+ * at the hand-tuned defaults.
  */
 export function addImageZone(
   manifest: Manifest,
   partId: string,
-  place: { origin: [number, number, number]; normal: [number, number, number] },
+  place: {
+    origin: [number, number, number];
+    normal: [number, number, number];
+    widthMm?: number;
+    heightMm?: number;
+    rotationDeg?: number;
+    /** Rim mask in zone-frame mm — the face's own outline. */
+    boundary?: Array<[number, number]>;
+  },
 ): Manifest {
   const part = partOf(manifest, partId);
   let id = `${partId}-image`;
   for (let n = 2; manifest.options.some((o) => o.id === id); n++) id = `${partId}-image-${n}`;
+  const clampMm = (v: number | undefined, fallback: number) =>
+    v != null && Number.isFinite(v) ? Math.min(500, Math.max(1, round3(v))) : fallback;
+  const spin = place.rotationDeg != null && Number.isFinite(place.rotationDeg)
+    ? Math.round(place.rotationDeg * 10) / 10 : 0;
+  const boundary = place.boundary && place.boundary.length >= 3
+    ? place.boundary.map((p) => [round3(p[0]), round3(p[1])] as [number, number])
+    : undefined;
   return edit(manifest, (draft) => {
     draft.options.push({
       id,
@@ -1379,7 +1396,10 @@ export function addImageZone(
       part: partId,
       origin: place.origin.map(round3) as [number, number, number],
       normal: place.normal.map(round3) as [number, number, number],
-      ...IMAGE_DEFAULTS,
+      widthMm: clampMm(place.widthMm, IMAGE_DEFAULTS.widthMm),
+      heightMm: clampMm(place.heightMm, IMAGE_DEFAULTS.heightMm),
+      ...(spin ? { rotationDeg: spin } : {}),
+      ...(boundary ? { boundary } : {}),
     });
   });
 }
@@ -1403,14 +1423,15 @@ export function setImageZone(manifest: Manifest, optionId: string, patch: ImageZ
 
 /**
  * Slide a zone's centre within its own plane: `du`/`dv` are millimetres
- * along the zone's on-surface X/Y axes — the same basis the viewer projects
- * with, so the on-screen arrows move the frame exactly where they point.
+ * along the ZONE's on-surface axes — including its spin, so a zone fitted
+ * to a rotated face slides along its own edges, exactly where the fields
+ * point on screen.
  */
 export function nudgeImageZone(manifest: Manifest, optionId: string, du: number, dv: number): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);
   if (!Number.isFinite(du) || !Number.isFinite(dv)) throw new EditError('nudge must be finite');
-  // Rebuild the viewer's zone basis (see buildDecal) from the normal alone.
+  // Rebuild the viewer's zone basis from the normal alone…
   const [nx, ny, nz] = option.normal;
   const len = Math.hypot(nx, ny, nz) || 1;
   const n = [nx / len, ny / len, nz / len];
@@ -1421,9 +1442,14 @@ export function nudgeImageZone(manifest: Manifest, optionId: string, du: number,
   const norm = (v: number[]) => { const l = Math.hypot(...v) || 1; return v.map((c) => c / l); };
   const xAxis = norm(cross(up, n));
   const yAxis = norm(cross(n, xAxis));
+  // …then turn the step into the zone's spun frame: rotating (du, dv) by
+  // rotationDeg about the normal is the same turn the renderer applies.
+  const theta = (option.rotationDeg ?? 0) * Math.PI / 180;
+  const su = du * Math.cos(theta) - dv * Math.sin(theta);
+  const sv = du * Math.sin(theta) + dv * Math.cos(theta);
   return edit(manifest, (draft) => {
     const o = draft.options.find((x) => x.id === optionId) as UploadOption;
-    o.origin = o.origin.map((c, i) => round3(c + xAxis[i] * du + yAxis[i] * dv)) as [number, number, number];
+    o.origin = o.origin.map((c, i) => round3(c + xAxis[i] * su + yAxis[i] * sv)) as [number, number, number];
   });
 }
 

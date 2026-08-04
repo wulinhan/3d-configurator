@@ -16,6 +16,7 @@ import { partColours, visibleParts, parseUploadState, type UploadState, type Sel
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
 import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
 import { tracePath } from './curve.ts';
+import { fitZoneToRegion, type ZoneFit } from './zone-fit.ts';
 import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor } from './engrave.ts';
 
 /**
@@ -123,6 +124,9 @@ export interface SurfaceHit {
   normal: [number, number, number];
   /** Triangle indices of the coplanar region, for highlighting. */
   faces: number[];
+  /** The rectangle hugging the region — how an image zone conforms to the
+   * picked face: its centre, edge alignment and true extents. */
+  zone: ZoneFit | null;
 }
 
 /** One per-letter run's live state (see Viewer.syncPerChar). */
@@ -713,12 +717,45 @@ export class Viewer {
     const worldQuat = hit.mesh.getWorldQuaternion(new THREE.Quaternion());
     const outwardLocal = new THREE.Vector3(...hit.normal).applyQuaternion(worldQuat.invert()).normalize();
 
+    // The rectangle hugging the region, for zones that conform to the face.
+    const triangles = faces.map((f) => ([0, 1, 2] as const).map((c) => {
+      const p = new THREE.Vector3().fromBufferAttribute(pos, tri(f, c));
+      return [p.x, p.y, p.z] as [number, number, number];
+    }));
+    const zone = fitZoneToRegion(triangles, [outwardLocal.x, outwardLocal.y, outwardLocal.z]);
+    if (zone) {
+      // The fit measured LOCAL millimetres; zones are WORLD millimetres
+      // (that is what the overlay plane renders in), so a resized part's
+      // face must report its resized extents. Measure the fitted axes
+      // through the carrier's transform.
+      const th = zone.angleDeg * Math.PI / 180;
+      const nL = outwardLocal;
+      const upRef = Math.abs(nL.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+      const xL = new THREE.Vector3().crossVectors(upRef, nL).normalize();
+      const yL = new THREE.Vector3().crossVectors(nL, xL).normalize();
+      const aL = xL.clone().multiplyScalar(Math.cos(th)).addScaledVector(yL, Math.sin(th));
+      const bL = yL.clone().multiplyScalar(Math.cos(th)).addScaledVector(xL, -Math.sin(th));
+      const c = new THREE.Vector3(...zone.centre);
+      const spanAlong = (axis: THREE.Vector3) =>
+        hit.mesh.localToWorld(c.clone().addScaledVector(axis, 0.5))
+          .distanceTo(hit.mesh.localToWorld(c.clone().addScaledVector(axis, -0.5)));
+      const localW = zone.widthMm, localH = zone.heightMm;
+      zone.widthMm = Math.min(500, Math.max(1, Math.round(localW * spanAlong(aL) * 10) / 10));
+      zone.heightMm = Math.min(500, Math.max(1, Math.round(localH * spanAlong(bL) * 10) / 10));
+      if (zone.outline) {
+        const su = zone.widthMm / localW, sv = zone.heightMm / localH;
+        zone.outline = zone.outline.map(([u, v]): [number, number] =>
+          [Math.round(u * su * 10) / 10, Math.round(v * sv * 10) / 10]);
+      }
+    }
+
     return {
       partId: hit.partId,
       normal: hit.normal,
       faces,
       localCentre: [centroid.x, centroid.y, centroid.z],
       localNormal: [outwardLocal.x, outwardLocal.y, outwardLocal.z],
+      zone,
     };
   }
 
@@ -869,7 +906,7 @@ export class Viewer {
         if (option.rotationDeg) {
           localQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180));
         }
-        const localPos = new THREE.Vector3(...option.origin).addScaledVector(n, 0.3); // hover off the surface
+        const localPos = new THREE.Vector3(...option.origin).addScaledVector(n, 0.15); // a sticker's hover off the surface
         mesh.position.copy(carrier.localToWorld(localPos));
         mesh.quaternion.copy(carrier.getWorldQuaternion(new THREE.Quaternion()).multiply(localQuat));
         mesh.name = `image-zone-${option.id}`;

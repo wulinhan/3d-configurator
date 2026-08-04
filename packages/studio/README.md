@@ -268,11 +268,16 @@ is this toggle plus a text slot on the clicker assembly.
 ## Image zones: customer images projected onto a surface
 
 A part's editor also carries an **Image zone** section: *Place image zone on
-a face* arms the same surface picker, and the clicked face's centroid and
-normal become the zone's plane — a merchant-sized rectangle (width × height
-in mm, plus a spin about the normal) inside which the customer's uploaded
-image lands. The customiser shows the zone as a dashed frame until an image
-arrives.
+a face* arms the same surface picker, and the zone CONFORMS to the clicked
+face — centred on it, rotated to run with the face's own edges (whatever
+the part's or the geometry's orientation), opened to the face's measured
+extents, and, when the face is not a plain rectangle (rounded corners,
+chamfers, circles), automatically MASKED to the face's actual rim: the rim
+polygon is simplified (Douglas-Peucker) into the zone's editable boundary
+curve, so the image clips to the true shape of the surface like a die-cut
+sticker and never overhangs an edge. Width/height/spin stay editable
+afterwards, and the boundary handles refine the mask. The customiser shows
+the zone as a dashed outline until an image arrives.
 
 The image renders the way the shipped storefront configurators render logo
 uploads (their proven approach): ONE plane the exact size of the zone,
