@@ -1385,6 +1385,103 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   check('removing the slot clears the option, the extrusion and the spawned pieces', true, '');
 }
 
+// ── 16. image zone: place on a face, tune, customer uploads an image ───────
+{
+  await page.click('.part-name:has-text("Base")');
+  await page.waitForTimeout(200);
+  check('part editor offers image-zone placement', await page.isVisible('[data-testid="place-image"]'), '');
+  await page.click('[data-testid="place-image"]');
+  check('placing an image zone prompts for a face', await page.isVisible('[data-testid="text-pick-hint"]'), '');
+
+  // Look straight down and click the base's centre — the zone's plane must
+  // come back as the top face (local +Y).
+  await page.evaluate(() => window.__studioViewCube.go('Top'));
+  let settled = '';
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(120);
+    const now = JSON.stringify(await page.evaluate(() => window.__studioViewer.cameraView()));
+    if (now === settled) break;
+    settled = now;
+  }
+  const baseAt = await page.evaluate(() => {
+    const v = window.__studioViewer;
+    const q = v.meshOf('base').position.clone().project(v.camera);
+    const r = document.querySelector('.stage canvas').getBoundingClientRect();
+    return [r.left + (q.x + 1) / 2 * r.width, r.top + (1 - q.y) / 2 * r.height];
+  });
+  await page.mouse.click(baseAt[0], baseAt[1]);
+  await page.waitForFunction(() => (window).__studio?.manifest?.options?.some((o) => o.type === 'upload'), { timeout: 20000 });
+  m = await manifest();
+  const zone = m.options.find((o) => o.type === 'upload');
+  check('the zone binds to the base with merchant-ready defaults',
+    zone.part === 'base' && zone.widthMm === 30 && zone.heightMm === 20 && zone.label === 'Base image', zone);
+  check('the zone plane is the picked TOP face (local +Y normal, on the surface)',
+    Math.abs(zone.normal[1] - 1) < 0.01 && zone.origin[1] > 0, { origin: zone.origin, normal: zone.normal });
+  const zoneVerdict = validateManifest(m);
+  check('manifest still valid with the image zone', zoneVerdict.ok, zoneVerdict.errors);
+
+  // With no image uploaded, the zone shows as a dashed frame decal.
+  await page.waitForFunction(() => {
+    const f = (window).__studioViewer?.scene?.getObjectByName('image-frame-base-image');
+    return !!f && f.visible && f.geometry.attributes.position.count > 0;
+  }, { timeout: 20000 });
+  check('the dashed zone frame projects onto the part', true, '');
+
+  // Zone width is merchant-editable and regenerates the frame.
+  await page.fill('[data-testid="image-width-base-image"]', '40');
+  await page.press('[data-testid="image-width-base-image"]', 'Enter');
+  await page.waitForFunction(() => (window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.widthMm === 40, { timeout: 20000 });
+  check('the width field writes the zone size', true, '');
+
+  // The customer flow: upload → decal appears → reposition → resize → remove.
+  await page.click('[data-testid="preview-open"]');
+  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
+  await page.click('.preview-overlay .cfg-tab:has-text("Base image")');
+  await page.waitForTimeout(200);
+  check('the customiser offers the upload button', await page.isVisible('.preview-overlay .cfg-upload-btn'), '');
+  const PNG_1PX = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.setInputFiles('.preview-overlay .cfg-upload-input', { name: 'logo.png', mimeType: 'image/png', buffer: PNG_1PX });
+  await page.waitForFunction(() => {
+    const d = (window).__previewViewer?.imageDecalOf?.('base-image');
+    return !!d && d.geometry.attributes.position.count > 0;
+  }, { timeout: 20000 });
+  check('the uploaded image lands as a projected decal on the part', true, '');
+  check('…and the dashed frame hides while an image is showing',
+    await page.evaluate(() => (window).__previewViewer.scene.getObjectByName('image-frame-base-image')?.visible === false), '');
+  const sel0 = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
+  check('the payload carries the image at full size, centred',
+    sel0.img.startsWith('data:image/') && sel0.u === 0 && sel0.v === 0 && sel0.s === 100, sel0);
+
+  // The position pad nudges the image inside the zone; − steps the size down.
+  await page.click('.preview-overlay .cfg-arrow-right');
+  await page.waitForTimeout(300);
+  const sel1 = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
+  check('the → arrow slides the image along the zone', sel1.u > 0, sel1);
+  await page.click('.preview-overlay .cfg-size-minus');
+  await page.waitForTimeout(300);
+  const sel2 = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
+  check('the − button steps the size down to 90%', sel2.s === 90, sel2);
+  check('…and the panel shows it', /90%/.test(await page.textContent('.preview-overlay .cfg-size') ?? ''), '');
+
+  await page.click('.preview-overlay .cfg-upload-remove');
+  await page.waitForFunction(() => {
+    const v = (window).__previewViewer;
+    return !v.imageDecalOf('base-image')
+      && v.scene.getObjectByName('image-frame-base-image')?.visible === true;
+  }, { timeout: 20000 });
+  check('Remove image clears the decal and brings the zone frame back',
+    await page.evaluate(() => (window).__previewPayload.selections['base-image'] === ''), '');
+  await page.click('[data-testid="preview-close"]');
+  await page.waitForTimeout(200);
+
+  // Removing the zone clears the option and its frame.
+  await page.click('[data-testid="image-remove-base-image"]');
+  await page.waitForFunction(() => !(window).__studio?.manifest?.options?.some((o) => o.type === 'upload'), { timeout: 20000 });
+  await page.waitForFunction(() => !(window).__studioViewer?.scene?.getObjectByName('image-frame-base-image'), { timeout: 20000 });
+  check('removing the zone clears the option and the frame decal', true, '');
+}
+
 check('material has the studio environment (dull-gloss plastic)',
   await page.evaluate(() => !!window.__studioViewer.scene.environment), '');
 check('parts render double-sided — stray winding cannot look transparent',

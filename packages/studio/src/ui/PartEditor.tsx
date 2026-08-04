@@ -4,7 +4,7 @@
 // calls a tested edit op; these components only render and route.
 
 import { useState, type ReactNode } from 'react';
-import type { Manifest, AnchorEdge, ColourOption, ChoiceOption, TextOption, TextFont } from '../../../embed/src/manifest/types.ts';
+import type { Manifest, AnchorEdge, ColourOption, ChoiceOption, TextOption, UploadOption, TextFont } from '../../../embed/src/manifest/types.ts';
 import { FONT_CHOICES } from '../../../embed/src/runtime/fonts.ts';
 import {
   sizeMm, withSizeMm, withAnchor, withRotation,
@@ -14,6 +14,7 @@ import {
   matchPose, partCentreMm, setPartCentre,
   nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
   setTextSlot, removeTextSlot, type TextSlotPatch,
+  setImageZone, nudgeImageZone, removeImageZone, type ImageZonePatch,
   entrySizeMm, withEntrySizeMm,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
@@ -309,6 +310,8 @@ export function PartEditor(props: {
   onRepeat: (entryId: string, opts: RepeatOpts) => void;
   /** Arm "click a face" text placement for this part in the viewport. */
   onPlaceText: (partId: string) => void;
+  /** Arm "click a face" image-zone placement for this part in the viewport. */
+  onPlaceImage: (partId: string) => void;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -509,6 +512,24 @@ export function PartEditor(props: {
           >＋ Place text on a face</button>
         </div>
       </section>
+      <section>
+        <h4>Image zone</h4>
+        <p className="hint">
+          Customers upload an image; it is projected onto this part inside the
+          zone — flat or curved, the surface takes it. Click a face to place
+          the zone, then set its size in millimetres.
+        </p>
+        {manifest.options.filter((o): o is UploadOption => o.type === 'upload' && o.part === part.id).map((zone) => (
+          <ImageZoneEditor key={zone.id} zone={zone} manifest={manifest} act={act} />
+        ))}
+        <div className="match-row">
+          <button
+            className="mini" data-testid="place-image"
+            title="Click a face on this part in the viewport to set where customer images land"
+            onClick={() => props.onPlaceImage(part.id)}
+          >＋ Place image zone on a face</button>
+        </div>
+      </section>
       {!inGroup && !variantOf && <RepeatSection entryId={part.id} what="part" onRepeat={props.onRepeat} />}
       {error && <p className="error" role="alert">{error}</p>}
     </div>
@@ -652,6 +673,73 @@ function TextSlotEditor(props: {
           className="mini danger" data-testid={`text-remove-${slot.id}`}
           onClick={() => act(() => removeTextSlot(manifest, slot.id))}
         >Remove text</button>
+      </div>
+    </div>
+  );
+}
+
+// One image zone's controls. Every commit routes through setImageZone /
+// nudgeImageZone, so an out-of-range value surfaces the edit layer's message.
+function ImageZoneEditor(props: {
+  zone: UploadOption;
+  manifest: Manifest;
+  act: (fn: () => Manifest) => void;
+}) {
+  const { zone, manifest, act } = props;
+  // The slide fields are delta inputs: commit moves the zone, then the field
+  // snaps back to 0 (the key tick remounts them) ready for the next step.
+  const [tick, setTick] = useState(0);
+  const patch = (p: ImageZonePatch) => act(() => setImageZone(manifest, zone.id, p));
+  const slide = (du: number, dv: number) => {
+    act(() => nudgeImageZone(manifest, zone.id, du, dv));
+    setTick((t) => t + 1);
+  };
+  return (
+    <div className="text-slot" data-testid={`image-zone-${zone.id}`}>
+      <div className="field-row">
+        <NumberField
+          label="Width" value={zone.widthMm} suffix="mm" testId={`image-width-${zone.id}`}
+          onCommit={(v) => patch({ widthMm: v })}
+        />
+        <NumberField
+          label="Height" value={zone.heightMm} suffix="mm" testId={`image-height-${zone.id}`}
+          onCommit={(v) => patch({ heightMm: v })}
+        />
+        <NumberField
+          label="Spin" value={zone.rotationDeg ?? 0} suffix="°" step={5} testId={`image-spin-${zone.id}`}
+          onCommit={(v) => patch({ rotationDeg: v })}
+        />
+      </div>
+      <div className="field-row">
+        <NumberField
+          key={`u-${tick}`} label="Slide ↔" value={0} suffix="mm" testId={`image-slide-u-${zone.id}`}
+          onCommit={(v) => { if (v) slide(v, 0); }}
+        />
+        <NumberField
+          key={`v-${tick}`} label="Slide ↕" value={0} suffix="mm" testId={`image-slide-v-${zone.id}`}
+          onCommit={(v) => { if (v) slide(0, v); }}
+        />
+        <NumberField
+          label="Depth" value={zone.wrapMm ?? 0} suffix="mm" testId={`image-wrap-${zone.id}`}
+          onCommit={(v) => patch({ wrapMm: v })}
+        />
+      </div>
+      <p className="hint">
+        Slide moves the zone across its surface; Depth is how far the image
+        projects through curvature (0 = automatic).
+      </p>
+      <div className="field-row">
+        <NumberField
+          label="Extra when used" value={zone.priceDelta ?? 0} suffix={manifest.pricing.currency} step={1}
+          testId={`image-price-${zone.id}`}
+          onCommit={(v) => patch({ priceDelta: v })}
+        />
+      </div>
+      <div className="match-row">
+        <button
+          className="mini danger" data-testid={`image-remove-${zone.id}`}
+          onClick={() => act(() => removeImageZone(manifest, zone.id))}
+        >Remove image zone</button>
       </div>
     </div>
   );

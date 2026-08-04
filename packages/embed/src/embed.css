@@ -138,6 +138,49 @@
 .cfg-text-input:focus { outline: none; border-color: var(--cfg-accent); }
 .cfg-text-count { font-size: 11px; color: var(--cfg-muted); font-variant-numeric: tabular-nums; }
 
+.cfg-upload { display: flex; flex-direction: column; gap: 8px; }
+.cfg-upload-btn {
+  height: 36px; padding: 0 14px; align-self: flex-start;
+  border: 1.5px solid var(--cfg-accent); border-radius: var(--cfg-radius);
+  background: var(--cfg-accent); color: #fff;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.cfg-upload-btn:hover { opacity: .88; }
+.cfg-upload-template { font-size: 11px; color: var(--cfg-muted); text-decoration: underline; }
+.cfg-upload-heading {
+  margin: 4px 0 0; font-size: 9px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--cfg-muted);
+}
+.cfg-arrows {
+  display: grid; grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(3, 34px);
+  gap: 4px; justify-content: start;
+}
+.cfg-arrow {
+  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  background: #fff; font: inherit; font-size: 14px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.cfg-arrow:hover { border-color: var(--cfg-accent); }
+.cfg-arrow-up { grid-area: 1 / 2; }
+.cfg-arrow-left { grid-area: 2 / 1; }
+.cfg-arrow-centre { grid-area: 2 / 2; color: var(--cfg-muted); }
+.cfg-arrow-right { grid-area: 2 / 3; }
+.cfg-arrow-down { grid-area: 3 / 2; }
+.cfg-size { display: flex; align-items: center; gap: 10px; }
+.cfg-size-btn {
+  width: 34px; height: 34px;
+  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  background: #fff; font: inherit; font-size: 15px; cursor: pointer;
+}
+.cfg-size-btn:hover { border-color: var(--cfg-accent); }
+.cfg-size-value { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; }
+.cfg-upload-remove {
+  align-self: flex-start; height: 30px; padding: 0 10px;
+  border: none; border-radius: var(--cfg-radius);
+  background: none; color: #b3352b; font: inherit; font-size: 12px;
+  cursor: pointer; text-decoration: underline;
+}
+
 .cfg-summary { border-top: 1px solid var(--cfg-line); padding-top: 12px; }
 .cfg-summary-label {
   font-size: 9px; font-weight: 700; letter-spacing: .8px;

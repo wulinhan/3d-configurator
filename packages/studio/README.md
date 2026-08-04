@@ -265,6 +265,35 @@ so the same manifest renders one tile or twenty depending on what the
 customer types — the "type your name, get one clicker per letter" product
 is this toggle plus a text slot on the clicker assembly.
 
+## Image zones: customer images projected onto a surface
+
+A part's editor also carries an **Image zone** section: *Place image zone on
+a face* arms the same surface picker, and the clicked face's centroid and
+normal become the zone's plane — a merchant-sized rectangle (width × height
+in mm, plus a spin about the normal) inside which the customer's uploaded
+image lands. The customiser shows the zone as a dashed frame until an image
+arrives.
+
+The image is applied as a **projected decal** (three.js DecalGeometry), not
+a UV texture: the picture is projected through a box onto whatever geometry
+sits inside the zone, and the decal mesh generates its own UVs from the
+projection. That is what makes curved and even double-curved surfaces work —
+parts ship without authored UV maps (the texture library box-projects its
+own, too coarse for imagery), and projection needs none. **Depth** controls
+how far the projection reaches through curvature; 0 picks a sensible
+automatic (the larger zone dimension). **Slide** nudges the zone across its
+surface plane after placement.
+
+Customers get the storefront upload pattern: an *Upload image* button
+(downscaled client-side to ≤1024 px and re-encoded under the zone's byte
+budget before it ever leaves the browser), a POSITION arrow pad (a tap moves
+a tenth of the zone; ⊙ recentres), a SIZE − / % / + row (100 % = the largest
+aspect-preserved fit inside the zone; resizing is uniform), and *Remove
+image*. Offsets are clamped so the image never leaves the zone — in the
+panel and again in the pricing layer, which treats the selection value (a
+JSON string carrying the data-URL image, offset and size) as untrusted.
+Deleting or renaming the carrier part deletes or renames the zone with it.
+
 ## Anchors: summary first, controls on demand
 
 Each Position axis is a single readable line — `as modelled`, or
@@ -403,11 +432,17 @@ test/text.test.ts     10 — text slots bind valid, tune through validation,
                       line and circle modes, negative gaps overlap on
                       purpose, engraved style skips the emboss sink rule,
                       and the slot's own colour pins and releases
+test/image.test.ts     7 — image zones bind valid with defaults, tune and
+                      nudge through validation (the nudge slides in the
+                      zone's own surface plane, both face orientations),
+                      follow their carrier part (deleted = gone, renamed =
+                      renamed), clamp customer offsets to the zone, price
+                      when used, and reject garbage/non-image selections
 test/engrave (embed)   3 — the boolean cut comes back CLOSED: surface,
                       walls and floor — even on an open-shell mesh where
                       raw CSG loses its bearings (the see-through-pocket
                       regression, asserted headless)
-test/studio.smoke.mjs 167 browser assertions — the full merchant journey
+test/studio.smoke.mjs 183 browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and
@@ -421,11 +456,15 @@ test/studio.smoke.mjs 167 browser assertions — the full merchant journey
                       Studio's own dialogs and listboxes, the repeat tool
                       stamping and un-stamping copies, the compressed
                       download, New project resetting to the empty stage,
-                      and 3D text end to end (face pick → slot → typeface
+                      3D text end to end (face pick → slot → typeface
                       dropdown reshaping the extrusion → one-piece-per-letter
                       spawning a pitched row of template copies → customer
                       typing priced per character in the real embed → removal
-                      clearing slot, extrusion and spawned pieces)
+                      clearing slot, extrusion and spawned pieces), and image
+                      zones end to end (face pick → dashed frame decal →
+                      customer upload landing as a projected decal → arrow-pad
+                      repositioning and stepped resizing → removal restoring
+                      the frame, then the zone itself)
 ```
 
 The browser test exists because two real defects passed every unit test: the

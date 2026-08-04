@@ -8,7 +8,7 @@
 // concentrate.
 
 import type {
-  Manifest, Part, Option, ColourOption, ChoiceOption, TextOption, TextureType, AxisPlacement, AnchorEdge, Hex,
+  Manifest, Part, Option, ColourOption, ChoiceOption, TextOption, UploadOption, TextureType, AxisPlacement, AnchorEdge, Hex,
 } from '../../../embed/src/manifest/types.ts';
 import { validateManifest } from '../../../embed/src/manifest/validate.ts';
 import { resolveLayout, modelBounds } from '../../../embed/src/runtime/layout.ts';
@@ -447,6 +447,9 @@ export function renamePart(manifest: Manifest, partId: string, label: string): M
       if (option.type === 'text' && option.part === partId) {
         option.label = `${label.trim()} text`;
       }
+      if (option.type === 'upload' && option.part === partId) {
+        option.label = `${label.trim()} image`;
+      }
     }
   });
 }
@@ -504,7 +507,7 @@ export function removePart(manifest: Manifest, partId: string, raw: Map<string, 
 
     draft.options = draft.options.filter((option) => {
       if (option.id === `${partId}-addon`) return false;
-      if (option.type === 'text' && option.part === partId) return false;
+      if ((option.type === 'text' || option.type === 'upload') && option.part === partId) return false;
       if (isColour(option)) {
         option.parts = option.parts.filter((id) => id !== partId);
         return option.parts.length > 0 || option.source === 'used';
@@ -1346,6 +1349,87 @@ export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlo
 export function removeTextSlot(manifest: Manifest, optionId: string): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
+  return edit(manifest, (draft) => {
+    draft.options = draft.options.filter((o) => o.id !== optionId);
+  });
+}
+
+// ── image zones ─────────────────────────────────────────────────────────────
+
+const IMAGE_DEFAULTS = { widthMm: 30, heightMm: 20 } as const;
+
+/**
+ * Bind an image zone to a picked surface of a part. Like text slots, `origin`
+ * and `normal` are in the part's local mesh space; the customer's uploaded
+ * image is projected as a decal through the zone, so curved surfaces work.
+ */
+export function addImageZone(
+  manifest: Manifest,
+  partId: string,
+  place: { origin: [number, number, number]; normal: [number, number, number] },
+): Manifest {
+  const part = partOf(manifest, partId);
+  let id = `${partId}-image`;
+  for (let n = 2; manifest.options.some((o) => o.id === id); n++) id = `${partId}-image-${n}`;
+  return edit(manifest, (draft) => {
+    draft.options.push({
+      id,
+      type: 'upload',
+      label: `${part.label} image`,
+      part: partId,
+      origin: place.origin.map(round3) as [number, number, number],
+      normal: place.normal.map(round3) as [number, number, number],
+      ...IMAGE_DEFAULTS,
+    });
+  });
+}
+
+/** The fields a merchant tunes after placing an image zone. */
+export type ImageZonePatch = Partial<Pick<UploadOption,
+  'widthMm' | 'heightMm' | 'wrapMm' | 'rotationDeg' | 'priceDelta' | 'maxBytes' | 'label'>>;
+
+export function setImageZone(manifest: Manifest, optionId: string, patch: ImageZonePatch): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);
+  return edit(manifest, (draft) => {
+    const o = draft.options.find((x) => x.id === optionId) as UploadOption;
+    Object.assign(o, patch);
+    // An emptied field falls back to its default rather than validating as 0.
+    for (const key of ['wrapMm', 'rotationDeg', 'priceDelta'] as const) {
+      if (o[key] === 0) delete o[key];
+    }
+  });
+}
+
+/**
+ * Slide a zone's centre within its own plane: `du`/`dv` are millimetres
+ * along the zone's on-surface X/Y axes — the same basis the viewer projects
+ * with, so the on-screen arrows move the frame exactly where they point.
+ */
+export function nudgeImageZone(manifest: Manifest, optionId: string, du: number, dv: number): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);
+  if (!Number.isFinite(du) || !Number.isFinite(dv)) throw new EditError('nudge must be finite');
+  // Rebuild the viewer's zone basis (see buildDecal) from the normal alone.
+  const [nx, ny, nz] = option.normal;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  const n = [nx / len, ny / len, nz / len];
+  const up = Math.abs(n[1]) < 0.99 ? [0, 1, 0] : [0, 0, -1];
+  const cross = (a: number[], b: number[]) => [
+    a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0],
+  ];
+  const norm = (v: number[]) => { const l = Math.hypot(...v) || 1; return v.map((c) => c / l); };
+  const xAxis = norm(cross(up, n));
+  const yAxis = norm(cross(n, xAxis));
+  return edit(manifest, (draft) => {
+    const o = draft.options.find((x) => x.id === optionId) as UploadOption;
+    o.origin = o.origin.map((c, i) => round3(c + xAxis[i] * du + yAxis[i] * dv)) as [number, number, number];
+  });
+}
+
+export function removeImageZone(manifest: Manifest, optionId: string): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);
   return edit(manifest, (draft) => {
     draft.options = draft.options.filter((o) => o.id !== optionId);
   });

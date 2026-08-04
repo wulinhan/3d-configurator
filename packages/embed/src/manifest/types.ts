@@ -184,14 +184,42 @@ export interface ChoiceOption {
   default: string;
 }
 
-/** Customer-supplied artwork applied to a part. */
+/**
+ * Customer-supplied artwork PROJECTED onto a part's surface.
+ *
+ * The merchant picks the surface in the Studio; `origin`/`normal` record the
+ * projection plane in the part's local mesh space (exactly like a text
+ * slot), and `widthMm`/`heightMm` bound the ZONE the image must stay
+ * within. Rendering is a decal projection — the image is beamed through a
+ * box onto whatever geometry is underneath, so flat, curved and
+ * double-curved surfaces all take it without any UV unwrapping;
+ * `wrapMm` is how deep the projector reaches (default: the zone's larger
+ * side, enough to wrap typical curvature).
+ *
+ * The customer's value in `selections` is a JSON string:
+ * `{ "img": <data URL>, "u": mm, "v": mm, "s": percent }` — offset within
+ * the zone and uniform size (10–100, where 100 = largest fit inside the
+ * zone). Empty string = no image.
+ */
 export interface UploadOption {
   id: string;
   type: 'upload';
   label: string;
   /** Part whose surface receives the artwork. */
   part: string;
-  accept?: string[];        // default ['image/png', 'image/jpeg', 'image/svg+xml']
+  /** Projection-plane origin on the surface, part-local mm. */
+  origin: [number, number, number];
+  /** Outward surface normal in the same space — the projection direction. */
+  normal: [number, number, number];
+  /** Extra rotation about the normal, degrees. Default 0. */
+  rotationDeg?: number;
+  /** Zone bounds on the surface, mm. */
+  widthMm: number;
+  heightMm: number;
+  /** Projection depth for curved surfaces, mm. Default max(width, height). */
+  wrapMm?: number;
+  accept?: string[];        // default ['image/png', 'image/jpeg']
+  /** Cap on the stored image, after client-side downscaling. Default ~1.5MB. */
   maxBytes?: number;
   priceDelta?: number;
   /** Print-ready template the merchant offers as a download. */

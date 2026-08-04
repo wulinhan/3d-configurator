@@ -4,14 +4,44 @@
 // per-product code here, which is the whole point. Selections are posted to
 // the host page on every change so the merchant's cart can price them.
 
-import type { Manifest, ColourOption, ChoiceOption, TextOption, Option } from './manifest/types.ts';
+import type { Manifest, ColourOption, ChoiceOption, TextOption, UploadOption, Option } from './manifest/types.ts';
 import { validateManifest } from './manifest/validate.ts';
 import { Viewer } from './runtime/viewer.ts';
 import {
   defaultSelections, resolveValue, resolveColour, coloursInUse, buildPayload,
-  visibleParts, isOptionActive, applySelection,
+  visibleParts, isOptionActive, applySelection, parseUploadState,
   type Selections,
 } from './runtime/state.ts';
+
+/**
+ * Read a customer's file into a data: URL small enough to live in the
+ * selection payload: downscaled to ≤1024px, PNG kept for transparency,
+ * anything over budget re-encoded as JPEG at falling quality.
+ */
+async function encodeUploadImage(file: File, maxBytes: number): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('unreadable image'));
+      i.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1, 1024 / Math.max(img.width, img.height, 1));
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+    let out = file.type === 'image/png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.85);
+    // base64 carries ~3/4 byte per character.
+    for (let q = 0.8; out.length * 0.75 > maxBytes && q >= 0.35; q -= 0.15) {
+      out = canvas.toDataURL('image/jpeg', q);
+    }
+    return out;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 const isColour = (o: Option): o is ColourOption => o.type === 'colour';
 const isChoice = (o: Option): o is ChoiceOption => o.type === 'choice';
@@ -255,6 +285,93 @@ export async function mount(opts: MountOptions) {
     body.append(wrap);
   }
 
+  function renderUpload(option: UploadOption) {
+    const state = parseUploadState(selections[option.id]);
+    const wrap = el('div', 'cfg-upload');
+
+    if (option.priceDelta) wrap.append(el('p', 'cfg-note', `+${money(option.priceDelta)} when an image is added`));
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = option.accept ?? 'image/*';
+    input.className = 'cfg-upload-input';
+    input.hidden = true;
+    input.setAttribute('aria-label', option.label);
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const img = await encodeUploadImage(file, option.maxBytes ?? 1_500_000);
+        change(option.id, JSON.stringify({ img, u: 0, v: 0, s: 100 }));
+      } catch {
+        /* unreadable file — leave the current state alone */
+      }
+    });
+
+    const pick = el('button', 'cfg-upload-btn', state ? 'Replace image' : 'Upload image');
+    pick.type = 'button';
+    pick.addEventListener('click', () => input.click());
+    wrap.append(pick, input);
+
+    if (option.templateUrl) {
+      const a = document.createElement('a');
+      a.className = 'cfg-upload-template';
+      a.href = opts.baseUrl ? new URL(option.templateUrl, opts.baseUrl).href : option.templateUrl;
+      a.download = '';
+      a.textContent = `Download design template (${option.widthMm} × ${option.heightMm} mm)`;
+      wrap.append(a);
+    }
+
+    if (state) {
+      const update = (patch: Partial<typeof state>) =>
+        change(option.id, JSON.stringify({ ...state, ...patch }));
+      // One arrow press moves a tenth of the zone — ten taps cross it.
+      const stepU = option.widthMm / 10;
+      const stepV = option.heightMm / 10;
+
+      const arrowBtn = (cls: string, glyph: string, label: string, onClick: () => void) => {
+        const b = el('button', `cfg-arrow ${cls}`, glyph);
+        b.type = 'button';
+        b.setAttribute('aria-label', label);
+        b.addEventListener('click', onClick);
+        return b;
+      };
+      wrap.append(el('p', 'cfg-upload-heading', 'Position'));
+      const pad = el('div', 'cfg-arrows');
+      pad.append(
+        arrowBtn('cfg-arrow-up', '↑', 'Move image up', () => update({ v: state.v + stepV })),
+        arrowBtn('cfg-arrow-left', '←', 'Move image left', () => update({ u: state.u - stepU })),
+        arrowBtn('cfg-arrow-centre', '⊙', 'Centre image', () => update({ u: 0, v: 0 })),
+        arrowBtn('cfg-arrow-right', '→', 'Move image right', () => update({ u: state.u + stepU })),
+        arrowBtn('cfg-arrow-down', '↓', 'Move image down', () => update({ v: state.v - stepV })),
+      );
+      wrap.append(pad);
+
+      wrap.append(el('p', 'cfg-upload-heading', 'Size'));
+      const sizeRow = el('div', 'cfg-size');
+      const pct = el('span', 'cfg-size-value', `${Math.round(state.s)}%`);
+      const sizeBtn = (cls: string, glyph: string, label: string, ds: number) => {
+        const b = el('button', `cfg-size-btn ${cls}`, glyph);
+        b.type = 'button';
+        b.setAttribute('aria-label', label);
+        b.addEventListener('click', () => update({ s: Math.min(100, Math.max(10, state.s + ds)) }));
+        return b;
+      };
+      sizeRow.append(
+        sizeBtn('cfg-size-minus', '−', 'Smaller', -10),
+        pct,
+        sizeBtn('cfg-size-plus', '＋', 'Larger', 10),
+      );
+      wrap.append(sizeRow);
+
+      const remove = el('button', 'cfg-upload-remove', 'Remove image');
+      remove.type = 'button';
+      remove.addEventListener('click', () => { input.value = ''; change(option.id, ''); });
+      wrap.append(remove);
+    }
+    body.append(wrap);
+  }
+
   function render() {
     tabs.replaceChildren();
     body.replaceChildren();
@@ -317,6 +434,7 @@ export async function mount(opts: MountOptions) {
       const fold = folds.get(option.id);
       if (fold?.colour) renderColour(fold.colour);
     } else if (option?.type === 'text') renderText(option);
+    else if (option?.type === 'upload') renderUpload(option);
 
     viewer.highlight(option && isColour(option) ? option.parts[0] : null);
     renderSummary();
@@ -354,6 +472,13 @@ export async function mount(opts: MountOptions) {
         if (!text) continue;
         const row = el('div', 'cfg-summary-row');
         row.append(el('span', 'cfg-summary-part', o.label), el('span', 'cfg-summary-value', `“${text}”`));
+        summary.append(row);
+        continue;
+      }
+      if (o.type === 'upload') {
+        if (!selections[o.id]) continue;
+        const row = el('div', 'cfg-summary-row');
+        row.append(el('span', 'cfg-summary-part', o.label), el('span', 'cfg-summary-value', 'Custom image'));
         summary.append(row);
         continue;
       }

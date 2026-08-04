@@ -66,6 +66,18 @@ options and the deltas, the embed computes them, and the payload hands the
 itemised result to whatever cart is listening. The configurator itself never
 states a total price; the base price stays the store's.
 
+**Image uploads.** An image-zone (`upload`) selection is a JSON string:
+`{"img": "data:image/…", "u": 0, "v": 0, "s": 100}` — the customer's image
+as a data URL (downscaled client-side to ≤1024 px and re-encoded under the
+zone's `maxBytes`, default 1.5 MB), its offset within the zone in
+millimetres, and its size percent. That makes the payload for such orders
+hundreds of KB to ~2 MB — fine for a POST body, too big for a URL or some
+line-item-property limits. Persist the image server-side on order creation
+(decode the data URL, store the file, keep `{u,v,s}` plus your file
+reference as the order meta) rather than parking the raw data URL in a
+platform field. Validate server-side like everything else: decode, check
+the MIME/type sniff, re-clamp `u`/`v`/`s` against the zone.
+
 ## 3. Getting it onto the order, per platform
 
 **WooCommerce (cleanest fit).** Listen for the event, write the payload into

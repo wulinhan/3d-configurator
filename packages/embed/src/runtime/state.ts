@@ -23,7 +23,7 @@ export function defaultSelections(manifest: Manifest): Selections {
   const out: Selections = {};
   for (const o of manifest.options) {
     if (isColour(o) || isChoice(o)) out[o.id] = o.default;
-    else if (o.type === 'text') out[o.id] = '';
+    else if (o.type === 'text' || o.type === 'upload') out[o.id] = '';
   }
   return out;
 }
@@ -110,6 +110,34 @@ export function isOptionActive(
   return true;
 }
 
+/** A customer's image-zone state, decoded from its selections JSON. */
+export interface UploadState {
+  /** data: URL of the (client-side downscaled) image. */
+  img: string;
+  /** Offset within the zone, mm. */
+  u: number;
+  v: number;
+  /** Uniform size percent, 10-100 (100 = largest fit inside the zone). */
+  s: number;
+}
+
+/** Parse an upload selection value; empty/garbage decodes to null. */
+export function parseUploadState(value: string | undefined): UploadState | null {
+  if (!value) return null;
+  try {
+    const raw = JSON.parse(value) as Partial<UploadState>;
+    if (typeof raw.img !== 'string' || !raw.img.startsWith('data:image/')) return null;
+    return {
+      img: raw.img,
+      u: Number.isFinite(raw.u) ? (raw.u as number) : 0,
+      v: Number.isFinite(raw.v) ? (raw.v as number) : 0,
+      s: Math.min(100, Math.max(10, Number.isFinite(raw.s) ? (raw.s as number) : 100)),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * What a text option can actually render: the bundled fonts carry printable
  * ASCII only, so anything else is dropped rather than rendered as tofu, and
@@ -152,6 +180,18 @@ export function applySelection(manifest: Manifest, selections: Selections, optio
   const option = manifest.options.find((o) => o.id === optionId);
   if (option?.type === 'text') {
     selections[optionId] = sanitiseText(value, option.maxLength ?? 20);
+    return;
+  }
+  if (option?.type === 'upload') {
+    const state = parseUploadState(value);
+    if (!state) { selections[optionId] = ''; return; }
+    // The zone is the law: the image's centre may roam but never leave it.
+    selections[optionId] = JSON.stringify({
+      img: state.img,
+      u: Math.min(option.widthMm / 2, Math.max(-option.widthMm / 2, state.u)),
+      v: Math.min(option.heightMm / 2, Math.max(-option.heightMm / 2, state.v)),
+      s: state.s,
+    });
     return;
   }
   const memberColour = (): ColourOption | undefined => {

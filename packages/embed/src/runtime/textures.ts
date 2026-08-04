@@ -160,6 +160,27 @@ export function proceduralNormalMap(type: TextureType): THREE.CanvasTexture {
   return texture;
 }
 
+let frameTexture: THREE.CanvasTexture | undefined;
+
+/**
+ * The dashed rectangular border shown over an image zone while nothing is
+ * uploaded — a transparent canvas with a dashed outline, projected as a
+ * decal the exact size of the zone. Cached: one canvas per page, ever.
+ */
+export function zoneFrameTexture(): THREE.CanvasTexture {
+  if (frameTexture) return frameTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = SIZE;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  ctx.strokeStyle = 'rgba(30, 41, 59, 0.9)';
+  ctx.lineWidth = 4;
+  ctx.setLineDash([12, 8]);
+  ctx.strokeRect(4, 4, SIZE - 8, SIZE - 8);
+  frameTexture = new THREE.CanvasTexture(canvas);
+  return frameTexture;
+}
+
 /**
  * Box-projected UVs for geometry that shipped without any: each vertex is
  * projected along the dominant axis of its normal, at BASE_TILE_MM per tile.

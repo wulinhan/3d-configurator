@@ -240,6 +240,22 @@ export function validateManifest(input: unknown): ValidationResult {
     } else if (o && isUpload(o)) {
       if (!partIds.has(o.part)) err(`${at}.part`, `unknown part "${o.part}"`);
       if (o.maxBytes != null && !(o.maxBytes > 0)) err(`${at}.maxBytes`, 'must be greater than zero');
+      const zvec = (key: 'origin' | 'normal') => {
+        const val = o[key];
+        if (!Array.isArray(val) || val.length !== 3 || val.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+          err(`${at}.${key}`, 'must be [x, y, z] millimetres in the part\'s local space');
+          return false;
+        }
+        return true;
+      };
+      zvec('origin');
+      if (zvec('normal') && Math.hypot(...o.normal) < 1e-6) {
+        err(`${at}.normal`, 'must not be a zero vector — it is the projection direction');
+      }
+      if (!(o.widthMm > 0) || o.widthMm > 500) err(`${at}.widthMm`, 'must be between 0 and 500 millimetres');
+      if (!(o.heightMm > 0) || o.heightMm > 500) err(`${at}.heightMm`, 'must be between 0 and 500 millimetres');
+      if (o.wrapMm != null && (!(o.wrapMm > 0) || o.wrapMm > 500)) err(`${at}.wrapMm`, 'must be between 0 and 500 millimetres');
+      if (o.rotationDeg != null && !Number.isFinite(o.rotationDeg)) err(`${at}.rotationDeg`, 'must be a number');
     } else if (o && isText(o)) {
       if (!partIds.has(o.part)) err(`${at}.part`, `unknown part "${o.part}"`);
       const vec3 = (key: 'origin' | 'normal') => {

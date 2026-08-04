@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import {
   defaultSelections, resolveValue, resolveColour, partColours, visibleParts,
   coloursInUse, priceDeltas, buildPayload, isCustomColour, isOptionActive,
-  applySelection,
+  applySelection, parseUploadState,
 } from '../src/runtime/state.ts';
 import type { Manifest, ColourOption } from '../src/manifest/types.ts';
 
@@ -263,4 +263,42 @@ test('a link cycle resolves to empty instead of recursing forever', () => {
   s['tile-colour'] = '@body-colour';
   assert.equal(resolveValue(m, s, 'body-colour'), '');
   assert.doesNotThrow(() => buildPayload(m, s));
+});
+
+test('parseUploadState decodes only image data URLs, clamping size', () => {
+  assert.equal(parseUploadState(''), null);
+  assert.equal(parseUploadState(undefined), null);
+  assert.equal(parseUploadState('not json'), null);
+  assert.equal(parseUploadState(JSON.stringify({ img: 'https://evil.example/x.png' })), null);
+  assert.equal(parseUploadState(JSON.stringify({ img: 'javascript:alert(1)' })), null);
+
+  const state = parseUploadState(JSON.stringify({ img: 'data:image/png;base64,AAAA', u: 2, v: -3, s: 400 }))!;
+  assert.equal(state.u, 2);
+  assert.equal(state.v, -3);
+  assert.equal(state.s, 100, 'size clamps to 100%');
+  const tiny = parseUploadState(JSON.stringify({ img: 'data:image/jpeg;base64,AAAA', s: 1 }))!;
+  assert.equal(tiny.s, 10, 'size clamps to 10%');
+  assert.equal(tiny.u, 0, 'missing offsets default to centre');
+});
+
+test('applySelection clamps an upload offset to the zone bounds', () => {
+  const m = load();
+  (m.options as any[]).push({
+    id: 'body-image', type: 'upload', label: 'Body image', part: 'body',
+    origin: [0, 0, 0], normal: [0, 0, 1], widthMm: 40, heightMm: 30, priceDelta: 8,
+  });
+  const s = defaultSelections(m);
+  assert.equal(s['body-image'], '');
+
+  applySelection(m, s, 'body-image', JSON.stringify({ img: 'data:image/png;base64,AAAA', u: 100, v: -100, s: 50 }));
+  const state = parseUploadState(s['body-image'])!;
+  assert.equal(state.u, 20);
+  assert.equal(state.v, -15);
+  assert.equal(state.s, 50);
+  const d = priceDeltas(m, s).filter((x) => x.optionId === 'body-image');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].amount, 8);
+
+  applySelection(m, s, 'body-image', 'garbage');
+  assert.equal(s['body-image'], '', 'garbage clears the selection');
 });

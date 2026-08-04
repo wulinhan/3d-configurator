@@ -10,11 +10,12 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
-import type { Manifest, Part, TextOption } from '../manifest/types.ts';
+import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
+import type { Manifest, Part, TextOption, UploadOption } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
-import { partColours, visibleParts, type Selections } from './state.ts';
+import { partColours, visibleParts, parseUploadState, type Selections } from './state.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
-import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
+import { proceduralNormalMap, applyBoxUvs, zoneFrameTexture, BASE_TILE_MM } from './textures.ts';
 import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor } from './engrave.ts';
 
 /**
@@ -189,6 +190,13 @@ export class Viewer {
   /** optionId → the engraved pocket's floor mesh (single-slot mode) — the
    * flat face that carries the slot's text colour. */
   private debossFloors = new Map<string, { mesh: THREE.Mesh; key: string; customMat?: THREE.MeshStandardMaterial }>();
+  /** optionId → the image zone's decal + dashed boundary frame. */
+  private imageDecals = new Map<string, {
+    key: string;
+    decal?: THREE.Mesh;
+    frame?: THREE.Mesh;
+    texture?: THREE.Texture;
+  }>();
   private surfaceAdjacency = new WeakMap<THREE.BufferGeometry, number[][]>();
   private lastSelections: Selections = {};
   /** Untransformed per-part bounds, kept so setManifest can re-run layout. */
@@ -788,7 +796,147 @@ export class Viewer {
       if (mesh) mesh.visible = visible.has(partId) && !this.hiddenParts.has(partId);
     }
     this.syncText(selections);
+    this.syncImages(selections);
     this.highlight(this.highlighted);
+  }
+
+  /**
+   * Customer images land as DECALS: the image is projected through a box
+   * onto whatever geometry sits inside the zone, so flat, curved and
+   * double-curved surfaces all take it — no UV unwrapping involved. The
+   * dashed frame decal shows the zone while no image is uploaded. Decals
+   * are generated in world space, so they rebuild whenever the carrier's
+   * transform, the zone, or the customer's image/position/size changes.
+   */
+  private syncImages(selections: Selections): void {
+    const wanted = new Set<string>();
+    for (const option of this.manifest.options) {
+      if (option.type !== 'upload') continue;
+      wanted.add(option.id);
+      const carrier = this.meshes.get(option.part);
+      const entry = this.imageDecals.get(option.id) ?? { key: '' };
+      this.imageDecals.set(option.id, entry);
+      if (!carrier) { this.dropImage(option.id); continue; }
+      carrier.updateMatrixWorld();
+      const state = parseUploadState(selections[option.id]);
+      const key = JSON.stringify([
+        option.origin, option.normal, option.rotationDeg, option.widthMm, option.heightMm,
+        option.wrapMm, option.part,
+        state ? [state.img.length, state.img.slice(-48), state.u, state.v, state.s] : null,
+        carrier.matrixWorld.elements.map((e) => Math.round(e * 1000)),
+      ]);
+      if (entry.key === key) {
+        if (entry.decal) entry.decal.visible = carrier.visible;
+        if (entry.frame) entry.frame.visible = carrier.visible && !state;
+        continue;
+      }
+      this.dropImage(option.id);
+      const fresh: NonNullable<ReturnType<typeof this.imageDecals.get>> = { key };
+      this.imageDecals.set(option.id, fresh);
+
+      // The zone frame — always built; hidden while an image is showing.
+      const frame = this.buildDecal(carrier, option, 0, 0, option.widthMm, option.heightMm, zoneFrameTexture());
+      if (frame) {
+        frame.name = `image-frame-${option.id}`;
+        frame.visible = carrier.visible && !state;
+        this.group.add(frame);
+        fresh.frame = frame;
+      }
+      if (!state) continue;
+
+      const spec = { ...option };
+      new THREE.TextureLoader().load(state.img, (texture) => {
+        if (this.imageDecals.get(option.id) !== fresh) { texture.dispose(); return; } // superseded
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = 4;
+        const img = texture.image as { width: number; height: number };
+        const aspect = img.width / Math.max(1, img.height);
+        // 100% = the largest fit inside the zone, aspect preserved.
+        let w = Math.min(spec.widthMm, spec.heightMm * aspect);
+        let h = w / aspect;
+        w *= state.s / 100; h *= state.s / 100;
+        // The image stays inside the zone whatever the stored offset says.
+        const u = Math.max(-(spec.widthMm - w) / 2, Math.min((spec.widthMm - w) / 2, state.u));
+        const v = Math.max(-(spec.heightMm - h) / 2, Math.min((spec.heightMm - h) / 2, state.v));
+        const target = this.meshes.get(spec.part);
+        if (!target) { texture.dispose(); return; }
+        const decal = this.buildDecal(target, spec, u, v, w, h, texture);
+        if (!decal) { texture.dispose(); return; }
+        decal.name = `image-${spec.id}`;
+        decal.visible = target.visible;
+        this.group.add(decal);
+        fresh.decal = decal;
+        fresh.texture = texture;
+        if (fresh.frame) fresh.frame.visible = false;
+      });
+    }
+    for (const id of [...this.imageDecals.keys()]) {
+      if (!wanted.has(id)) this.dropImage(id);
+    }
+  }
+
+  /** One projected decal over the zone's surface, offset (u,v) mm from its
+   * centre in the zone plane, sized w×h mm. */
+  private buildDecal(
+    carrier: THREE.Mesh, option: UploadOption,
+    u: number, v: number, w: number, h: number, texture: THREE.Texture,
+  ): THREE.Mesh | null {
+    try {
+      // Zone basis in the carrier's local space — same convention as glyphs.
+      const n = new THREE.Vector3(...option.normal).normalize();
+      const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+      const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
+      const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
+      const localQuat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, n));
+      if (option.rotationDeg) {
+        localQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180));
+      }
+      const rot = new THREE.Vector3().copy(xAxis).multiplyScalar(u).addScaledVector(yAxis, v);
+      const localPos = new THREE.Vector3(...option.origin).add(
+        rot.applyQuaternion(new THREE.Quaternion().setFromAxisAngle(n, (option.rotationDeg ?? 0) * Math.PI / 180)));
+      const worldPos = carrier.localToWorld(localPos.clone());
+      const worldQuat = carrier.getWorldQuaternion(new THREE.Quaternion()).multiply(localQuat);
+      const euler = new THREE.Euler().setFromQuaternion(worldQuat);
+      const wrap = option.wrapMm ?? Math.max(option.widthMm, option.heightMm);
+      const geometry = new DecalGeometry(carrier, worldPos, euler, new THREE.Vector3(w, h, wrap));
+      if (!geometry.attributes.position || geometry.attributes.position.count === 0) {
+        geometry.dispose();
+        return null;
+      }
+      const material = new THREE.MeshStandardMaterial({
+        map: texture,
+        transparent: true,
+        roughness: 0.8,
+        metalness: 0,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.raycast = () => {};
+      mesh.renderOrder = 2;
+      return mesh;
+    } catch {
+      return null;
+    }
+  }
+
+  private dropImage(optionId: string): void {
+    const entry = this.imageDecals.get(optionId);
+    if (!entry) return;
+    for (const mesh of [entry.decal, entry.frame]) {
+      if (!mesh) continue;
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    entry.texture?.dispose();
+    this.imageDecals.delete(optionId);
+  }
+
+  /** The rendered image decal of an upload option — a test hook. */
+  imageDecalOf(optionId: string): THREE.Mesh | undefined {
+    return this.imageDecals.get(optionId)?.decal;
   }
 
   /**
