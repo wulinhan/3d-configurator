@@ -134,12 +134,14 @@ test('customer selections clamp to the zone and price when used', () => {
   assert.equal(s['body-image'], '', 'no image by default');
   assert.deepEqual(priceDeltas(m, s).filter((d) => d.optionId === 'body-image'), []);
 
-  // The offset may roam but never leave the 30×20 zone.
+  // The offset may roam but never abandon the 30×20 zone (±2× dimensions —
+  // the payload's sanity bound; the renderer clamps to the exact slack).
+  // Crop-zoom sizes survive up to 500%.
   applySelection(m, s, 'body-image', JSON.stringify({ img: IMG, u: 999, v: -999, s: 250 }));
   const state = parseUploadState(s['body-image'])!;
-  assert.equal(state.u, 15);
-  assert.equal(state.v, -10);
-  assert.equal(state.s, 100);
+  assert.equal(state.u, 60);
+  assert.equal(state.v, -40);
+  assert.equal(state.s, 250);
 
   const deltas = priceDeltas(m, s).filter((d) => d.optionId === 'body-image');
   assert.equal(deltas.length, 1);

@@ -977,14 +977,19 @@ export class Viewer {
       }
       const img = entry.imgEl;
       const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
-      // 100% = the largest fit inside the zone, aspect preserved.
+      // 100% = the largest fit inside the zone, aspect preserved; beyond
+      // 100 the image outgrows the zone and crops to it.
       let w = Math.min(option.widthMm, option.heightMm * aspect);
       let h = w / aspect;
       w *= state.s / 100;
       h *= state.s / 100;
-      // The image stays inside the zone whatever the stored offset says.
-      const u = Math.max(-(option.widthMm - w) / 2, Math.min((option.widthMm - w) / 2, state.u));
-      const v = Math.max(-(option.heightMm - h) / 2, Math.min((option.heightMm - h) / 2, state.v));
+      // The offset may roam the slack: inside the zone while the image is
+      // smaller, across the overflow once it is bigger — either way the
+      // image never abandons the zone.
+      const uLim = Math.abs(option.widthMm - w) / 2;
+      const vLim = Math.abs(option.heightMm - h) / 2;
+      const u = Math.max(-uLim, Math.min(uLim, state.u));
+      const v = Math.max(-vLim, Math.min(vLim, state.v));
       const [dx, dy] = map([u - w / 2, v + h / 2]);
       ctx.drawImage(img, dx, dy, (w / option.widthMm) * cw, (h / option.heightMm) * ch);
       ctx.restore();

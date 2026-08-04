@@ -117,7 +117,8 @@ export interface UploadState {
   /** Offset within the zone, mm. */
   u: number;
   v: number;
-  /** Uniform size percent, 10-100 (100 = largest fit inside the zone). */
+  /** Uniform size percent, 10-500. 100 = largest fit inside the zone;
+   * beyond 100 the image outgrows the zone and crops to it. */
   s: number;
 }
 
@@ -131,7 +132,7 @@ export function parseUploadState(value: string | undefined): UploadState | null 
       img: raw.img,
       u: Number.isFinite(raw.u) ? (raw.u as number) : 0,
       v: Number.isFinite(raw.v) ? (raw.v as number) : 0,
-      s: Math.min(100, Math.max(10, Number.isFinite(raw.s) ? (raw.s as number) : 100)),
+      s: Math.min(500, Math.max(10, Number.isFinite(raw.s) ? (raw.s as number) : 100)),
     };
   } catch {
     return null;
@@ -185,11 +186,13 @@ export function applySelection(manifest: Manifest, selections: Selections, optio
   if (option?.type === 'upload') {
     const state = parseUploadState(value);
     if (!state) { selections[optionId] = ''; return; }
-    // The zone is the law: the image's centre may roam but never leave it.
+    // The zone is the law: the image's centre may roam but never abandon
+    // it (an oversized image pans within its overflow — the renderer
+    // clamps exactly; this is the payload's sanity bound).
     selections[optionId] = JSON.stringify({
       img: state.img,
-      u: Math.min(option.widthMm / 2, Math.max(-option.widthMm / 2, state.u)),
-      v: Math.min(option.heightMm / 2, Math.max(-option.heightMm / 2, state.v)),
+      u: Math.min(option.widthMm * 2, Math.max(-option.widthMm * 2, state.u)),
+      v: Math.min(option.heightMm * 2, Math.max(-option.heightMm * 2, state.v)),
       s: state.s,
     });
     return;

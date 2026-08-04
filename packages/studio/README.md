@@ -305,9 +305,11 @@ the image inside the outline shows; a whole drag is one undo step.
 Customers get the storefront upload pattern: an *Upload image* button
 (downscaled client-side to ≤1024 px and re-encoded under the zone's byte
 budget before it ever leaves the browser), a POSITION arrow pad (a tap moves
-a tenth of the zone; ⊙ recentres), a SIZE − / % / + row (100 % = the largest
-aspect-preserved fit inside the zone; resizing is uniform), and *Remove
-image*. Offsets are clamped so the image never leaves the zone — in the
+a tenth of the zone; ⊙ recentres), a SIZE row — a typed percent field with
+− / ＋ stepping 1 %, running 10–500 % (100 % = the largest aspect-preserved
+fit inside the zone; beyond that the image crop-zooms within the zone,
+panning across the overflow; resizing is uniform) — and *Remove
+image*. Offsets are clamped so the image never abandons the zone — in the
 panel and again in the pricing layer, which treats the selection value (a
 JSON string carrying the data-URL image, offset and size) as untrusted.
 Deleting or renaming the carrier part deletes or renames the zone with it.

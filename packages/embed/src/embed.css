@@ -173,7 +173,14 @@
   background: #fff; font: inherit; font-size: 15px; cursor: pointer;
 }
 .cfg-size-btn:hover { border-color: var(--cfg-accent); }
-.cfg-size-value { font-size: 13px; font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; }
+.cfg-size-value {
+  width: 62px; height: 34px; padding: 0 6px;
+  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  background: #fff; font: inherit; font-size: 13px;
+  font-variant-numeric: tabular-nums; text-align: center;
+}
+.cfg-size-value:focus { outline: none; border-color: var(--cfg-accent); }
+.cfg-size-unit { font-size: 12px; color: var(--cfg-muted); }
 .cfg-upload-remove {
   align-self: flex-start; height: 30px; padding: 0 10px;
   border: none; border-radius: var(--cfg-radius);

@@ -275,7 +275,9 @@ test('parseUploadState decodes only image data URLs, clamping size', () => {
   const state = parseUploadState(JSON.stringify({ img: 'data:image/png;base64,AAAA', u: 2, v: -3, s: 400 }))!;
   assert.equal(state.u, 2);
   assert.equal(state.v, -3);
-  assert.equal(state.s, 100, 'size clamps to 100%');
+  assert.equal(state.s, 400, 'crop-zoom beyond 100% is allowed');
+  const huge = parseUploadState(JSON.stringify({ img: 'data:image/png;base64,AAAA', s: 900 }))!;
+  assert.equal(huge.s, 500, 'size clamps to 500%');
   const tiny = parseUploadState(JSON.stringify({ img: 'data:image/jpeg;base64,AAAA', s: 1 }))!;
   assert.equal(tiny.s, 10, 'size clamps to 10%');
   assert.equal(tiny.u, 0, 'missing offsets default to centre');
@@ -290,10 +292,12 @@ test('applySelection clamps an upload offset to the zone bounds', () => {
   const s = defaultSelections(m);
   assert.equal(s['body-image'], '');
 
+  // Sanity bound is ±2× the zone dimensions — room for crop-zoom panning;
+  // the renderer clamps to the exact slack.
   applySelection(m, s, 'body-image', JSON.stringify({ img: 'data:image/png;base64,AAAA', u: 100, v: -100, s: 50 }));
   const state = parseUploadState(s['body-image'])!;
-  assert.equal(state.u, 20);
-  assert.equal(state.v, -15);
+  assert.equal(state.u, 80);
+  assert.equal(state.v, -60);
   assert.equal(state.s, 50);
   const d = priceDeltas(m, s).filter((x) => x.optionId === 'body-image');
   assert.equal(d.length, 1);

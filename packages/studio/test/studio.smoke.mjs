@@ -1569,8 +1569,15 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.click('.preview-overlay .cfg-size-minus');
   await page.waitForTimeout(300);
   const sel2 = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
-  check('the − button steps the size down to 90%', sel2.s === 90, sel2);
-  check('…and the panel shows it', /90%/.test(await page.textContent('.preview-overlay .cfg-size') ?? ''), '');
+  check('the − button steps the size down 1% to 99%', sel2.s === 99, sel2);
+  check('…and the size field shows it',
+    await page.evaluate(() => document.querySelector('.preview-overlay .cfg-size-value')?.value === '99'), '');
+  // Typing a size beyond 100% crop-zooms inside the zone.
+  await page.fill('.preview-overlay .cfg-size-value', '250');
+  await page.dispatchEvent('.preview-overlay .cfg-size-value', 'change');
+  await page.waitForTimeout(300);
+  const sel3 = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
+  check('typing 250% in the size field lands in the payload', sel3.s === 250, sel3);
 
   await page.click('.preview-overlay .cfg-upload-remove');
   await page.waitForFunction(() => {

@@ -150,7 +150,12 @@ await page.waitForTimeout(250);
 await page.click('.preview-overlay .cfg-size-minus');
 await page.waitForTimeout(250);
 const sel = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
-check('arrow pad and size steps land in the payload', sel.u > 0 && sel.s === 90, sel);
+check('arrow pad and 1% size steps land in the payload', sel.u > 0 && sel.s === 99, sel);
+await page.fill('.preview-overlay .cfg-size-value', '180');
+await page.dispatchEvent('.preview-overlay .cfg-size-value', 'change');
+await page.waitForTimeout(250);
+const zoomed = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']).s);
+check('typed size beyond 100% crop-zooms (180%)', zoomed === 180, zoomed);
 
 // Screenshot from a low three-quarter angle — where bleed-through showed.
 await page.evaluate(() => {

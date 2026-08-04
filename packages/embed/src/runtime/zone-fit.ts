@@ -53,16 +53,17 @@ export function fitZoneToRegion(triangles: Vec3[][], normal: Vec3): ZoneFit | nu
   const x = norm(cross(upRef, n));
   const y = cross(n, x);
 
-  // Project every vertex into (u, v); remember the plane offset along n.
+  // Project every vertex into (u, v). The plane offset along n is the
+  // region's CREST — the surface weld tolerates a whisper of crowning, and
+  // a zone anchored to the average height would sit half-buried in it.
   const uv: Array<[number, number]> = [];
-  let planeW = 0;
+  let planeW = -Infinity;
   for (const tri of triangles) {
     for (const p of tri) {
       uv.push([dot(p, x), dot(p, y)]);
-      planeW += dot(p, n);
+      planeW = Math.max(planeW, dot(p, n));
     }
   }
-  planeW /= uv.length;
 
   // Boundary edges: shared interior edges appear twice, the rim once. The
   // LONGEST rim edge is the face's principal direction — for rectangular
@@ -123,7 +124,7 @@ export function fitZoneToRegion(triangles: Vec3[][], normal: Vec3): ZoneFit | nu
         const dv = -u * sin + v * cos - vcR;
         return [du * 0.99, dv * 0.99];
       });
-      outline = simplifyLoop(zoneFrame, Math.max(width, height) * 0.008)
+      outline = resampleLoop(zoneFrame, 20)
         .map(([u, v]): [number, number] => [round1(u), round1(v)]);
       if (outline.length < 3 || outline.length > 32) outline = undefined;
     }
@@ -187,44 +188,35 @@ function walkLoop(edges: Array<[number, number, number, number]>): Array<[number
 }
 
 /**
- * Douglas-Peucker on a closed loop: keep the corners, drop the noise, and
- * coarsen until the anchor count is draggable (≤ 24) — these points become
- * the zone's editable boundary handles.
+ * Resample the rim at uniform arc-length. The boundary renders as a
+ * uniform Catmull-Rom curve, which KINKS through unevenly spaced anchors
+ * (a corner-preserving simplify leaves long straights against short arc
+ * chords, and the curve snags exactly at the corners) — evenly spaced
+ * anchors cannot kink: straights stay straight, corners round gently, and
+ * the count stays draggable.
  */
-function simplifyLoop(loop: Array<[number, number]>, tolerance: number): Array<[number, number]> {
-  const dp = (pts: Array<[number, number]>, tol: number): Array<[number, number]> => {
-    if (pts.length <= 2) return pts;
-    const [ax, ay] = pts[0];
-    const [bx, by] = pts[pts.length - 1];
-    const len = Math.hypot(bx - ax, by - ay) || 1;
-    let worst = 0, at = 0;
-    for (let i = 1; i < pts.length - 1; i++) {
-      const d = Math.abs((bx - ax) * (ay - pts[i][1]) - (ax - pts[i][0]) * (by - ay)) / len;
-      if (d > worst) { worst = d; at = i; }
-    }
-    if (worst <= tol) return [pts[0], pts[pts.length - 1]];
-    const left = dp(pts.slice(0, at + 1), tol);
-    return [...left.slice(0, -1), ...dp(pts.slice(at), tol)];
-  };
-  // Split the ring at its two most distant points so DP sees two open runs.
-  let tol = tolerance;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    let aIdx = 0, far = -1;
-    for (let i = 0; i < loop.length; i++) {
-      const d = Math.hypot(loop[i][0] - loop[0][0], loop[i][1] - loop[0][1]);
-      if (d > far) { far = d; aIdx = i; }
-    }
-    let bIdx = 0; far = -1;
-    for (let i = 0; i < loop.length; i++) {
-      const d = Math.hypot(loop[i][0] - loop[aIdx][0], loop[i][1] - loop[aIdx][1]);
-      if (d > far) { far = d; bIdx = i; }
-    }
-    const [lo, hi] = aIdx < bIdx ? [aIdx, bIdx] : [bIdx, aIdx];
-    const half1 = loop.slice(lo, hi + 1);
-    const half2 = [...loop.slice(hi), ...loop.slice(0, lo + 1)];
-    const out = [...dp(half1, tol).slice(0, -1), ...dp(half2, tol).slice(0, -1)];
-    if (out.length <= 24) return out;
-    tol *= 2;
+function resampleLoop(loop: Array<[number, number]>, count: number): Array<[number, number]> {
+  const lens: number[] = [];
+  let perimeter = 0;
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i], b = loop[(i + 1) % loop.length];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    lens.push(l);
+    perimeter += l;
   }
-  return loop.filter((_, i) => i % Math.ceil(loop.length / 24) === 0);
+  if (!(perimeter > 0)) return [];
+  const out: Array<[number, number]> = [];
+  const step = perimeter / count;
+  let seg = 0, into = 0;
+  for (let k = 0; k < count; k++) {
+    let target = k * step;
+    while (target > into + lens[seg]) {
+      into += lens[seg];
+      seg = (seg + 1) % loop.length;
+    }
+    const a = loop[seg], b = loop[(seg + 1) % loop.length];
+    const t = lens[seg] > 0 ? (target - into) / lens[seg] : 0;
+    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  return out;
 }

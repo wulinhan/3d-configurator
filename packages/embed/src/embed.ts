@@ -349,18 +349,28 @@ export async function mount(opts: MountOptions) {
 
       wrap.append(el('p', 'cfg-upload-heading', 'Size'));
       const sizeRow = el('div', 'cfg-size');
-      const pct = el('span', 'cfg-size-value', `${Math.round(state.s)}%`);
+      const clampPct = (v: number) => Math.min(500, Math.max(10, Math.round(v)));
+      const pct = document.createElement('input');
+      pct.type = 'number';
+      pct.className = 'cfg-size-value';
+      pct.min = '10';
+      pct.max = '500';
+      pct.step = '1';
+      pct.value = String(Math.round(state.s));
+      pct.setAttribute('aria-label', 'Image size, percent (100 = fills the area)');
+      pct.addEventListener('change', () => update({ s: clampPct(Number(pct.value) || 100) }));
       const sizeBtn = (cls: string, glyph: string, label: string, ds: number) => {
         const b = el('button', `cfg-size-btn ${cls}`, glyph);
         b.type = 'button';
         b.setAttribute('aria-label', label);
-        b.addEventListener('click', () => update({ s: Math.min(100, Math.max(10, state.s + ds)) }));
+        b.addEventListener('click', () => update({ s: clampPct(state.s + ds) }));
         return b;
       };
       sizeRow.append(
-        sizeBtn('cfg-size-minus', '−', 'Smaller', -10),
+        sizeBtn('cfg-size-minus', '−', 'Smaller (1%)', -1),
         pct,
-        sizeBtn('cfg-size-plus', '＋', 'Larger', 10),
+        el('span', 'cfg-size-unit', '%'),
+        sizeBtn('cfg-size-plus', '＋', 'Larger (1%)', 1),
       );
       wrap.append(sizeRow);
 

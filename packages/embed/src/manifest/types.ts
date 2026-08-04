@@ -196,8 +196,8 @@ export interface ChoiceOption {
  *
  * The customer's value in `selections` is a JSON string:
  * `{ "img": <data URL>, "u": mm, "v": mm, "s": percent }` — offset within
- * the zone and uniform size (10–100, where 100 = largest fit inside the
- * zone). Empty string = no image.
+ * the zone and uniform size (10–500, where 100 = largest fit inside the
+ * zone and more crop-zooms within it). Empty string = no image.
  */
 export interface UploadOption {
   id: string;
