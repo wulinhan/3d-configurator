@@ -282,7 +282,10 @@ parts ship without authored UV maps (the texture library box-projects its
 own, too coarse for imagery), and projection needs none. **Depth** controls
 how far the projection reaches through curvature; 0 picks a sensible
 automatic (the larger zone dimension). **Slide** nudges the zone across its
-surface plane after placement.
+surface plane after placement. The projector only paints what it can see:
+triangles raked more than ~80° away from the projection direction are
+culled, so an image on the top face never bleeds onto side walls or the
+underside even though the projection box passes through them.
 
 **Edit shape** turns the rectangle into a freeform outline: draggable
 anchor dots appear pinned to the model's surface, and the boundary is the
@@ -453,7 +456,7 @@ test/engrave (embed)   3 — the boolean cut comes back CLOSED: surface,
                       walls and floor — even on an open-shell mesh where
                       raw CSG loses its bearings (the see-through-pocket
                       regression, asserted headless)
-test/studio.smoke.mjs 197 browser assertions — the full merchant journey
+test/studio.smoke.mjs 198 browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and

@@ -11,6 +11,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
+import { cullHiddenFromProjector } from './decal.ts';
 import type { Manifest, Part, TextOption, UploadOption } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, parseUploadState, type Selections } from './state.ts';
@@ -917,9 +918,15 @@ export class Viewer {
       const worldQuat = carrier.getWorldQuaternion(new THREE.Quaternion()).multiply(localQuat);
       const euler = new THREE.Euler().setFromQuaternion(worldQuat);
       const wrap = option.wrapMm ?? Math.max(option.widthMm, option.heightMm);
-      const geometry = new DecalGeometry(carrier, worldPos, euler, new THREE.Vector3(w, h, wrap));
-      if (!geometry.attributes.position || geometry.attributes.position.count === 0) {
-        geometry.dispose();
+      const raw = new DecalGeometry(carrier, worldPos, euler, new THREE.Vector3(w, h, wrap));
+      // The projection box reaches THROUGH the part; without this, walls and
+      // the underside inside the box would take the image too (a QR stamped
+      // on the top face bleeding out of every edge). Keep only what the
+      // projector can actually see.
+      const geometry = cullHiddenFromProjector(raw, new THREE.Vector3(0, 0, 1).applyEuler(euler), carrier);
+      raw.dispose();
+      if (!geometry || !geometry.attributes.position || geometry.attributes.position.count === 0) {
+        geometry?.dispose();
         return null;
       }
       const material = new THREE.MeshStandardMaterial({

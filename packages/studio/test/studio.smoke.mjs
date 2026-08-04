@@ -1478,6 +1478,32 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     return !!f && f.visible && f.geometry.attributes.position.count > 0;
   }, { timeout: 20000 });
   check('the dashed zone frame projects onto the part', true, '');
+  // The projection box reaches through the part — but only the TOP surface
+  // may take the decal. Every triangle must face the projector (up), or the
+  // frame (and later the customer's image) bleeds out of walls and underside.
+  // Winding is untrustworthy on merchant meshes, so assert geometry: every
+  // decal triangle's PLANE is near-horizontal (no side walls) and every
+  // centroid sits at the same height (no underside — that would spread the
+  // heights by the part's whole thickness).
+  const facing = await page.evaluate(() => {
+    const pos = (window).__studioViewer.scene.getObjectByName('image-frame-base-image').geometry.attributes.position;
+    let minAbs = 1, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      const p = (k) => [pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k)];
+      const [a, b, c] = [p(0), p(1), p(2)];
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const len = Math.hypot(...n) || 1;
+      minAbs = Math.min(minAbs, Math.abs(n[1]) / len);
+      const cy = (a[1] + b[1] + c[1]) / 3;
+      minY = Math.min(minY, cy);
+      maxY = Math.max(maxY, cy);
+    }
+    return { minAbs, spread: maxY - minY };
+  });
+  check('…and only onto the top surface — no wall or underside bleed',
+    facing.minAbs > 0.1 && facing.spread < 0.5, facing);
 
   // Zone width is merchant-editable and regenerates the frame.
   await page.fill('[data-testid="image-width-base-image"]', '40');
