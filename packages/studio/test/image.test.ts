@@ -13,7 +13,7 @@ import {
 } from '../../embed/src/runtime/state.ts';
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
-  addImageZone, setImageZone, nudgeImageZone, removeImageZone, setImageZoneBoundary, refitImageZone,
+  addImageZone, setImageZone, nudgeImageZone, removeImageZone,
   removePart, renamePart, EditError,
 } from '../src/lib/manifest-edit.ts';
 
@@ -152,46 +152,6 @@ test('customer selections clamp to the zone and price when used', () => {
   assert.equal(s['body-image'], '');
   applySelection(m, s, 'body-image', JSON.stringify({ img: 'javascript:alert(1)', u: 0, v: 0, s: 100 }));
   assert.equal(s['body-image'], '');
-});
-
-test('setImageZoneBoundary shapes, rounds, validates and clears', () => {
-  let m = addImageZone(fresh(), 'body', PLACE);
-  m = setImageZoneBoundary(m, 'body-image', [[-10, -5.00049], [10, -5], [0, 8]]);
-  valid(m);
-  assert.deepEqual(zoneOf(m).boundary, [[-10, -5], [10, -5], [0, 8]], 'points round to 3 decimals');
-
-  const cleared = setImageZoneBoundary(m, 'body-image', null);
-  valid(cleared);
-  assert.equal(zoneOf(cleared).boundary, undefined);
-
-  // A boundary that is not a closed shape (or not numbers) never lands.
-  assert.throws(() => setImageZoneBoundary(m, 'body-image', [[0, 0], [1, 1]]), EditError, 'two points');
-  assert.throws(() => setImageZoneBoundary(m, 'body-image', [[0, 0], [1, 1], [NaN, 2]]), EditError);
-  assert.throws(() => setImageZoneBoundary(m, 'body-image', [[0, 0], [1, 1], [600, 2]]), EditError, 'out of range');
-  assert.throws(() => setImageZoneBoundary(m, 'ghost', [[0, 0], [1, 1], [2, 2]]), EditError);
-});
-
-test('refitImageZone re-conforms a dragged zone to a fresh face fit', () => {
-  let m = addImageZone(fresh(), 'body', { ...PLACE, widthMm: 40, heightMm: 30 });
-  m = setImageZoneBoundary(m, 'body-image', [[-10, -5], [10, -5], [0, 8]]);
-  m = nudgeImageZone(m, 'body-image', 4, 0);
-  m = refitImageZone(m, 'body-image', {
-    centre: [0, 10, 5], angleDeg: 0, widthMm: 38, heightMm: 28,
-    outline: [[-15, -10], [15, -10], [15, 10], [-15, 10]],
-  });
-  valid(m);
-  const zone = zoneOf(m);
-  assert.deepEqual(zone.origin, [0, 10, 5], 'origin back on the face centre');
-  assert.equal(zone.widthMm, 38);
-  assert.equal(zone.heightMm, 28);
-  assert.equal(zone.rotationDeg, undefined, 'zero angle stores nothing');
-  assert.equal(zone.boundary!.length, 4, 'mask restored from the fit');
-
-  // A fit with no outline clears the mask back to the plain rectangle.
-  const plain = refitImageZone(m, 'body-image', { centre: [0, 10, 5], angleDeg: 15, widthMm: 30, heightMm: 20 });
-  assert.equal(zoneOf(plain).boundary, undefined);
-  assert.equal(zoneOf(plain).rotationDeg, 15);
-  assert.throws(() => refitImageZone(m, 'ghost', { centre: [0, 0, 0], angleDeg: 0, widthMm: 10, heightMm: 10 }), EditError);
 });
 
 test('validator rejects broken zones', () => {

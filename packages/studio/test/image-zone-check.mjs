@@ -123,51 +123,30 @@ await page.screenshot({ path: join(OUT, 'zone-veil.png') });
 // The placed zone conforms to the picked 60×45 chamfered top face.
 const fitted = await page.evaluate(() => {
   const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');
-  return { w: z.widthMm, h: z.heightMm, spin: z.rotationDeg ?? 0, mask: z.boundary?.length ?? 0 };
+  return { w: z.widthMm, h: z.heightMm, spin: z.rotationDeg ?? 0 };
 });
 check('zone conforms to the picked face (60×45, rotation exactly 0)',
   Math.abs(fitted.w - 60) < 0.6 && Math.abs(fitted.h - 45) < 0.6 && fitted.spin === 0, fitted);
-check('…and the rounded rim arrives as the zone mask', fitted.mask >= 8 && fitted.mask <= 32, fitted);
-check('mask anchors follow the corner arcs — inside the face, clear of square corners',
-  await page.evaluate(() => {
-    const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');
-    return z.boundary.every(([u, v]) => Math.abs(u) <= 30.1 && Math.abs(v) <= 22.6
-      && Math.hypot(Math.abs(u) - 30, Math.abs(v) - 22.5) > 2);
-  }), '');
+const overlay = await page.evaluate(() => {
+  const f = (window).__studioViewer.scene.getObjectByName('image-zone-base-image');
+  if (!f) return null;
+  f.geometry.computeBoundingBox();
+  const bb = f.geometry.boundingBox;
+  return {
+    verts: f.geometry.attributes.position.count,
+    onCarrier: f.parent === (window).__studioViewer.meshOf('base'),
+    ySpan: bb.max.y - bb.min.y,
+  };
+});
+check('the overlay is the picked face own triangles, riding the part',
+  !!overlay && overlay.verts > 30 && overlay.onCarrier && overlay.ySpan < 0.01, overlay);
 
-// Edit shape → drag an anchor → Done → Reset must re-conform to the face
-// outline, not fall back to a sharp rectangle.
-const maskBefore = await page.evaluate(() => JSON.stringify((window).__studio.manifest.options.find((o) => o.type === 'upload').boundary));
-await page.click('[data-testid="image-shape-base-image"]');
-await page.waitForSelector('[data-testid="shape-anchor-0"]', { timeout: 20000 });
-const hd = await page.locator('[data-testid="shape-anchor-0"]').boundingBox();
-await page.mouse.move(hd.x + hd.width / 2, hd.y + hd.height / 2);
-await page.mouse.down();
-await page.mouse.move(hd.x + hd.width / 2 + 25, hd.y + hd.height / 2 + 20, { steps: 4 });
-await page.mouse.up();
-await page.waitForTimeout(250);
-await page.click('[data-testid="image-shape-base-image"]'); // Done shaping
-await page.waitForTimeout(150);
-const dragged = await page.evaluate(() => JSON.stringify((window).__studio.manifest.options.find((o) => o.type === 'upload').boundary));
-await page.click('[data-testid="image-shape-reset-base-image"]');
-await page.waitForTimeout(300);
-const afterReset = await page.evaluate(() => JSON.stringify((window).__studio.manifest.options.find((o) => o.type === 'upload').boundary));
-check('drag changes the mask; Reset re-conforms it to the face outline',
-  dragged !== maskBefore && afterReset === maskBefore, { changed: dragged !== maskBefore, restored: afterReset === maskBefore });
-
-// Widen the zone, then check the plane pose.
+// Zone rect stays merchant-editable (framing only).
 await page.fill('[data-testid="image-width-base-image"]', '45');
 await page.press('[data-testid="image-width-base-image"]', 'Enter');
 await page.fill('[data-testid="image-height-base-image"]', '30');
 await page.press('[data-testid="image-height-base-image"]', 'Enter');
 await page.waitForTimeout(300);
-const pose = await page.evaluate(() => {
-  const f = (window).__studioViewer.scene.getObjectByName('image-zone-base-image');
-  const box = (window).__studioViewer.partBox('base');
-  return { quad: f?.geometry.attributes.position.count, y: f?.position.y, top: box.max[1] };
-});
-check('zone renders as one plane 0.3mm above the top face',
-  pose.quad === 4 && pose.y > pose.top && pose.y < pose.top + 1, pose);
 
 // Customer preview: upload the real logo.
 await page.click('[data-testid="preview-open"]');
@@ -181,13 +160,10 @@ const paint = await page.evaluate(() => {
   const canvas = mesh.material.map.image;
   const ctx = canvas.getContext('2d');
   const centre = ctx.getImageData(Math.round(canvas.width / 2), Math.round(canvas.height / 2), 1, 1).data[3];
-  const corner = ctx.getImageData(2, 2, 1, 1).data[3];
-  return { centre, corner, quad: mesh.geometry.attributes.position.count };
+  return { centre, verts: mesh.geometry.attributes.position.count };
 });
-check('uploaded logo paints the zone canvas (single quad, centre opaque)',
-  paint.quad === 4 && paint.centre > 0, paint);
-check('…masked to the face rim: the chamfered corner stays transparent',
-  paint.corner === 0, paint);
+check('uploaded logo paints onto the region surface (centre opaque)',
+  paint.verts > 30 && paint.centre > 0, paint);
 
 // Arrow + size still work (canvas repaint, no geometry change).
 await page.click('.preview-overlay .cfg-arrow-right');
@@ -235,14 +211,14 @@ await page.waitForTimeout(300);
 const spun = await page.evaluate(() => {
   const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');
   const mesh = (window).__studioViewer.scene.getObjectByName(`image-zone-${z.id}`);
-  const Vec = mesh.position.constructor;
-  const ax = new Vec(1, 0, 0).applyQuaternion(mesh.quaternion);
-  let deg = Math.atan2(-ax.z, ax.x) * 180 / Math.PI; // in-plane world angle
-  deg = ((deg % 90) + 90) % 90; // edge direction, mod the rectangle's symmetry
-  return { w: z.widthMm, h: z.heightMm, deg: Math.min(deg, 90 - deg) };
+  return {
+    w: z.widthMm, h: z.heightMm,
+    verts: mesh?.geometry.attributes.position.count ?? 0,
+    onCarrier: mesh?.parent === (window).__studioViewer.meshOf('base'),
+  };
 });
-check('on a rotated part the zone runs with the face edges (25° world spin)',
-  Math.abs(spun.deg - 25) < 1
+check('on a rotated part the zone is still the face itself (child of the part)',
+  spun.onCarrier && spun.verts > 30
   && ((Math.abs(spun.w - 60) < 0.6 && Math.abs(spun.h - 45) < 0.6)
     || (Math.abs(spun.w - 45) < 0.6 && Math.abs(spun.h - 60) < 0.6)),
   spun);

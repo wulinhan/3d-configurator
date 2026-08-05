@@ -211,16 +211,12 @@ export interface UploadOption {
   normal: [number, number, number];
   /** Extra rotation about the normal, degrees. Default 0. */
   rotationDeg?: number;
-  /** Zone bounds on the surface, mm. */
+  /** Zone bounds on the surface, mm — the image's framing rectangle. The
+   * VISIBLE shape is the picked face itself: the renderer re-welds the
+   * surface at `origin`/`normal` and builds the overlay from its exact
+   * triangles, so the face's own rim does the masking. */
   widthMm: number;
   heightMm: number;
-  /**
-   * Optional reshaped outline: anchor points in zone-plane millimetres
-   * (u across, v up, origin at the zone centre). The boundary is the closed
-   * Catmull-Rom/Bézier curve through them (see runtime/curve.ts); the
-   * customer's image renders only inside it. Absent = the full rectangle.
-   */
-  boundary?: Array<[number, number]>;
   accept?: string[];        // default ['image/png', 'image/jpeg']
   /** Cap on the stored image, after client-side downscaling. Default ~1.5MB. */
   maxBytes?: number;

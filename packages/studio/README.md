@@ -270,38 +270,27 @@ is this toggle plus a text slot on the clicker assembly.
 A part's editor also carries an **Image zone** section: *Place image zone on
 a face* arms the same surface picker, and the zone CONFORMS to the clicked
 face — centred on it, rotated to run with the face's own edges (whatever
-the part's or the geometry's orientation), opened to the face's measured
-extents, and, when the face is not a plain rectangle (rounded corners,
-chamfers, circles), automatically MASKED to the face's actual rim: the rim
-polygon is simplified (Douglas-Peucker) into the zone's editable boundary
-curve, so the image clips to the true shape of the surface like a die-cut
-sticker and never overhangs an edge. Width/height/spin stay editable
-afterwards, and the boundary handles refine the mask. The customiser shows
-the zone as a translucent “Image here” veil until an image arrives.
+the part's or the geometry's orientation), and opened to the face's
+measured extents. Width/height/rotation stay editable afterwards as a
+framing rectangle, and **Slide** nudges the zone across its surface plane.
+The customiser shows the zone as a translucent “Image here” veil until an
+image arrives.
 
-The image renders the way the shipped storefront configurators render logo
-uploads (their proven approach): ONE plane the exact size of the zone,
-hovering 0.3 mm off the picked surface, carrying an unlit canvas texture
-in the zone's aspect ratio. The customer's image is DRAWN into that canvas
-at its offset and size — repositioning and resizing repaint a canvas
-instead of rebuilding geometry, so there are no projection artefacts, no
-z-fighting, and nothing can ever bleed onto side walls or the underside
-(the earlier DecalGeometry projection stamped everything inside its
-projection box, which did exactly that). Unlit means the artwork keeps its
-true colours regardless of scene lighting, like a printed sticker.
-**Slide** nudges the zone across its surface plane after placement.
-
-**Edit shape** turns the rectangle into a freeform outline: draggable
-anchor dots appear pinned to the model's surface, and the boundary is the
-closed Catmull-Rom/Bézier curve through them (runtime/curve.ts) — drag a
-dot to reshape, click the smaller midpoint dot on any segment to add an
-anchor, double-click an anchor to remove it (three minimum), Esc or *Done
-shaping* to finish. *Reset shape* re-measures the face and conforms the
-zone to it again — the as-placed outline, mask included. The
-zone veil redraws live during the drag, so the curve is previewed
-on the actual surface — curved or not. At render time the curve becomes an
-alpha mask multiplied into the customer's image decal, so only the part of
-the image inside the outline shows; a whole drag is one undo step.
+The zone IS the picked surface. At render time the viewer re-welds the
+face region at the zone's origin/normal — the exact same weld the blue
+placement highlight shows — and builds the overlay mesh from that region's
+own triangles, lifted 0.15 mm along the face normal and parented to the
+carrier mesh so it rides every transform, rotation, and scale for free.
+The face's real rim is the mask by construction: rounded corners, chamfers,
+circles, and freeform outlines all clip the image exactly, like a die-cut
+sticker, with no curve approximation anywhere that could wobble, contract,
+or grow tails. The zone rectangle only frames the IMAGE: an unlit canvas
+texture in the zone's aspect is UV-mapped across that rectangle on the
+region mesh, and the customer's image is DRAWN into the canvas at its
+offset and size — repositioning and resizing repaint pixels instead of
+rebuilding geometry, so there are no projection artefacts and nothing can
+bleed past the face's own edges. Unlit means the artwork keeps its true
+colours regardless of scene lighting, like a printed sticker.
 
 Customers get the storefront upload pattern: an *Upload image* button
 (downscaled client-side to ≤1024 px and re-encoded under the zone's byte
@@ -463,7 +452,7 @@ test/engrave (embed)   3 — the boolean cut comes back CLOSED: surface,
                       walls and floor — even on an open-shell mesh where
                       raw CSG loses its bearings (the see-through-pocket
                       regression, asserted headless)
-test/studio.smoke.mjs 198 browser assertions — the full merchant journey
+test/studio.smoke.mjs browser assertions — the full merchant journey
                       against the production build, from the empty viewport
                       through the first import (name adoption, camera framing),
                       including a real pointer drag on the combined gizmo (and
@@ -482,11 +471,11 @@ test/studio.smoke.mjs 198 browser assertions — the full merchant journey
                       spawning a pitched row of template copies → customer
                       typing priced per character in the real embed → removal
                       clearing slot, extrusion and spawned pieces), and image
-                      zones end to end (face pick → zone veil →
-                      boundary shaping with dragged/inserted anchors → customer
-                      upload landing as a projected decal clipped by the curve
-                      → arrow-pad repositioning and stepped resizing → removal
-                      restoring the frame, then the zone itself), plus the
+                      zones end to end (face pick → the zone veil rendered
+                      on the picked face's own triangles, riding the part →
+                      customer upload painting onto that region surface →
+                      arrow-pad repositioning and stepped resizing → removal
+                      restoring the veil, then the zone itself), plus the
                       viewport chrome rules: no Orbit tab (Transform toggles,
                       deselect disarms it, tools disabled with no parts) and
                       the ground grid growing to cover a repeated row

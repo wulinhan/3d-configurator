@@ -18,13 +18,6 @@ export interface ZoneFit {
   angleDeg: number;
   widthMm: number;
   heightMm: number;
-  /**
-   * The face's actual rim as zone-frame points (u across, v up, origin at
-   * the zone centre), present when the face is NOT simply the fitted
-   * rectangle — rounded corners, chamfers, circles. Becomes the zone's
-   * boundary, so the image is masked to the true shape of the surface.
-   */
-  outline?: Array<[number, number]>;
 }
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -119,46 +112,6 @@ export function fitZoneToRegion(triangles: Vec3[][], normal: Vec3): ZoneFit | nu
   const uc = ucR * cos - vcR * sin;
   const vc = ucR * sin + vcR * cos;
 
-  // Is the face actually its bounding rectangle? Compare areas: a rounded
-  // or chamfered face fills measurably less than its box, and then the rim
-  // itself becomes the zone's mask.
-  let area = 0;
-  for (let t = 0; t < uv.length; t += 3) {
-    const [au, av] = uv[t], [bu, bv] = uv[t + 1], [cu2, cv2] = uv[t + 2];
-    area += Math.abs((bu - au) * (cv2 - av) - (cu2 - au) * (bv - av)) / 2;
-  }
-  let outline: Array<[number, number]> | undefined;
-  if (area < width * height * 0.985) {
-    let loop = walkLoop([...counts.values()]);
-    if (loop && loop.length >= 3) {
-      // Canonicalise the ring — consistent winding, fixed starting point —
-      // so the same face always yields the same anchors whichever triangle
-      // happened to seed the weld ("Reset shape" must reproduce placement).
-      let area2 = 0;
-      for (let i = 0; i < loop.length; i++) {
-        const a = loop[i], b = loop[(i + 1) % loop.length];
-        area2 += a[0] * b[1] - b[0] * a[1];
-      }
-      if (area2 < 0) loop = [...loop].reverse();
-      let s = 0;
-      for (let i = 1; i < loop.length; i++) {
-        if (loop[i][0] < loop[s][0] - 1e-9
-          || (Math.abs(loop[i][0] - loop[s][0]) < 1e-9 && loop[i][1] < loop[s][1])) s = i;
-      }
-      loop = [...loop.slice(s), ...loop.slice(0, s)];
-      // Into the zone frame (rotate by −angle about the rect centre), with
-      // a 1% inset so the smoothed curve stays inside the true rim.
-      const zoneFrame = loop.map(([u, v]): [number, number] => {
-        const du = u * cos + v * sin - ucR;
-        const dv = -u * sin + v * cos - vcR;
-        return [du * 0.99, dv * 0.99];
-      });
-      outline = outlineAnchors(zoneFrame, Math.max(width, height))
-        .map(([u, v]): [number, number] => [round1(u), round1(v)]);
-      if (outline.length < 3 || outline.length > 32) outline = undefined;
-    }
-  }
-
   return {
     centre: [
       round3(x[0] * uc + y[0] * vc + n[0] * planeW),
@@ -168,129 +121,5 @@ export function fitZoneToRegion(triangles: Vec3[][], normal: Vec3): ZoneFit | nu
     angleDeg: round1(angle * 180 / Math.PI),
     widthMm: Math.min(500, Math.max(1, round1(width))),
     heightMm: Math.min(500, Math.max(1, round1(height))),
-    ...(outline ? { outline } : {}),
   };
-}
-
-/** Chain boundary edges into the region's rim polygon (the longest loop
- * when there are several — holes stay holes). Null when the rim is torn. */
-function walkLoop(edges: Array<[number, number, number, number]>): Array<[number, number]> | null {
-  const key = (u: number, v: number) => `${Math.round(u * 1000)},${Math.round(v * 1000)}`;
-  const byPoint = new Map<string, Array<{ to: string; toPt: [number, number]; used: boolean }>>();
-  const at = (k: string, pt: [number, number], to: string, toPt: [number, number]) => {
-    const list = byPoint.get(k) ?? [];
-    list.push({ to, toPt, used: false });
-    byPoint.set(k, list);
-  };
-  for (const [au, av, bu, bv] of edges) {
-    const ka = key(au, av), kb = key(bu, bv);
-    at(ka, [au, av], kb, [bu, bv]);
-    at(kb, [bu, bv], ka, [au, av]);
-  }
-  let best: Array<[number, number]> | null = null;
-  for (const [start, outs] of byPoint) {
-    for (const first of outs) {
-      if (first.used) continue;
-      const loop: Array<[number, number]> = [first.toPt];
-      first.used = true;
-      // Retire the reverse half-edge too, or the walk bounces straight back.
-      const firstRev = (byPoint.get(first.to) ?? []).find((e) => !e.used && e.to === start);
-      if (firstRev) firstRev.used = true;
-      let atKey = first.to;
-      let guard = edges.length + 2;
-      while (atKey !== start && guard-- > 0) {
-        const nexts = byPoint.get(atKey) ?? [];
-        const step = nexts.find((e) => !e.used && e.to !== key(...loop[loop.length - 2] ?? [NaN, NaN]));
-        const chosen = step ?? nexts.find((e) => !e.used);
-        if (!chosen) break;
-        chosen.used = true;
-        // Also retire the reverse half-edge so the walk never doubles back.
-        const rev = (byPoint.get(chosen.to) ?? []).find((e) => !e.used && e.to === atKey);
-        if (rev) rev.used = true;
-        loop.push(chosen.toPt);
-        atKey = chosen.to;
-      }
-      if (atKey === start && loop.length >= 3 && (!best || loop.length > best.length)) best = loop;
-    }
-  }
-  return best;
-}
-
-/**
- * Turn the raw rim polygon into boundary anchors that keep the SHAPE.
- *
- * Two failure modes bracket this problem. Uniform resampling + smoothing
- * follows tessellation zigzag or, smoothed, CONTRACTS the loop — corners
- * melt and the veil reads far rounder than the face. Aggressive
- * corner-preserving simplification leaves long straights against short
- * corner chords, and the uniform Catmull-Rom the boundary renders with
- * kinks at exactly those spacing jumps. So: simplify with a SMALL
- * tolerance (drops tessellation noise, keeps the corner arcs' own
- * points), then split any long chord so spacing stays balanced and the
- * curve cannot kink. No smoothing pass — nothing contracts.
- */
-function outlineAnchors(loop: Array<[number, number]>, maxDim: number): Array<[number, number]> {
-  // Ramer-Douglas-Peucker on an open run.
-  const dp = (pts: Array<[number, number]>, tol: number): Array<[number, number]> => {
-    if (pts.length <= 2) return pts;
-    const [ax, ay] = pts[0];
-    const [bx, by] = pts[pts.length - 1];
-    const len = Math.hypot(bx - ax, by - ay) || 1;
-    let worst = 0, at = 0;
-    for (let i = 1; i < pts.length - 1; i++) {
-      const d = Math.abs((bx - ax) * (ay - pts[i][1]) - (ax - pts[i][0]) * (by - ay)) / len;
-      if (d > worst) { worst = d; at = i; }
-    }
-    if (worst <= tol) return [pts[0], pts[pts.length - 1]];
-    const left = dp(pts.slice(0, at + 1), tol);
-    return [...left.slice(0, -1), ...dp(pts.slice(at), tol)];
-  };
-  const dpClosed = (pts: Array<[number, number]>, tol: number): Array<[number, number]> => {
-    // Split the ring at its two most distant points so DP sees open runs.
-    let aIdx = 0, far = -1;
-    for (let i = 0; i < pts.length; i++) {
-      const d = Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]);
-      if (d > far) { far = d; aIdx = i; }
-    }
-    let bIdx = 0; far = -1;
-    for (let i = 0; i < pts.length; i++) {
-      const d = Math.hypot(pts[i][0] - pts[aIdx][0], pts[i][1] - pts[aIdx][1]);
-      if (d > far) { far = d; bIdx = i; }
-    }
-    const [lo, hi] = aIdx < bIdx ? [aIdx, bIdx] : [bIdx, aIdx];
-    const half1 = pts.slice(lo, hi + 1);
-    const half2 = [...pts.slice(hi), ...pts.slice(0, lo + 1)];
-    return [...dp(half1, tol).slice(0, -1), ...dp(half2, tol).slice(0, -1)];
-  };
-
-  // Small tolerance: above the tessellation noise, below the corner arcs.
-  let tol = Math.max(0.05, maxDim * 0.004);
-  let pts = dpClosed(loop, tol);
-  for (let i = 0; i < 5 && pts.length > 28; i++) {
-    tol *= 1.7;
-    pts = dpClosed(loop, tol);
-  }
-  if (pts.length < 3) return pts;
-
-  // Balance the spacing: split chords much longer than the median so the
-  // uniform Catmull-Rom never sees a spacing cliff at a corner.
-  const chord = (i: number) => {
-    const a = pts[i], b = pts[(i + 1) % pts.length];
-    return Math.hypot(b[0] - a[0], b[1] - a[1]);
-  };
-  const sorted = pts.map((_, i) => chord(i)).sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)] || 1;
-  const out: Array<[number, number]> = [];
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i], b = pts[(i + 1) % pts.length];
-    out.push(a);
-    const len = chord(i);
-    const splits = Math.min(4, Math.floor(len / (2.5 * median)));
-    for (let k = 1; k <= splits && out.length < 32; k++) {
-      const t = k / (splits + 1);
-      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
-    }
-    if (out.length >= 32) break;
-  }
-  return out;
 }

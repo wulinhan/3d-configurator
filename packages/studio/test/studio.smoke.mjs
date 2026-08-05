@@ -1477,59 +1477,33 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   const zoneVerdict = validateManifest(m);
   check('manifest still valid with the image zone', zoneVerdict.ok, zoneVerdict.errors);
 
-  // With no image uploaded, the zone renders as ONE plane hovering just off
-  // the picked surface, its canvas showing the dashed outline. A flat plane
-  // by construction cannot bleed onto walls or the underside.
+  // With no image uploaded, the zone renders as the picked face's OWN
+  // triangles (the same region the highlight shows), lifted a hair off the
+  // surface and parented to the part — the face itself is the mask, so
+  // nothing can bleed or protrude.
   await page.waitForFunction(() => {
     const f = (window).__studioViewer?.scene?.getObjectByName('image-zone-base-image');
-    return !!f && f.visible && f.geometry.attributes.position.count === 4;
+    return !!f && f.geometry.attributes.position.count >= 6;
   }, { timeout: 20000 });
-  const zonePose = await page.evaluate(() => {
+  const overlay = await page.evaluate(() => {
     const f = (window).__studioViewer.scene.getObjectByName('image-zone-base-image');
+    f.geometry.computeBoundingBox();
+    const bb = f.geometry.boundingBox;
     const box = (window).__studioViewer.partBox('base');
-    return { y: f.position.y, top: box.max[1] };
+    return {
+      onCarrier: f.parent === (window).__studioViewer.meshOf('base'),
+      span: bb.max.y - bb.min.y,
+      above: bb.min.y - (box.max[1] - box.min[1]) / 1, // local top ≈ box height when grounded
+    };
   });
-  check('the zone renders as a single plane hovering just off the top surface',
-    zonePose.y > zonePose.top && zonePose.y < zonePose.top + 1, zonePose);
+  check('the zone overlay rides the part as its own surface triangles',
+    overlay.onCarrier && overlay.span < 0.01, overlay);
 
   // Zone width is merchant-editable and regenerates the frame.
   await page.fill('[data-testid="image-width-base-image"]', '40');
   await page.press('[data-testid="image-width-base-image"]', 'Enter');
   await page.waitForFunction(() => (window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.widthMm === 40, { timeout: 20000 });
   check('the width field writes the zone size', true, '');
-
-  // Reshape the boundary: Edit shape seeds a smooth 8-anchor loop and pins
-  // draggable handles to the surface.
-  await page.click('[data-testid="image-shape-base-image"]');
-  await page.waitForFunction(() => (window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.boundary?.length === 8, { timeout: 20000 });
-  await page.waitForSelector('[data-testid="shape-anchor-0"]', { timeout: 20000 });
-  check('Edit shape seeds an eight-anchor boundary with live handles',
-    (await page.$$('.shape-anchor')).length === 8 && (await page.$$('.shape-mid')).length === 8, '');
-
-  const anchorBefore = await page.evaluate(() => (window).__studio.manifest.options.find((o) => o.type === 'upload').boundary[0]);
-  const handle = await page.locator('[data-testid="shape-anchor-0"]').boundingBox();
-  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(handle.x + handle.width / 2 + 30, handle.y + handle.height / 2 + 25, { steps: 5 });
-  await page.mouse.up();
-  await page.waitForTimeout(300);
-  const anchorAfter = await page.evaluate(() => (window).__studio.manifest.options.find((o) => o.type === 'upload').boundary[0]);
-  check('dragging a handle reshapes the boundary in the manifest',
-    Math.abs(anchorAfter[0] - anchorBefore[0]) > 0.5 || Math.abs(anchorAfter[1] - anchorBefore[1]) > 0.5,
-    { anchorBefore, anchorAfter });
-  m = await manifest();
-  const shapedVerdict = validateManifest(m);
-  check('manifest still valid with the reshaped boundary', shapedVerdict.ok, shapedVerdict.errors);
-
-  // A midpoint on the zone's LEFT edge — the right-side ones can sit under
-  // the floating properties panel, which would swallow the click.
-  await page.click('[data-testid="shape-mid-6"]');
-  await page.waitForFunction(() => (window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.boundary?.length === 9, { timeout: 20000 });
-  check('clicking a midpoint dot inserts an anchor on the curve', true, '');
-
-  await page.click('[data-testid="image-shape-base-image"]');
-  await page.waitForTimeout(200);
-  check('Done shaping dismisses the handles', !(await page.$('[data-testid="shape-overlay"]')), '');
 
   // The customer flow: upload → decal appears → reposition → resize → remove.
   await page.click('[data-testid="preview-open"]');
@@ -1544,19 +1518,7 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     const d = (window).__previewViewer?.imageDecalOf?.('base-image');
     return !!d && d.geometry.attributes.position.count > 0;
   }, { timeout: 20000 });
-  check('the uploaded image lands on the zone plane', true, '');
-  // The boundary clip happens in the canvas: with the reshaped curve active,
-  // the zone's corners are OUTSIDE it (transparent) while the centre carries
-  // the image's pixels.
-  const clipped = await page.evaluate(() => {
-    const canvas = (window).__previewViewer.imageDecalOf('base-image').material.map.image;
-    const ctx = canvas.getContext('2d');
-    const corner = ctx.getImageData(2, 2, 1, 1).data[3];
-    const centre = ctx.getImageData(Math.round(canvas.width / 2), Math.round(canvas.height / 2), 1, 1).data[3];
-    return { corner, centre };
-  });
-  check('…clipped by the reshaped boundary (corner transparent, centre painted)',
-    clipped.corner === 0 && clipped.centre > 0, clipped);
+  check('the uploaded image lands on the zone surface', true, '');
   const sel0 = await page.evaluate(() => JSON.parse((window).__previewPayload.selections['base-image']));
   check('the payload carries the image at full size, centred',
     sel0.img.startsWith('data:image/') && sel0.u === 0 && sel0.v === 0 && sel0.s === 100, sel0);
@@ -1585,15 +1547,10 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     return !v.imageDecalOf('base-image')
       && v.scene.getObjectByName('image-zone-base-image')?.visible === true;
   }, { timeout: 20000 });
-  check('Remove image clears the picture and brings the dashed outline back',
+  check('Remove image clears the picture and brings the veil back',
     await page.evaluate(() => (window).__previewPayload.selections['base-image'] === ''), '');
   await page.click('[data-testid="preview-close"]');
   await page.waitForTimeout(200);
-
-  // Reset shape returns the zone to the plain rectangle.
-  await page.click('[data-testid="image-shape-reset-base-image"]');
-  await page.waitForFunction(() => !(window).__studio?.manifest?.options?.find((o) => o.type === 'upload')?.boundary, { timeout: 20000 });
-  check('Reset shape clears the boundary back to the full rectangle', true, '');
 
   // Removing the zone clears the option and its plane.
   await page.click('[data-testid="image-remove-base-image"]');

@@ -255,13 +255,6 @@ export function validateManifest(input: unknown): ValidationResult {
       if (!(o.widthMm > 0) || o.widthMm > 500) err(`${at}.widthMm`, 'must be between 0 and 500 millimetres');
       if (!(o.heightMm > 0) || o.heightMm > 500) err(`${at}.heightMm`, 'must be between 0 and 500 millimetres');
       if (o.rotationDeg != null && !Number.isFinite(o.rotationDeg)) err(`${at}.rotationDeg`, 'must be a number');
-      if (o.boundary != null) {
-        const badPoint = (p: unknown) => !Array.isArray(p) || p.length !== 2
-          || p.some((n) => typeof n !== 'number' || !Number.isFinite(n) || Math.abs(n) > 500);
-        if (!Array.isArray(o.boundary) || o.boundary.length < 3 || o.boundary.some(badPoint)) {
-          err(`${at}.boundary`, 'must be at least three finite [u, v] millimetre points');
-        }
-      }
     } else if (o && isText(o)) {
       if (!partIds.has(o.part)) err(`${at}.part`, `unknown part "${o.part}"`);
       const vec3 = (key: 'origin' | 'normal') => {

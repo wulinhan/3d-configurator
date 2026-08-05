@@ -5,7 +5,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fitZoneToRegion } from '../src/runtime/zone-fit.ts';
-import { closedCurveSegments, curvePoint } from '../src/runtime/curve.ts';
 
 type V3 = [number, number, number];
 const near = (a: number, b: number, tol = 0.05) => Math.abs(a - b) < tol;
@@ -41,34 +40,6 @@ test('a rotated face aligns the zone with ITS edges, not the world axes', () => 
   assert.deepEqual(fit.centre.map((v) => Math.round(v * 10) / 10), [5, 3, 2]);
 });
 
-test('a non-rectangular face brings its rim along as the zone mask', () => {
-  // A 60×45 top face with 10mm chamfered corners (octagon), normal +Y.
-  // In-plane: u along x, v along −z.
-  const pts: Array<[number, number]> = [
-    [10, 0], [50, 0], [60, 10], [60, 35], [50, 45], [10, 45], [0, 35], [0, 10],
-  ];
-  const tris: V3[][] = [];
-  for (let i = 1; i < pts.length - 1; i++) {
-    tris.push([
-      [pts[0][0], 12, pts[0][1]],
-      [pts[i][0], 12, pts[i][1]],
-      [pts[i + 1][0], 12, pts[i + 1][1]],
-    ]);
-  }
-  const fit = fitZoneToRegion(tris, [0, 1, 0])!;
-  assert.ok(near(fit.widthMm, 60, 0.2) && near(fit.heightMm, 45, 0.2), `${fit.widthMm}×${fit.heightMm}`);
-  assert.ok(fit.outline && fit.outline.length >= 6 && fit.outline.length <= 24,
-    `outline ${fit.outline?.length} anchors`);
-  for (const [u, v] of fit.outline!) {
-    assert.ok(Math.abs(u) <= 30.1 && Math.abs(v) <= 22.6, `(${u}, ${v}) outside the zone`);
-    // The chamfer means no anchor sits in a true rectangle corner.
-    assert.ok(Math.abs(u) + Math.abs(v) < 45, `(${u}, ${v}) is an uncut corner`);
-  }
-  // A plain rectangle carries no mask — the zone rect IS the face.
-  const plain = fitZoneToRegion(rect([0, 10, 0], [20, 0, 0], [0, 0, 10]), [0, 1, 0])!;
-  assert.equal(plain.outline, undefined);
-});
-
 // A 60×45 top face with r=10 rounded corners at height 8, normal +Y,
 // rim tessellated at 6° arc steps, fanned from the centre.
 function roundedRectFace(): V3[][] {
@@ -93,26 +64,7 @@ function roundedRectFace(): V3[][] {
 test('a rounded-rectangle face keeps its shape — no melting into a blob', () => {
   const w = 60, h = 45, r = 10;
   const fit = fitZoneToRegion(roundedRectFace(), [0, 1, 0])!;
-  assert.ok(near(fit.widthMm, w, 0.2) && near(fit.heightMm, h, 0.2), `${fit.widthMm}×${fit.heightMm}`);
-  assert.ok(fit.outline && fit.outline.length >= 8, `outline ${fit.outline?.length} anchors`);
-
-  // Render the boundary curve and measure it against the IDEAL rounded
-  // rect (signed distance ≤ 0 inside). It must hug the rim — anything
-  // melting corners or bowing edges inward strays several millimetres.
-  const sdf = (u: number, v: number) => {
-    const qx = Math.abs(u) - (w / 2 - r), qy = Math.abs(v) - (h / 2 - r);
-    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
-  };
-  let worst = 0;
-  for (const seg of closedCurveSegments(fit.outline!)) {
-    for (let t = 0; t <= 1; t += 0.1) {
-      const [u, v] = curvePoint(seg, t);
-      // note: the fit stores v in the zone frame (v up = −z here), but the
-      // rounded rect is symmetric, so the sdf reads the same either way.
-      worst = Math.max(worst, Math.abs(sdf(u, v)));
-    }
-  }
-  assert.ok(worst < 1.5, `curve strays ${worst.toFixed(2)}mm from the face rim`);
+  assert.ok(near(fit.widthMm, w, 0.2) && near(fit.heightMm, h, 0.2), `${fit.widthMm}x${fit.heightMm} vs ${w}x${h} r=${r}`);
   // Tessellation noise never stores a phantom rotation on a straight face.
   assert.equal(fit.angleDeg, 0);
 });
@@ -124,9 +76,6 @@ test('a fillet triangle leaking into the weld cannot drag a tail', () => {
   const leak: V3[][] = [[[29, 8, -21], [33, 6, -25], [28, 6, -19]]];
   const fit = fitZoneToRegion([...roundedRectFace(), ...leak], [0, 1, 0])!;
   assert.ok(near(fit.widthMm, 60, 0.2) && near(fit.heightMm, 45, 0.2), `${fit.widthMm}×${fit.heightMm}`);
-  for (const [u, v] of fit.outline!) {
-    assert.ok(Math.abs(u) <= 30.1 && Math.abs(v) <= 22.6, `(${u}, ${v}) tails past the face`);
-  }
 });
 
 test('degenerate input fits nothing', () => {

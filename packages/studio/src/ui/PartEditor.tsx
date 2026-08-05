@@ -6,7 +6,6 @@
 import { useState, type ReactNode } from 'react';
 import type { Manifest, AnchorEdge, ColourOption, ChoiceOption, TextOption, UploadOption, TextFont } from '../../../embed/src/manifest/types.ts';
 import { FONT_CHOICES } from '../../../embed/src/runtime/fonts.ts';
-import { defaultBoundary } from '../../../embed/src/runtime/curve.ts';
 import {
   sizeMm, withSizeMm, withAnchor, withRotation,
   makePartOptional, makePartRequired, setChoicePrice,
@@ -15,7 +14,7 @@ import {
   matchPose, partCentreMm, setPartCentre,
   nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
   setTextSlot, removeTextSlot, type TextSlotPatch,
-  setImageZone, nudgeImageZone, removeImageZone, setImageZoneBoundary, type ImageZonePatch,
+  setImageZone, nudgeImageZone, removeImageZone, type ImageZonePatch,
   entrySizeMm, withEntrySizeMm,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
@@ -313,11 +312,6 @@ export function PartEditor(props: {
   onPlaceText: (partId: string) => void;
   /** Arm "click a face" image-zone placement for this part in the viewport. */
   onPlaceImage: (partId: string) => void;
-  /** Image-zone whose boundary handles are live in the viewport. */
-  shapingZone: string | null;
-  onEditShape: (optionId: string) => void;
-  /** Re-measure the face and re-conform the zone to it (Reset shape). */
-  onResetShape: (optionId: string) => void;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -526,11 +520,7 @@ export function PartEditor(props: {
           the zone, then set its size in millimetres.
         </p>
         {manifest.options.filter((o): o is UploadOption => o.type === 'upload' && o.part === part.id).map((zone) => (
-          <ImageZoneEditor
-            key={zone.id} zone={zone} manifest={manifest} act={act}
-            shaping={props.shapingZone === zone.id} onEditShape={props.onEditShape}
-            onResetShape={props.onResetShape}
-          />
+          <ImageZoneEditor key={zone.id} zone={zone} manifest={manifest} act={act} />
         ))}
         <div className="match-row">
           <button
@@ -694,9 +684,6 @@ function ImageZoneEditor(props: {
   zone: UploadOption;
   manifest: Manifest;
   act: (fn: () => Manifest) => void;
-  shaping: boolean;
-  onEditShape: (optionId: string) => void;
-  onResetShape: (optionId: string) => void;
 }) {
   const { zone, manifest, act } = props;
   // The slide fields are delta inputs: commit moves the zone, then the field
@@ -744,21 +731,6 @@ function ImageZoneEditor(props: {
         />
       </div>
       <div className="match-row">
-        <button
-          className={`mini${props.shaping ? ' is-active' : ''}`} data-testid={`image-shape-${zone.id}`}
-          title="Drag the dots on the model to reshape the zone into any smooth outline"
-          onClick={() => {
-            if (!zone.boundary && !props.shaping) {
-              act(() => setImageZoneBoundary(manifest, zone.id, defaultBoundary(zone.widthMm, zone.heightMm)));
-            }
-            props.onEditShape(zone.id);
-          }}
-        >{props.shaping ? 'Done shaping' : 'Edit shape'}</button>
-        <button
-          className="mini" data-testid={`image-shape-reset-${zone.id}`}
-          title="Re-measure the face and conform the zone to it again"
-          onClick={() => props.onResetShape(zone.id)}
-        >Reset shape</button>
         <button
           className="mini danger" data-testid={`image-remove-${zone.id}`}
           onClick={() => act(() => removeImageZone(manifest, zone.id))}

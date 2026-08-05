@@ -15,7 +15,6 @@ import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, parseUploadState, type UploadState, type Selections } from './state.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
 import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
-import { tracePath } from './curve.ts';
 import { fitZoneToRegion, type ZoneFit } from './zone-fit.ts';
 import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor } from './engrave.ts';
 
@@ -876,15 +875,19 @@ export class Viewer {
   }
 
   /**
-   * Customer images render the way the shipped storefront configurators do:
-   * one PLANE the exact size of the zone, hovering 0.3 mm off the surface,
-   * carrying a canvas texture the zone's aspect ratio. The image is DRAWN
-   * into the canvas at its offset/size (and clipped by the boundary curve),
-   * so repositioning and resizing repaint a canvas instead of rebuilding
-   * geometry — no projection artefacts, no z-fighting, no per-move geometry
-   * churn. While no image is uploaded the same canvas shows the dashed
-   * zone outline. The plane rebuilds only when the zone or the carrier's
-   * transform changes.
+   * Customer images render on the PICKED SURFACE ITSELF: the zone overlay
+   * is built from the exact triangles of the welded face region — the same
+   * geometry the Studio's blue highlight shows — lifted 0.15 mm along the
+   * face normal and UV-mapped across the zone rectangle. The face's own
+   * rim IS the mask: rounded corners, chamfers, holes, anything — nothing
+   * is approximated by a curve, so nothing can protrude past an edge.
+   * The image is DRAWN into a canvas texture at its offset/size, so
+   * repositioning and resizing repaint a canvas instead of rebuilding
+   * geometry. While no image is uploaded the same canvas shows the
+   * translucent "Image here" veil, shaped by the region like everything
+   * else. The overlay is the carrier's CHILD, so every move, rotation and
+   * resize of the part carries it for free; it rebuilds only when the
+   * zone or the carrier's own geometry (a deboss cut) changes.
    */
   private syncImages(selections: Selections): void {
     const wanted = new Set<string>();
@@ -893,7 +896,6 @@ export class Viewer {
       wanted.add(option.id);
       const carrier = this.meshes.get(option.part);
       if (!carrier) { this.dropImage(option.id); continue; }
-      carrier.updateMatrixWorld();
       const state = parseUploadState(selections[option.id]);
       let entry = this.imageZones.get(option.id);
       if (!entry) {
@@ -901,56 +903,33 @@ export class Viewer {
         this.imageZones.set(option.id, entry);
       }
 
-      // Pose key: the plane itself only rebuilds when the zone moves.
       const key = JSON.stringify([
         option.origin, option.normal, option.rotationDeg, option.widthMm, option.heightMm, option.part,
-        carrier.matrixWorld.elements.map((e) => Math.round(e * 1000)),
+        (carrier.geometry as THREE.BufferGeometry).uuid,
       ]);
       if (entry.key !== key) {
         entry.mesh?.removeFromParent();
         entry.mesh?.geometry.dispose();
         (entry.mesh?.material as THREE.Material | undefined)?.dispose();
         entry.texture?.dispose();
+        entry.mesh = undefined;
+        entry.key = key;
+        entry.paint = '';
 
-        // Canvas matched to the zone's aspect so nothing distorts.
-        const canvas = document.createElement('canvas');
-        const aspect = option.widthMm / option.heightMm;
-        canvas.width = aspect >= 1 ? 1024 : Math.max(64, Math.round(1024 * aspect));
-        canvas.height = aspect >= 1 ? Math.max(64, Math.round(1024 / aspect)) : 1024;
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.anisotropy = 4;
-
-        // Unlit, like the storefront's logo overlay — the customer's artwork
-        // keeps its true colours regardless of scene lighting.
-        const material = new THREE.MeshBasicMaterial({
-          map: texture, transparent: true, depthWrite: false, alphaTest: 0.005,
-          polygonOffset: true, polygonOffsetFactor: -4,
-        });
-        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(option.widthMm, option.heightMm), material);
-        // Zone pose in world space — same basis convention as glyphs.
-        const n = new THREE.Vector3(...option.normal).normalize();
-        const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
-        const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
-        const yAxis = new THREE.Vector3().crossVectors(n, xAxis).normalize();
-        const localQuat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, n));
-        if (option.rotationDeg) {
-          localQuat.premultiply(new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180));
+        const region = this.surfaceAtLocal(option.part, option.origin, option.normal);
+        const built = region ? this.buildZoneOverlay(carrier, option, region) : null;
+        if (built) {
+          entry.mesh = built.mesh;
+          entry.canvas = built.canvas;
+          entry.texture = built.texture;
+          carrier.add(built.mesh);
         }
-        const localPos = new THREE.Vector3(...option.origin).addScaledVector(n, 0.15); // a sticker's hover off the surface
-        mesh.position.copy(carrier.localToWorld(localPos));
-        mesh.quaternion.copy(carrier.getWorldQuaternion(new THREE.Quaternion()).multiply(localQuat));
-        mesh.name = `image-zone-${option.id}`;
-        mesh.renderOrder = 2;
-        mesh.raycast = () => {};
-        this.group.add(mesh);
-        Object.assign(entry, { key, paint: '', mesh, canvas, texture });
       }
-      entry.mesh!.visible = carrier.visible;
+      if (!entry.mesh) continue;
 
-      // Paint key: image, offset, size and boundary only repaint the canvas.
+      // Paint key: image, offset and size only repaint the canvas.
       const paint = JSON.stringify([
-        option.boundary, option.widthMm, option.heightMm,
+        option.widthMm, option.heightMm,
         state ? [state.img.length, state.img.slice(-48), state.u, state.v, state.s] : null,
       ]);
       if (entry.paint === paint) continue;
@@ -982,9 +961,81 @@ export class Viewer {
     }
   }
 
+  /**
+   * The zone overlay itself: the welded region's triangles, in the
+   * carrier's local space, lifted 0.15 mm along the zone normal and
+   * UV-mapped across the zone rectangle. The region IS the mask.
+   */
+  private buildZoneOverlay(
+    carrier: THREE.Mesh, option: UploadOption, region: SurfaceHit,
+  ): { mesh: THREE.Mesh; canvas: HTMLCanvasElement; texture: THREE.CanvasTexture } | null {
+    const src = carrier.geometry as THREE.BufferGeometry;
+    const srcPos = src.attributes.position as THREE.BufferAttribute;
+    const index = src.index;
+    const corner = (f: number, c: number) => (index ? index.getX(f * 3 + c) : f * 3 + c);
+
+    // Zone basis in the carrier's local space — same convention as glyphs.
+    const n = new THREE.Vector3(...option.normal).normalize();
+    const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+    const a = new THREE.Vector3().crossVectors(upRef, n).normalize();
+    const b = new THREE.Vector3().crossVectors(n, a).normalize();
+    if (option.rotationDeg) {
+      const spin = new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180);
+      a.applyQuaternion(spin);
+      b.applyQuaternion(spin);
+    }
+    const origin = new THREE.Vector3(...option.origin);
+
+    const count = region.faces.length * 3;
+    if (!count) return null;
+    const positions = new Float32Array(count * 3);
+    const uv = new Float32Array(count * 2);
+    const p = new THREE.Vector3();
+    let at = 0;
+    for (const f of region.faces) {
+      for (let c = 0; c < 3; c++) {
+        p.fromBufferAttribute(srcPos, corner(f, c)).addScaledVector(n, 0.15); // hover off the surface
+        positions[at * 3] = p.x;
+        positions[at * 3 + 1] = p.y;
+        positions[at * 3 + 2] = p.z;
+        p.sub(origin);
+        uv[at * 2] = p.dot(a) / option.widthMm + 0.5;
+        uv[at * 2 + 1] = p.dot(b) / option.heightMm + 0.5;
+        at++;
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+
+    // Canvas matched to the zone's aspect so nothing distorts.
+    const canvas = document.createElement('canvas');
+    const aspect = option.widthMm / option.heightMm;
+    canvas.width = aspect >= 1 ? 1024 : Math.max(64, Math.round(1024 * aspect));
+    canvas.height = aspect >= 1 ? Math.max(64, Math.round(1024 / aspect)) : 1024;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+
+    // Unlit, like the storefront's logo overlay — the customer's artwork
+    // keeps its true colours regardless of scene lighting. DoubleSide keeps
+    // the overlay honest on flipped-winding merchant meshes.
+    const material = new THREE.MeshBasicMaterial({
+      map: texture, transparent: true, depthWrite: false, alphaTest: 0.005,
+      polygonOffset: true, polygonOffsetFactor: -4, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = `image-zone-${option.id}`;
+    mesh.renderOrder = 2;
+    mesh.raycast = () => {};
+    return { mesh, canvas, texture };
+  }
+
   /** Draw the zone's current face: the customer's image at its offset and
-   * size, clipped by the boundary curve — or the dashed outline when there
-   * is no image yet. All in zone millimetres mapped onto the canvas. */
+   * size — or the translucent "Image here" veil when there is no image
+   * yet. The region geometry shapes whatever is painted here. */
   private paintZone(
     option: UploadOption,
     entry: { canvas?: HTMLCanvasElement; texture?: THREE.CanvasTexture; imgEl?: HTMLImageElement; hasImage?: boolean },
@@ -1000,12 +1051,6 @@ export class Viewer {
     ctx.clearRect(0, 0, cw, ch);
 
     if (state && entry.imgEl) {
-      ctx.save();
-      if (option.boundary) {
-        ctx.beginPath();
-        tracePath(ctx, option.boundary as Array<[number, number]>, map);
-        ctx.clip();
-      }
       const img = entry.imgEl;
       const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
       // 100% = the largest fit inside the zone, aspect preserved; beyond
@@ -1023,20 +1068,16 @@ export class Viewer {
       const v = Math.max(-vLim, Math.min(vLim, state.v));
       const [dx, dy] = map([u - w / 2, v + h / 2]);
       ctx.drawImage(img, dx, dy, (w / option.widthMm) * cw, (h / option.heightMm) * ch);
-      ctx.restore();
       entry.hasImage = true;
     } else {
-      // An empty zone reads as a soft sticker area, not a dashed wireframe:
-      // a translucent veil over the exact printable shape (white so it
-      // lightens dark parts, with a whisper of grey so it still reads on
-      // white ones), quietly labelled in the middle.
-      ctx.beginPath();
-      if (option.boundary) tracePath(ctx, option.boundary as Array<[number, number]>, map);
-      else ctx.rect(0, 0, cw, ch);
+      // An empty zone reads as a soft sticker area: a translucent veil
+      // (white so it lightens dark parts, with a whisper of grey so it
+      // still reads on white ones), quietly labelled in the middle. The
+      // region geometry cuts it to the face's exact shape.
       ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.fill();
+      ctx.fillRect(0, 0, cw, ch);
       ctx.fillStyle = 'rgba(60, 60, 60, 0.08)';
-      ctx.fill();
+      ctx.fillRect(0, 0, cw, ch);
       const labelPx = Math.max(13, Math.round(Math.min(cw, ch) * 0.09));
       ctx.font = `500 ${labelPx}px system-ui, -apple-system, sans-serif`;
       ctx.textAlign = 'center';
@@ -1048,8 +1089,6 @@ export class Viewer {
     texture.needsUpdate = true;
   }
 
-  /** One projected decal over the zone's surface, offset (u,v) mm from its
-   * centre in the zone plane, sized w×h mm. */
   private dropImage(optionId: string): void {
     const entry = this.imageZones.get(optionId);
     if (!entry) return;

@@ -9,16 +9,13 @@
 // and camera focus easing — select a part and the orbit centre glides to it,
 // deselect and it returns to the model over the origin.
 
-import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
 import { applyGizmoPose, setCameraView, snapFaces, nudgeGroup, nudgeVariant, type GizmoPose } from '../lib/manifest-edit.ts';
 import { Gizmo, type GizmoMode, type CommitPhase } from './gizmo.ts';
-import { closedCurveSegments, curvePoint, type Pt } from '../../../embed/src/runtime/curve.ts';
-import { setImageZoneBoundary } from '../lib/manifest-edit.ts';
-import type { UploadOption } from '../../../embed/src/manifest/types.ts';
 import { ViewCube } from './view-cube.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
 
@@ -41,19 +38,10 @@ export function ViewerPane(props: {
     origin: [number, number, number];
     normal: [number, number, number];
     /** Face-hugging rectangle, when the pick could measure one — an image
-     * zone conforms to it (centre, edge alignment, extents, rim mask). */
-    zone?: {
-      centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number;
-      outline?: Array<[number, number]>;
-    };
+     * zone conforms to it (centre, edge alignment, extents). */
+    zone?: { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number };
   }) => void;
   onSurfaceCancel: () => void;
-  /** Upload option whose boundary handles are live in the viewport. */
-  shapeZone: string | null;
-  onShapeDone: () => void;
-  /** Parked hook: measure the face under a zone plane again (Reset shape). */
-  refitZoneRef: MutableRefObject<((option: { part: string; origin: [number, number, number]; normal: [number, number, number] }) =>
-    { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number; outline?: Array<[number, number]> } | null) | null>;
   onSelectPart: (id: string | null) => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
@@ -141,8 +129,6 @@ export function ViewerPane(props: {
     viewer.setPanEnabled(true); // right-drag / two-finger pan while authoring
     viewerRef.current = viewer;
     (window as any).__studioViewer = viewer; // test hook
-    props.refitZoneRef.current = (option) =>
-      viewer.surfaceAtLocal(option.part, option.origin, option.normal)?.zone ?? null;
     let disposed = false;
 
     // A whole drag is ONE undo step: the first commit of a gesture records
@@ -232,7 +218,6 @@ export function ViewerPane(props: {
       axesRef.current = null;
       proxy.removeFromParent();
       proxyRef.current = null;
-      props.refitZoneRef.current = null;
       gridRef.current = null;
       grid.geometry.dispose();
       viewer.dispose();
@@ -449,183 +434,6 @@ export function ViewerPane(props: {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.surfacePick]);
-
-  // Boundary shaping: every anchor of the zone's closed curve becomes a
-  // draggable dot in the viewport, positioned by projecting its zone-plane
-  // (u,v) through the carrier's transform every frame (so orbiting keeps the
-  // dots pinned to the surface). Dragging raycasts the cursor back onto the
-  // zone plane; smaller dots at each segment midpoint insert a new anchor,
-  // double-clicking an anchor removes it. The dashed frame decal re-renders
-  // on every commit, so the curve itself is previewed on the model live.
-  useEffect(() => {
-    const optionId = props.shapeZone;
-    if (!optionId) return;
-    setSnapArm(null);
-    setMode('off');
-    const stage = stageRef.current!;
-    const canvas = canvasRef.current!;
-    const overlay = document.createElement('div');
-    overlay.className = 'shape-overlay';
-    overlay.setAttribute('data-testid', 'shape-overlay');
-    stage.append(overlay);
-
-    interface Basis {
-      option: UploadOption; viewer: Viewer; carrier: THREE.Mesh;
-      origin: THREE.Vector3; x: THREE.Vector3; y: THREE.Vector3; n: THREE.Vector3;
-    }
-    const basisOf = (): Basis | null => {
-      const option = commitCtx.current.project.manifest.options.find(
-        (o): o is UploadOption => o.id === optionId && o.type === 'upload');
-      const viewer = viewerRef.current;
-      const carrier = option && (viewer?.meshOf(option.part) as THREE.Mesh | undefined);
-      if (!option || !viewer || !carrier) return null;
-      const n = new THREE.Vector3(...option.normal).normalize();
-      const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
-      const x = new THREE.Vector3().crossVectors(upRef, n).normalize();
-      const y = new THREE.Vector3().crossVectors(n, x).normalize();
-      if (option.rotationDeg) {
-        const spin = new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180);
-        x.applyQuaternion(spin);
-        y.applyQuaternion(spin);
-      }
-      return { option, viewer, carrier, origin: new THREE.Vector3(...option.origin), x, y, n };
-    };
-    const toWorld = (b: Basis, u: number, v: number) =>
-      b.carrier.localToWorld(b.origin.clone().addScaledVector(b.x, u).addScaledVector(b.y, v));
-    const toScreen = (b: Basis, world: THREE.Vector3) => {
-      const p = world.clone().project(b.viewer.camera);
-      const r = canvas.getBoundingClientRect();
-      const s = stage.getBoundingClientRect();
-      return { left: (p.x + 1) / 2 * r.width + (r.left - s.left), top: (1 - p.y) / 2 * r.height + (r.top - s.top) };
-    };
-    const raycaster = new THREE.Raycaster();
-    const toZone = (b: Basis, clientX: number, clientY: number): Pt | null => {
-      const r = canvas.getBoundingClientRect();
-      raycaster.setFromCamera(new THREE.Vector2(
-        ((clientX - r.left) / r.width) * 2 - 1,
-        -((clientY - r.top) / r.height) * 2 + 1,
-      ), b.viewer.camera);
-      const worldN = b.n.clone().transformDirection(b.carrier.matrixWorld);
-      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(worldN, toWorld(b, 0, 0));
-      const hit = new THREE.Vector3();
-      if (!raycaster.ray.intersectPlane(plane, hit)) return null;
-      const local = b.carrier.worldToLocal(hit).sub(b.origin);
-      return [local.dot(b.x), local.dot(b.y)];
-    };
-
-    const commit = (boundary: Pt[], transient: boolean) => {
-      const { project, onChange } = commitCtx.current;
-      try {
-        onChange(setImageZoneBoundary(project.manifest, optionId, boundary as Array<[number, number]>), { transient });
-      } catch { /* a refused shape never reaches the manifest */ }
-    };
-
-    let anchors: HTMLButtonElement[] = [];
-    let mids: HTMLButtonElement[] = [];
-    let dragging = -1;
-    let dragMoved = false;
-
-    const startDrag = (index: number) => (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      dragging = index;
-      dragMoved = false;
-      anchors[index]?.setPointerCapture?.(e.pointerId);
-    };
-    const onDragMove = (e: PointerEvent) => {
-      if (dragging < 0) return;
-      const b = basisOf();
-      if (!b) return;
-      const uv = toZone(b, e.clientX, e.clientY);
-      if (!uv) return;
-      const halfW = b.option.widthMm / 2, halfH = b.option.heightMm / 2;
-      const next = (b.option.boundary ?? []).map((p, i) => (i === dragging
-        ? [Math.max(-halfW, Math.min(halfW, uv[0])), Math.max(-halfH, Math.min(halfH, uv[1]))] as Pt
-        : p as Pt));
-      // First move of a gesture records the undo step; the rest ride it.
-      commit(next, dragMoved);
-      dragMoved = true;
-    };
-    const endDrag = () => { dragging = -1; };
-
-    const removeAnchor = (index: number) => {
-      const b = basisOf();
-      if (!b || (b.option.boundary ?? []).length <= 3) return;
-      commit((b.option.boundary ?? []).filter((_, i) => i !== index) as Pt[], false);
-    };
-    const insertAnchor = (index: number) => (e: PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const b = basisOf();
-      if (!b) return;
-      const boundary = (b.option.boundary ?? []) as Pt[];
-      const segs = closedCurveSegments(boundary);
-      if (!segs[index]) return;
-      const mid = curvePoint(segs[index], 0.5);
-      commit([...boundary.slice(0, index + 1), mid, ...boundary.slice(index + 1)], false);
-    };
-
-    const ensureHandles = (anchorCount: number) => {
-      while (anchors.length < anchorCount) {
-        const i = anchors.length;
-        const dot = document.createElement('button');
-        dot.className = 'shape-anchor';
-        dot.setAttribute('data-testid', `shape-anchor-${i}`);
-        dot.title = 'Drag to reshape — double-click to remove';
-        dot.addEventListener('pointerdown', startDrag(i));
-        dot.addEventListener('dblclick', () => removeAnchor(i));
-        overlay.append(dot);
-        anchors.push(dot);
-      }
-      while (anchors.length > anchorCount) anchors.pop()!.remove();
-      while (mids.length < anchorCount) {
-        const i = mids.length;
-        const dot = document.createElement('button');
-        dot.className = 'shape-mid';
-        dot.setAttribute('data-testid', `shape-mid-${i}`);
-        dot.title = 'Add a point here';
-        dot.addEventListener('pointerdown', insertAnchor(i));
-        overlay.append(dot);
-        mids.push(dot);
-      }
-      while (mids.length > anchorCount) mids.pop()!.remove();
-    };
-
-    let raf = 0;
-    const layout = () => {
-      const b = basisOf();
-      if (!b || !b.option.boundary?.length) { props.onShapeDone(); return; }
-      const boundary = b.option.boundary as Pt[];
-      ensureHandles(boundary.length);
-      boundary.forEach((p, i) => {
-        const s = toScreen(b, toWorld(b, p[0], p[1]));
-        anchors[i].style.left = `${s.left}px`;
-        anchors[i].style.top = `${s.top}px`;
-      });
-      closedCurveSegments(boundary).forEach((seg, i) => {
-        const [mu, mv] = curvePoint(seg, 0.5);
-        const s = toScreen(b, toWorld(b, mu, mv));
-        mids[i].style.left = `${s.left}px`;
-        mids[i].style.top = `${s.top}px`;
-      });
-      raf = requestAnimationFrame(layout);
-    };
-    raf = requestAnimationFrame(layout);
-
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onShapeDone(); };
-    window.addEventListener('pointermove', onDragMove);
-    window.addEventListener('pointerup', endDrag);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('pointermove', onDragMove);
-      window.removeEventListener('pointerup', endDrag);
-      window.removeEventListener('keydown', onKey);
-      overlay.remove();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.shapeZone]);
 
   const saveView = () => {
     const viewer = viewerRef.current;

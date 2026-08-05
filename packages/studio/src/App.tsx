@@ -95,12 +95,6 @@ export function App() {
   const [publishing, setPublishing] = useState(false);
   // Armed "click a face to place …" tool: what lands there and on which part.
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
-  // Image-zone whose boundary handles are live in the viewport.
-  const [shapingZone, setShapingZone] = useState<string | null>(null);
-  // ViewerPane parks its face-measuring hook here so "Reset shape" can
-  // re-fit a zone to the surface it was placed on.
-  const refitZoneRef = useRef<((option: { part: string; origin: [number, number, number]; normal: [number, number, number] }) =>
-    { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number; outline?: Array<[number, number]> } | null) | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
   // Which choice each pick-one option shows while authoring — the merchant's
@@ -129,7 +123,6 @@ export function App() {
     setPreviewing(false);
     setPublishing(false);
     setPlacing(null);
-    setShapingZone(null);
     setTab('Parts');
   }, []);
 
@@ -144,26 +137,6 @@ export function App() {
     }
     setProject({ ...old, manifest });
   }, []);
-
-  // "Reset shape" re-measures the face under the zone and re-conforms the
-  // zone to it — the as-placed state, whatever was dragged since.
-  const resetZoneShape = useCallback((optionId: string) => {
-    const old = projectRef.current;
-    const option = old.manifest.options.find((o) => o.id === optionId);
-    if (!option || option.type !== 'upload') return;
-    const fit = refitZoneRef.current?.({ part: option.part, origin: option.origin, normal: option.normal });
-    if (!fit) return;
-    try {
-      setManifest(refitImageZone(old.manifest, optionId, fit));
-    } catch { /* a refused fit changes nothing */ }
-  }, [setManifest]);
-
-  // Shape editing lives in the selected part's editor — deselecting the part
-  // (or removing the zone) closes the handle overlay with it.
-  useEffect(() => {
-    if (!selectedPart) { setShapingZone(null); return; }
-    if (shapingZone && !project.manifest.options.some((o) => o.id === shapingZone)) setShapingZone(null);
-  }, [selectedPart, shapingZone, project.manifest]);
 
   const undo = useCallback(() => {
     const old = projectRef.current;
@@ -313,17 +286,15 @@ export function App() {
   const placeSurfaceInApp = useCallback((partId: string, place: {
     origin: [number, number, number];
     normal: [number, number, number];
-    zone?: {
-      centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number;
-      outline?: Array<[number, number]>;
-    };
+    zone?: { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number };
   }) => {
     const old = projectRef.current;
     const kind = placing?.kind ?? 'text';
     try {
       // An image zone CONFORMS to the picked face: centred on it, aligned
-      // with its edges, opened to its true extents — and when the face is
-      // not a plain rectangle, masked to its actual rim.
+      // with its edges, opened to its true extents. The renderer re-welds
+      // the face and shows the image on its exact triangles, so the rim
+      // needs no description here.
       setManifest(kind === 'image'
         ? addImageZone(old.manifest, partId, {
           origin: place.zone?.centre ?? place.origin,
@@ -331,7 +302,6 @@ export function App() {
           widthMm: place.zone?.widthMm,
           heightMm: place.zone?.heightMm,
           rotationDeg: place.zone?.angleDeg,
-          boundary: place.zone?.outline,
         })
         : addTextSlot(old.manifest, partId, place));
       setSelectedPart(partId); // keep the slot's editor on screen
@@ -419,9 +389,6 @@ export function App() {
               key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} onRepeat={repeatEntryInApp}
               onPlaceText={(id) => setPlacing({ kind: 'text', partId: id })}
               onPlaceImage={(id) => setPlacing({ kind: 'image', partId: id })}
-              shapingZone={shapingZone}
-              onEditShape={(optionId) => setShapingZone((cur) => (cur === optionId ? null : optionId))}
-              onResetShape={resetZoneShape}
             />
           : null)
     : null;
@@ -514,9 +481,6 @@ export function App() {
             surfacePick={placing}
             onSurfacePick={placeSurfaceInApp}
             onSurfaceCancel={() => setPlacing(null)}
-            shapeZone={shapingZone}
-            onShapeDone={() => setShapingZone(null)}
-            refitZoneRef={refitZoneRef}
             onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
             onChange={setManifest}
           />

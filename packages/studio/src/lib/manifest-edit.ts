@@ -488,7 +488,6 @@ export function setPartMaterial(
  */
 export function removePart(manifest: Manifest, partId: string, raw: Map<string, PartBounds>): Manifest {
   partOf(manifest, partId);
-  if (manifest.parts.length === 1) throw new EditError('the last part cannot be deleted');
   const layout = resolveLayout(manifest, raw);
 
   return edit(manifest, (draft) => {
@@ -504,6 +503,11 @@ export function removePart(manifest: Manifest, partId: string, raw: Map<string, 
     }
 
     draft.parts = draft.parts.filter((p) => p.id !== partId);
+
+    // Models nothing references any more go with the part — deleting the
+    // last part returns the project to the empty viewport, not a ghost.
+    const usedModels = new Set(draft.parts.map((p) => p.mesh.split('#')[0]));
+    draft.models = draft.models.filter((m) => usedModels.has(m.id));
 
     draft.options = draft.options.filter((option) => {
       if (option.id === `${partId}-addon`) return false;
@@ -1374,8 +1378,6 @@ export function addImageZone(
     widthMm?: number;
     heightMm?: number;
     rotationDeg?: number;
-    /** Rim mask in zone-frame mm — the face's own outline. */
-    boundary?: Array<[number, number]>;
   },
 ): Manifest {
   const part = partOf(manifest, partId);
@@ -1385,9 +1387,6 @@ export function addImageZone(
     v != null && Number.isFinite(v) ? Math.min(500, Math.max(1, round3(v))) : fallback;
   const spin = place.rotationDeg != null && Number.isFinite(place.rotationDeg)
     ? Math.round(place.rotationDeg * 10) / 10 : 0;
-  const boundary = place.boundary && place.boundary.length >= 3
-    ? place.boundary.map((p) => [round3(p[0]), round3(p[1])] as [number, number])
-    : undefined;
   return edit(manifest, (draft) => {
     draft.options.push({
       id,
@@ -1399,7 +1398,6 @@ export function addImageZone(
       widthMm: clampMm(place.widthMm, IMAGE_DEFAULTS.widthMm),
       heightMm: clampMm(place.heightMm, IMAGE_DEFAULTS.heightMm),
       ...(spin ? { rotationDeg: spin } : {}),
-      ...(boundary ? { boundary } : {}),
     });
   });
 }
@@ -1450,56 +1448,6 @@ export function nudgeImageZone(manifest: Manifest, optionId: string, du: number,
   return edit(manifest, (draft) => {
     const o = draft.options.find((x) => x.id === optionId) as UploadOption;
     o.origin = o.origin.map((c, i) => round3(c + xAxis[i] * su + yAxis[i] * sv)) as [number, number, number];
-  });
-}
-
-/**
- * Replace a zone's reshaped outline wholesale — the Studio's handle drags
- * send the whole anchor list every time. `null` clears the shape back to
- * the plain rectangle.
- */
-export function setImageZoneBoundary(
-  manifest: Manifest, optionId: string, boundary: Array<[number, number]> | null,
-): Manifest {
-  const option = manifest.options.find((o) => o.id === optionId);
-  if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);
-  return edit(manifest, (draft) => {
-    const o = draft.options.find((x) => x.id === optionId) as UploadOption;
-    if (boundary === null) delete o.boundary;
-    else o.boundary = boundary.map((p) => [round3(p[0]), round3(p[1])] as [number, number]);
-  });
-}
-
-/**
- * Re-conform a zone to a freshly measured face fit — what "Reset shape"
- * does: back to exactly the as-placed state (centre, edge alignment,
- * extents, rim mask), whatever the merchant dragged in the meantime.
- */
-export function refitImageZone(
-  manifest: Manifest,
-  optionId: string,
-  fit: {
-    centre: [number, number, number];
-    angleDeg: number;
-    widthMm: number;
-    heightMm: number;
-    outline?: Array<[number, number]>;
-  },
-): Manifest {
-  const option = manifest.options.find((o) => o.id === optionId);
-  if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);
-  return edit(manifest, (draft) => {
-    const o = draft.options.find((x) => x.id === optionId) as UploadOption;
-    o.origin = fit.centre.map(round3) as [number, number, number];
-    o.widthMm = Math.min(500, Math.max(1, round3(fit.widthMm)));
-    o.heightMm = Math.min(500, Math.max(1, round3(fit.heightMm)));
-    if (fit.angleDeg) o.rotationDeg = Math.round(fit.angleDeg * 10) / 10;
-    else delete o.rotationDeg;
-    if (fit.outline && fit.outline.length >= 3) {
-      o.boundary = fit.outline.map((p) => [round3(p[0]), round3(p[1])] as [number, number]);
-    } else {
-      delete o.boundary;
-    }
   });
 }
 

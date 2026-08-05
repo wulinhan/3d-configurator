@@ -71,11 +71,14 @@ test('removePart keeps anchored parts where they were', () => {
   near(resolveLayout(after, RAW).get('fin')!.translate[1], before);
 });
 
-test('removePart cannot delete the last part', () => {
+test('deleting the last part returns the project to the empty state', () => {
   let m = fresh();
   m = removePart(m, 'cap', RAW);
   m = removePart(m, 'fin', RAW);
-  assert.throws(() => removePart(m, 'body', RAW), /last part/);
+  m = removePart(m, 'body', RAW);
+  valid(m);
+  assert.equal(m.parts.length, 0);
+  assert.equal(m.models.length, 0, 'orphan models go with their last part');
 });
 
 // ── default colour ──────────────────────────────────────────────────────────
