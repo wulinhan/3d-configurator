@@ -53,16 +53,25 @@ export function fitZoneToRegion(triangles: Vec3[][], normal: Vec3): ZoneFit | nu
   const x = norm(cross(upRef, n));
   const y = cross(n, x);
 
-  // Project every vertex into (u, v). The plane offset along n is the
-  // region's CREST — the surface weld tolerates a whisper of crowning, and
-  // a zone anchored to the average height would sit half-buried in it.
-  const uv: Array<[number, number]> = [];
+  // The plane offset along n is the region's CREST — the surface weld
+  // tolerates a whisper of crowning, and a zone anchored to the average
+  // height would sit half-buried in it.
   let planeW = -Infinity;
   for (const tri of triangles) {
-    for (const p of tri) {
-      uv.push([dot(p, x), dot(p, y)]);
-      planeW = Math.max(planeW, dot(p, n));
-    }
+    for (const p of tri) planeW = Math.max(planeW, dot(p, n));
+  }
+  // The weld can leak a triangle or two down a fillet where the first ring
+  // still reads near-coplanar; those dip well below the crest and would
+  // drag the rim (and the fitted extents) over the edge with them — the
+  // one-corner "tail". Real crowning stays within the weld's tolerance, so
+  // anything deeper than ~0.6mm below the crest is a leak, not the face.
+  const flat = triangles.filter((tri) => tri.every((p) => dot(p, n) > planeW - 0.6));
+  const region = flat.length ? flat : triangles;
+
+  // Project every vertex into (u, v).
+  const uv: Array<[number, number]> = [];
+  for (const tri of region) {
+    for (const p of tri) uv.push([dot(p, x), dot(p, y)]);
   }
 
   // Boundary edges: shared interior edges appear twice, the rim once. The
@@ -86,9 +95,14 @@ export function fitZoneToRegion(triangles: Vec3[][], normal: Vec3): ZoneFit | nu
     longest = len;
     angle = Math.atan2(bv - av, bu - au);
   }
-  // A direction, not an arrow: fold into (−90°, 90°].
+  // A direction, not an arrow: fold into (−90°, 90°] — and snap the near
+  // misses, so tessellation noise never stores a -0.1° "rotation" on a
+  // face that is simply straight.
   if (angle > Math.PI / 2) angle -= Math.PI;
   if (angle <= -Math.PI / 2) angle += Math.PI;
+  const snap = Math.PI / 180; // 1°
+  if (Math.abs(angle) < snap) angle = 0;
+  else if (Math.abs(angle - Math.PI / 2) < snap) angle = Math.PI / 2;
 
   // Extents in the rotated frame; centre mapped back out.
   const cos = Math.cos(angle), sin = Math.sin(angle);
@@ -115,8 +129,23 @@ export function fitZoneToRegion(triangles: Vec3[][], normal: Vec3): ZoneFit | nu
   }
   let outline: Array<[number, number]> | undefined;
   if (area < width * height * 0.985) {
-    const loop = walkLoop([...counts.values()]);
+    let loop = walkLoop([...counts.values()]);
     if (loop && loop.length >= 3) {
+      // Canonicalise the ring — consistent winding, fixed starting point —
+      // so the same face always yields the same anchors whichever triangle
+      // happened to seed the weld ("Reset shape" must reproduce placement).
+      let area2 = 0;
+      for (let i = 0; i < loop.length; i++) {
+        const a = loop[i], b = loop[(i + 1) % loop.length];
+        area2 += a[0] * b[1] - b[0] * a[1];
+      }
+      if (area2 < 0) loop = [...loop].reverse();
+      let s = 0;
+      for (let i = 1; i < loop.length; i++) {
+        if (loop[i][0] < loop[s][0] - 1e-9
+          || (Math.abs(loop[i][0] - loop[s][0]) < 1e-9 && loop[i][1] < loop[s][1])) s = i;
+      }
+      loop = [...loop.slice(s), ...loop.slice(0, s)];
       // Into the zone frame (rotate by −angle about the rect centre), with
       // a 1% inset so the smoothed curve stays inside the true rim.
       const zoneFrame = loop.map(([u, v]): [number, number] => {

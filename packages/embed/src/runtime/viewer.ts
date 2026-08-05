@@ -626,6 +626,37 @@ export class Viewer {
   surfaceAt(clientX: number, clientY: number): SurfaceHit | null {
     const hit = this.castAt(clientX, clientY);
     if (!hit) return null;
+    return this.surfaceFromCast(hit);
+  }
+
+  /**
+   * The same weld, seeded from a stored zone plane instead of a click —
+   * how "Reset shape" re-finds the face a zone was placed on. `localPoint`
+   * and `localNormal` are in the part's local mesh space, exactly as an
+   * upload option stores them.
+   */
+  surfaceAtLocal(
+    partId: string,
+    localPoint: [number, number, number],
+    localNormal: [number, number, number],
+  ): SurfaceHit | null {
+    const mesh = this.meshes.get(partId);
+    if (!mesh) return null;
+    mesh.updateMatrixWorld();
+    const worldN = new THREE.Vector3(...localNormal).transformDirection(mesh.matrixWorld).normalize();
+    const worldP = mesh.localToWorld(new THREE.Vector3(...localPoint));
+    const raycaster = new THREE.Raycaster();
+    raycaster.set(worldP.clone().addScaledVector(worldN, 5), worldN.clone().negate());
+    const hit = raycaster.intersectObject(mesh, false)[0];
+    if (!hit?.face || hit.faceIndex == null) return null;
+    return this.surfaceFromCast({
+      partId, normal: [worldN.x, worldN.y, worldN.z], mesh, faceIndex: hit.faceIndex,
+    });
+  }
+
+  private surfaceFromCast(hit: {
+    partId: string; normal: [number, number, number]; mesh: THREE.Mesh; faceIndex: number;
+  }): SurfaceHit | null {
     const geo = hit.mesh.geometry as THREE.BufferGeometry;
     const index = geo.index;
     const pos = geo.attributes.position as THREE.BufferAttribute;

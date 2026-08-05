@@ -1470,6 +1470,39 @@ export function setImageZoneBoundary(
   });
 }
 
+/**
+ * Re-conform a zone to a freshly measured face fit — what "Reset shape"
+ * does: back to exactly the as-placed state (centre, edge alignment,
+ * extents, rim mask), whatever the merchant dragged in the meantime.
+ */
+export function refitImageZone(
+  manifest: Manifest,
+  optionId: string,
+  fit: {
+    centre: [number, number, number];
+    angleDeg: number;
+    widthMm: number;
+    heightMm: number;
+    outline?: Array<[number, number]>;
+  },
+): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);
+  return edit(manifest, (draft) => {
+    const o = draft.options.find((x) => x.id === optionId) as UploadOption;
+    o.origin = fit.centre.map(round3) as [number, number, number];
+    o.widthMm = Math.min(500, Math.max(1, round3(fit.widthMm)));
+    o.heightMm = Math.min(500, Math.max(1, round3(fit.heightMm)));
+    if (fit.angleDeg) o.rotationDeg = Math.round(fit.angleDeg * 10) / 10;
+    else delete o.rotationDeg;
+    if (fit.outline && fit.outline.length >= 3) {
+      o.boundary = fit.outline.map((p) => [round3(p[0]), round3(p[1])] as [number, number]);
+    } else {
+      delete o.boundary;
+    }
+  });
+}
+
 export function removeImageZone(manifest: Manifest, optionId: string): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'upload') throw new EditError(`"${optionId}" is not an image zone`);

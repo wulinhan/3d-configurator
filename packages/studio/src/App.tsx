@@ -18,7 +18,9 @@ import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
 import { writeGlb } from './lib/write-glb.ts';
 import { initManifest, boundsOf, boundsByPartId, mergeModel, type PartBounds } from './lib/manifest-init.ts';
-import { duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, addImageZone, type Axis } from './lib/manifest-edit.ts';
+import {
+  duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, addImageZone, refitImageZone, type Axis,
+} from './lib/manifest-edit.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
 import { PartEditor, GroupEditor, VariantEditor } from './ui/PartEditor.tsx';
@@ -95,6 +97,10 @@ export function App() {
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
   // Image-zone whose boundary handles are live in the viewport.
   const [shapingZone, setShapingZone] = useState<string | null>(null);
+  // ViewerPane parks its face-measuring hook here so "Reset shape" can
+  // re-fit a zone to the surface it was placed on.
+  const refitZoneRef = useRef<((option: { part: string; origin: [number, number, number]; normal: [number, number, number] }) =>
+    { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number; outline?: Array<[number, number]> } | null) | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
   // Which choice each pick-one option shows while authoring — the merchant's
@@ -138,6 +144,19 @@ export function App() {
     }
     setProject({ ...old, manifest });
   }, []);
+
+  // "Reset shape" re-measures the face under the zone and re-conforms the
+  // zone to it — the as-placed state, whatever was dragged since.
+  const resetZoneShape = useCallback((optionId: string) => {
+    const old = projectRef.current;
+    const option = old.manifest.options.find((o) => o.id === optionId);
+    if (!option || option.type !== 'upload') return;
+    const fit = refitZoneRef.current?.({ part: option.part, origin: option.origin, normal: option.normal });
+    if (!fit) return;
+    try {
+      setManifest(refitImageZone(old.manifest, optionId, fit));
+    } catch { /* a refused fit changes nothing */ }
+  }, [setManifest]);
 
   // Shape editing lives in the selected part's editor — deselecting the part
   // (or removing the zone) closes the handle overlay with it.
@@ -402,6 +421,7 @@ export function App() {
               onPlaceImage={(id) => setPlacing({ kind: 'image', partId: id })}
               shapingZone={shapingZone}
               onEditShape={(optionId) => setShapingZone((cur) => (cur === optionId ? null : optionId))}
+              onResetShape={resetZoneShape}
             />
           : null)
     : null;
@@ -496,6 +516,7 @@ export function App() {
             onSurfaceCancel={() => setPlacing(null)}
             shapeZone={shapingZone}
             onShapeDone={() => setShapingZone(null)}
+            refitZoneRef={refitZoneRef}
             onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
             onChange={setManifest}
           />

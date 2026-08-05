@@ -296,7 +296,8 @@ anchor dots appear pinned to the model's surface, and the boundary is the
 closed Catmull-Rom/Bézier curve through them (runtime/curve.ts) — drag a
 dot to reshape, click the smaller midpoint dot on any segment to add an
 anchor, double-click an anchor to remove it (three minimum), Esc or *Done
-shaping* to finish, *Reset shape* to return to the full rectangle. The
+shaping* to finish. *Reset shape* re-measures the face and conforms the
+zone to it again — the as-placed outline, mask included. The
 zone veil redraws live during the drag, so the curve is previewed
 on the actual surface — curved or not. At render time the curve becomes an
 alpha mask multiplied into the customer's image decal, so only the part of

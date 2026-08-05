@@ -9,7 +9,7 @@
 // and camera focus easing — select a part and the orbit centre glides to it,
 // deselect and it returns to the model over the origin.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 import * as THREE from 'three';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
@@ -51,6 +51,9 @@ export function ViewerPane(props: {
   /** Upload option whose boundary handles are live in the viewport. */
   shapeZone: string | null;
   onShapeDone: () => void;
+  /** Parked hook: measure the face under a zone plane again (Reset shape). */
+  refitZoneRef: MutableRefObject<((option: { part: string; origin: [number, number, number]; normal: [number, number, number] }) =>
+    { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number; outline?: Array<[number, number]> } | null) | null>;
   onSelectPart: (id: string | null) => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
@@ -137,7 +140,9 @@ export function ViewerPane(props: {
     });
     viewer.setPanEnabled(true); // right-drag / two-finger pan while authoring
     viewerRef.current = viewer;
-    (window as any).__studioViewer = viewer; // test hook, same as __studio
+    (window as any).__studioViewer = viewer; // test hook
+    props.refitZoneRef.current = (option) =>
+      viewer.surfaceAtLocal(option.part, option.origin, option.normal)?.zone ?? null;
     let disposed = false;
 
     // A whole drag is ONE undo step: the first commit of a gesture records
@@ -227,6 +232,7 @@ export function ViewerPane(props: {
       axesRef.current = null;
       proxy.removeFromParent();
       proxyRef.current = null;
+      props.refitZoneRef.current = null;
       gridRef.current = null;
       grid.geometry.dispose();
       viewer.dispose();

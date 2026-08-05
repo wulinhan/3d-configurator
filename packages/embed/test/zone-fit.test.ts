@@ -69,9 +69,9 @@ test('a non-rectangular face brings its rim along as the zone mask', () => {
   assert.equal(plain.outline, undefined);
 });
 
-test('a rounded-rectangle face keeps its shape — no melting into a blob', () => {
-  // A 60×45 top face with r=10 rounded corners at height 8, normal +Y,
-  // rim tessellated at 6° arc steps, fanned from the centre.
+// A 60×45 top face with r=10 rounded corners at height 8, normal +Y,
+// rim tessellated at 6° arc steps, fanned from the centre.
+function roundedRectFace(): V3[][] {
   const w = 60, h = 45, r = 10;
   const rim: Array<[number, number]> = [];
   const corner = (cx: number, cz: number, a0: number) => {
@@ -84,11 +84,15 @@ test('a rounded-rectangle face keeps its shape — no melting into a blob', () =
   corner(-(w / 2 - r), h / 2 - r, Math.PI / 2);
   corner(-(w / 2 - r), -(h / 2 - r), Math.PI);
   corner(w / 2 - r, -(h / 2 - r), 3 * Math.PI / 2);
-  const tris: V3[][] = rim.map(([x, z], i) => {
+  return rim.map(([x, z], i) => {
     const [nx, nz] = rim[(i + 1) % rim.length];
     return [[0, 8, 0], [x, 8, z], [nx, 8, nz]] as V3[];
   });
-  const fit = fitZoneToRegion(tris, [0, 1, 0])!;
+}
+
+test('a rounded-rectangle face keeps its shape — no melting into a blob', () => {
+  const w = 60, h = 45, r = 10;
+  const fit = fitZoneToRegion(roundedRectFace(), [0, 1, 0])!;
   assert.ok(near(fit.widthMm, w, 0.2) && near(fit.heightMm, h, 0.2), `${fit.widthMm}×${fit.heightMm}`);
   assert.ok(fit.outline && fit.outline.length >= 8, `outline ${fit.outline?.length} anchors`);
 
@@ -109,6 +113,20 @@ test('a rounded-rectangle face keeps its shape — no melting into a blob', () =
     }
   }
   assert.ok(worst < 1.5, `curve strays ${worst.toFixed(2)}mm from the face rim`);
+  // Tessellation noise never stores a phantom rotation on a straight face.
+  assert.equal(fit.angleDeg, 0);
+});
+
+test('a fillet triangle leaking into the weld cannot drag a tail', () => {
+  // The weld sometimes admits the first fillet ring at one corner: a
+  // triangle dipping 2mm below the crest, jutting past the rim. It must
+  // not inflate the extents or pull the mask outline over the edge.
+  const leak: V3[][] = [[[29, 8, -21], [33, 6, -25], [28, 6, -19]]];
+  const fit = fitZoneToRegion([...roundedRectFace(), ...leak], [0, 1, 0])!;
+  assert.ok(near(fit.widthMm, 60, 0.2) && near(fit.heightMm, 45, 0.2), `${fit.widthMm}×${fit.heightMm}`);
+  for (const [u, v] of fit.outline!) {
+    assert.ok(Math.abs(u) <= 30.1 && Math.abs(v) <= 22.6, `(${u}, ${v}) tails past the face`);
+  }
 });
 
 test('degenerate input fits nothing', () => {

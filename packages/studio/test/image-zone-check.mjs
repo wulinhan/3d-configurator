@@ -125,8 +125,8 @@ const fitted = await page.evaluate(() => {
   const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');
   return { w: z.widthMm, h: z.heightMm, spin: z.rotationDeg ?? 0, mask: z.boundary?.length ?? 0 };
 });
-check('zone conforms to the picked face (60×45, no spin)',
-  Math.abs(fitted.w - 60) < 0.6 && Math.abs(fitted.h - 45) < 0.6 && Math.abs(fitted.spin) < 0.5, fitted);
+check('zone conforms to the picked face (60×45, rotation exactly 0)',
+  Math.abs(fitted.w - 60) < 0.6 && Math.abs(fitted.h - 45) < 0.6 && fitted.spin === 0, fitted);
 check('…and the rounded rim arrives as the zone mask', fitted.mask >= 8 && fitted.mask <= 32, fitted);
 check('mask anchors follow the corner arcs — inside the face, clear of square corners',
   await page.evaluate(() => {
@@ -134,6 +134,26 @@ check('mask anchors follow the corner arcs — inside the face, clear of square 
     return z.boundary.every(([u, v]) => Math.abs(u) <= 30.1 && Math.abs(v) <= 22.6
       && Math.hypot(Math.abs(u) - 30, Math.abs(v) - 22.5) > 2);
   }), '');
+
+// Edit shape → drag an anchor → Done → Reset must re-conform to the face
+// outline, not fall back to a sharp rectangle.
+const maskBefore = await page.evaluate(() => JSON.stringify((window).__studio.manifest.options.find((o) => o.type === 'upload').boundary));
+await page.click('[data-testid="image-shape-base-image"]');
+await page.waitForSelector('[data-testid="shape-anchor-0"]', { timeout: 20000 });
+const hd = await page.locator('[data-testid="shape-anchor-0"]').boundingBox();
+await page.mouse.move(hd.x + hd.width / 2, hd.y + hd.height / 2);
+await page.mouse.down();
+await page.mouse.move(hd.x + hd.width / 2 + 25, hd.y + hd.height / 2 + 20, { steps: 4 });
+await page.mouse.up();
+await page.waitForTimeout(250);
+await page.click('[data-testid="image-shape-base-image"]'); // Done shaping
+await page.waitForTimeout(150);
+const dragged = await page.evaluate(() => JSON.stringify((window).__studio.manifest.options.find((o) => o.type === 'upload').boundary));
+await page.click('[data-testid="image-shape-reset-base-image"]');
+await page.waitForTimeout(300);
+const afterReset = await page.evaluate(() => JSON.stringify((window).__studio.manifest.options.find((o) => o.type === 'upload').boundary));
+check('drag changes the mask; Reset re-conforms it to the face outline',
+  dragged !== maskBefore && afterReset === maskBefore, { changed: dragged !== maskBefore, restored: afterReset === maskBefore });
 
 // Widen the zone, then check the plane pose.
 await page.fill('[data-testid="image-width-base-image"]', '45');

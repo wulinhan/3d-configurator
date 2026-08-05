@@ -316,6 +316,8 @@ export function PartEditor(props: {
   /** Image-zone whose boundary handles are live in the viewport. */
   shapingZone: string | null;
   onEditShape: (optionId: string) => void;
+  /** Re-measure the face and re-conform the zone to it (Reset shape). */
+  onResetShape: (optionId: string) => void;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -527,6 +529,7 @@ export function PartEditor(props: {
           <ImageZoneEditor
             key={zone.id} zone={zone} manifest={manifest} act={act}
             shaping={props.shapingZone === zone.id} onEditShape={props.onEditShape}
+            onResetShape={props.onResetShape}
           />
         ))}
         <div className="match-row">
@@ -591,7 +594,7 @@ function TextSlotEditor(props: {
       </div>
       <div className="field-row">
         <NumberField
-          label="Spin" value={slot.rotationDeg ?? 0} suffix="°" step={5} testId={`text-spin-${slot.id}`}
+          label="Rotate" value={slot.rotationDeg ?? 0} suffix="°" step={5} testId={`text-spin-${slot.id}`}
           onCommit={(v) => patch({ rotationDeg: v })}
         />
         <NumberField
@@ -693,6 +696,7 @@ function ImageZoneEditor(props: {
   act: (fn: () => Manifest) => void;
   shaping: boolean;
   onEditShape: (optionId: string) => void;
+  onResetShape: (optionId: string) => void;
 }) {
   const { zone, manifest, act } = props;
   // The slide fields are delta inputs: commit moves the zone, then the field
@@ -715,7 +719,7 @@ function ImageZoneEditor(props: {
           onCommit={(v) => patch({ heightMm: v })}
         />
         <NumberField
-          label="Spin" value={zone.rotationDeg ?? 0} suffix="°" step={5} testId={`image-spin-${zone.id}`}
+          label="Rotate" value={zone.rotationDeg ?? 0} suffix="°" step={5} testId={`image-spin-${zone.id}`}
           onCommit={(v) => patch({ rotationDeg: v })}
         />
       </div>
@@ -750,12 +754,11 @@ function ImageZoneEditor(props: {
             props.onEditShape(zone.id);
           }}
         >{props.shaping ? 'Done shaping' : 'Edit shape'}</button>
-        {zone.boundary && (
-          <button
-            className="mini" data-testid={`image-shape-reset-${zone.id}`}
-            onClick={() => act(() => setImageZoneBoundary(manifest, zone.id, null))}
-          >Reset shape</button>
-        )}
+        <button
+          className="mini" data-testid={`image-shape-reset-${zone.id}`}
+          title="Re-measure the face and conform the zone to it again"
+          onClick={() => props.onResetShape(zone.id)}
+        >Reset shape</button>
         <button
           className="mini danger" data-testid={`image-remove-${zone.id}`}
           onClick={() => act(() => removeImageZone(manifest, zone.id))}
