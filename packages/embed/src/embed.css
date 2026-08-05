@@ -178,7 +178,10 @@
   border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
   background: #fff; font: inherit; font-size: 13px;
   font-variant-numeric: tabular-nums; text-align: center;
+  -moz-appearance: textfield; appearance: textfield;
 }
+.cfg-size-value::-webkit-outer-spin-button,
+.cfg-size-value::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .cfg-size-value:focus { outline: none; border-color: var(--cfg-accent); }
 .cfg-size-unit { font-size: 12px; color: var(--cfg-muted); }
 .cfg-upload-remove {

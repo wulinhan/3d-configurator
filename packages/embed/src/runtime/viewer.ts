@@ -995,16 +995,23 @@ export class Viewer {
       ctx.restore();
       entry.hasImage = true;
     } else {
-      ctx.strokeStyle = 'rgba(30, 41, 59, 0.9)';
-      ctx.lineWidth = 4;
-      ctx.setLineDash([12, 8]);
+      // An empty zone reads as a soft sticker area, not a dashed wireframe:
+      // a translucent veil over the exact printable shape (white so it
+      // lightens dark parts, with a whisper of grey so it still reads on
+      // white ones), quietly labelled in the middle.
       ctx.beginPath();
-      if (option.boundary) {
-        tracePath(ctx, option.boundary as Array<[number, number]>, map);
-      } else {
-        ctx.rect(2, 2, cw - 4, ch - 4);
-      }
-      ctx.stroke();
+      if (option.boundary) tracePath(ctx, option.boundary as Array<[number, number]>, map);
+      else ctx.rect(0, 0, cw, ch);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fill();
+      ctx.fillStyle = 'rgba(60, 60, 60, 0.08)';
+      ctx.fill();
+      const labelPx = Math.max(13, Math.round(Math.min(cw, ch) * 0.09));
+      ctx.font = `500 ${labelPx}px system-ui, -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillText('Image here', cw / 2, ch / 2);
       entry.hasImage = false;
     }
     texture.needsUpdate = true;

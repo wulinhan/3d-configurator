@@ -218,5 +218,17 @@ function resampleLoop(loop: Array<[number, number]>, count: number): Array<[numb
     const t = lens[seg] > 0 ? (target - into) / lens[seg] : 0;
     out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
   }
+  // The rim of a welded region follows the mesh triangulation, which
+  // zigzags where a fillet meets the flat — smoothing the samples keeps
+  // the boundary reading as the shape, not the tessellation.
+  for (let pass = 0; pass < 2; pass++) {
+    const prev = out.map((p) => [...p] as [number, number]);
+    for (let i = 0; i < out.length; i++) {
+      const a = prev[(i + out.length - 1) % out.length];
+      const b = prev[i];
+      const c = prev[(i + 1) % out.length];
+      out[i] = [(a[0] + 2 * b[0] + c[0]) / 4, (a[1] + 2 * b[1] + c[1]) / 4];
+    }
+  }
   return out;
 }

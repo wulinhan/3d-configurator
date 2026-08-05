@@ -96,6 +96,9 @@ await settleCamera();
 await clickBaseCentre();
 await page.waitForFunction(() => (window).__studio?.manifest?.options?.some((o) => o.type === 'upload'), { timeout: 20000 });
 
+await page.waitForTimeout(400);
+await page.screenshot({ path: join(OUT, 'zone-veil.png') });
+
 // The placed zone conforms to the picked 60×45 chamfered top face.
 const fitted = await page.evaluate(() => {
   const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');

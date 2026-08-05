@@ -277,7 +277,7 @@ polygon is simplified (Douglas-Peucker) into the zone's editable boundary
 curve, so the image clips to the true shape of the surface like a die-cut
 sticker and never overhangs an edge. Width/height/spin stay editable
 afterwards, and the boundary handles refine the mask. The customiser shows
-the zone as a dashed outline until an image arrives.
+the zone as a translucent “Image here” veil until an image arrives.
 
 The image renders the way the shipped storefront configurators render logo
 uploads (their proven approach): ONE plane the exact size of the zone,
@@ -297,7 +297,7 @@ closed Catmull-Rom/Bézier curve through them (runtime/curve.ts) — drag a
 dot to reshape, click the smaller midpoint dot on any segment to add an
 anchor, double-click an anchor to remove it (three minimum), Esc or *Done
 shaping* to finish, *Reset shape* to return to the full rectangle. The
-dashed frame decal redraws live during the drag, so the curve is previewed
+zone veil redraws live during the drag, so the curve is previewed
 on the actual surface — curved or not. At render time the curve becomes an
 alpha mask multiplied into the customer's image decal, so only the part of
 the image inside the outline shows; a whole drag is one undo step.
@@ -481,7 +481,7 @@ test/studio.smoke.mjs 198 browser assertions — the full merchant journey
                       spawning a pitched row of template copies → customer
                       typing priced per character in the real embed → removal
                       clearing slot, extrusion and spawned pieces), and image
-                      zones end to end (face pick → dashed frame decal →
+                      zones end to end (face pick → zone veil →
                       boundary shaping with dragged/inserted anchors → customer
                       upload landing as a projected decal clipped by the curve
                       → arrow-pad repositioning and stepped resizing → removal
