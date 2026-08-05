@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fitZoneToRegion } from '../src/runtime/zone-fit.ts';
+import { closedCurveSegments, curvePoint } from '../src/runtime/curve.ts';
 
 type V3 = [number, number, number];
 const near = (a: number, b: number, tol = 0.05) => Math.abs(a - b) < tol;
@@ -66,6 +67,48 @@ test('a non-rectangular face brings its rim along as the zone mask', () => {
   // A plain rectangle carries no mask — the zone rect IS the face.
   const plain = fitZoneToRegion(rect([0, 10, 0], [20, 0, 0], [0, 0, 10]), [0, 1, 0])!;
   assert.equal(plain.outline, undefined);
+});
+
+test('a rounded-rectangle face keeps its shape — no melting into a blob', () => {
+  // A 60×45 top face with r=10 rounded corners at height 8, normal +Y,
+  // rim tessellated at 6° arc steps, fanned from the centre.
+  const w = 60, h = 45, r = 10;
+  const rim: Array<[number, number]> = [];
+  const corner = (cx: number, cz: number, a0: number) => {
+    for (let k = 0; k <= 15; k++) {
+      const a = a0 + (k / 15) * (Math.PI / 2);
+      rim.push([cx + r * Math.cos(a), cz + r * Math.sin(a)]);
+    }
+  };
+  corner(w / 2 - r, h / 2 - r, 0);
+  corner(-(w / 2 - r), h / 2 - r, Math.PI / 2);
+  corner(-(w / 2 - r), -(h / 2 - r), Math.PI);
+  corner(w / 2 - r, -(h / 2 - r), 3 * Math.PI / 2);
+  const tris: V3[][] = rim.map(([x, z], i) => {
+    const [nx, nz] = rim[(i + 1) % rim.length];
+    return [[0, 8, 0], [x, 8, z], [nx, 8, nz]] as V3[];
+  });
+  const fit = fitZoneToRegion(tris, [0, 1, 0])!;
+  assert.ok(near(fit.widthMm, w, 0.2) && near(fit.heightMm, h, 0.2), `${fit.widthMm}×${fit.heightMm}`);
+  assert.ok(fit.outline && fit.outline.length >= 8, `outline ${fit.outline?.length} anchors`);
+
+  // Render the boundary curve and measure it against the IDEAL rounded
+  // rect (signed distance ≤ 0 inside). It must hug the rim — anything
+  // melting corners or bowing edges inward strays several millimetres.
+  const sdf = (u: number, v: number) => {
+    const qx = Math.abs(u) - (w / 2 - r), qy = Math.abs(v) - (h / 2 - r);
+    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+  };
+  let worst = 0;
+  for (const seg of closedCurveSegments(fit.outline!)) {
+    for (let t = 0; t <= 1; t += 0.1) {
+      const [u, v] = curvePoint(seg, t);
+      // note: the fit stores v in the zone frame (v up = −z here), but the
+      // rounded rect is symmetric, so the sdf reads the same either way.
+      worst = Math.max(worst, Math.abs(sdf(u, v)));
+    }
+  }
+  assert.ok(worst < 1.5, `curve strays ${worst.toFixed(2)}mm from the face rim`);
 });
 
 test('degenerate input fits nothing', () => {

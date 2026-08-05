@@ -20,20 +20,41 @@ mkdirSync(OUT, { recursive: true });
 const boxXml = (verts, tris) =>
   `<vertices>${verts.map(([x, y, z]) => `<vertex x="${x}" y="${y}" z="${z}"/>`).join('')}</vertices>` +
   `<triangles>${tris.map(([a, b, c]) => `<triangle v1="${a}" v2="${b}" v3="${c}"/>`).join('')}</triangles>`;
-// A 60×45×12 plate with 10mm chamfered corners — the top face is an
-// octagon, so the placed zone must bring the rim along as its mask.
-const OCT = [[10, 0], [50, 0], [60, 10], [60, 35], [50, 45], [10, 45], [0, 35], [0, 10]];
-const octPrism = () => {
-  const verts = [...OCT.map(([x, y]) => [x, y, 0]), ...OCT.map(([x, y]) => [x, y, 12])];
+// A 60×45×12 plate with r=10 ROUNDED corners (arcs tessellated at ~6.4°)
+// — the user's real shape: the placed zone must bring the rounded rim
+// along as its mask without melting it into a blob.
+const RIM = [];
+{
+  const w = 60, h = 45, r = 10;
+  const corner = (cx, cy, a0) => {
+    for (let k = 0; k < 14; k++) {
+      const a = a0 + (k / 14) * (Math.PI / 2);
+      RIM.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+    }
+  };
+  corner(w - r, h - r, 0);
+  corner(r, h - r, Math.PI / 2);
+  corner(r, r, Math.PI);
+  corner(w - r, r, 3 * Math.PI / 2);
+}
+const roundedPrism = () => {
+  const n = RIM.length;
+  const verts = [
+    ...RIM.map(([x, y]) => [x, y, 0]), ...RIM.map(([x, y]) => [x, y, 12]),
+    [30, 22.5, 0], [30, 22.5, 12],
+  ];
+  const bc = 2 * n, tc = 2 * n + 1;
   const tris = [];
-  for (let i = 1; i < 7; i++) { tris.push([8, 8 + i, 8 + i + 1], [0, i + 1, i]); }
-  for (let i = 0; i < 8; i++) { const j = (i + 1) % 8; tris.push([i, j, 8 + j], [i, 8 + j, 8 + i]); }
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    tris.push([tc, n + i, n + j], [bc, j, i], [i, j, n + j], [i, n + j, n + i]);
+  }
   return boxXml(verts, tris);
 };
 const FIXTURE_3MF = zipSync({
   '3D/3dmodel.model': new TextEncoder().encode(
     `<?xml version="1.0"?><model unit="millimeter">
-     <resources><object id="1" name="Base" type="model"><mesh>${octPrism()}</mesh></object></resources>
+     <resources><object id="1" name="Base" type="model"><mesh>${roundedPrism()}</mesh></object></resources>
      <build><item objectid="1"/></build>
     </model>`),
 });
@@ -106,11 +127,12 @@ const fitted = await page.evaluate(() => {
 });
 check('zone conforms to the picked face (60×45, no spin)',
   Math.abs(fitted.w - 60) < 0.6 && Math.abs(fitted.h - 45) < 0.6 && Math.abs(fitted.spin) < 0.5, fitted);
-check('…and the chamfered rim arrives as the zone mask', fitted.mask >= 6 && fitted.mask <= 24, fitted);
-check('mask anchors cut the corners — nothing overhangs the chamfers',
+check('…and the rounded rim arrives as the zone mask', fitted.mask >= 8 && fitted.mask <= 32, fitted);
+check('mask anchors follow the corner arcs — inside the face, clear of square corners',
   await page.evaluate(() => {
     const z = (window).__studio.manifest.options.find((o) => o.type === 'upload');
-    return z.boundary.every(([u, v]) => Math.abs(u) + Math.abs(v) < 45 && Math.abs(u) <= 30.1 && Math.abs(v) <= 22.6);
+    return z.boundary.every(([u, v]) => Math.abs(u) <= 30.1 && Math.abs(v) <= 22.6
+      && Math.hypot(Math.abs(u) - 30, Math.abs(v) - 22.5) > 2);
   }), '');
 
 // Widen the zone, then check the plane pose.

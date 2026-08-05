@@ -124,7 +124,7 @@ export function fitZoneToRegion(triangles: Vec3[][], normal: Vec3): ZoneFit | nu
         const dv = -u * sin + v * cos - vcR;
         return [du * 0.99, dv * 0.99];
       });
-      outline = resampleLoop(zoneFrame, 20)
+      outline = outlineAnchors(zoneFrame, Math.max(width, height))
         .map(([u, v]): [number, number] => [round1(u), round1(v)]);
       if (outline.length < 3 || outline.length > 32) outline = undefined;
     }
@@ -188,47 +188,80 @@ function walkLoop(edges: Array<[number, number, number, number]>): Array<[number
 }
 
 /**
- * Resample the rim at uniform arc-length. The boundary renders as a
- * uniform Catmull-Rom curve, which KINKS through unevenly spaced anchors
- * (a corner-preserving simplify leaves long straights against short arc
- * chords, and the curve snags exactly at the corners) — evenly spaced
- * anchors cannot kink: straights stay straight, corners round gently, and
- * the count stays draggable.
+ * Turn the raw rim polygon into boundary anchors that keep the SHAPE.
+ *
+ * Two failure modes bracket this problem. Uniform resampling + smoothing
+ * follows tessellation zigzag or, smoothed, CONTRACTS the loop — corners
+ * melt and the veil reads far rounder than the face. Aggressive
+ * corner-preserving simplification leaves long straights against short
+ * corner chords, and the uniform Catmull-Rom the boundary renders with
+ * kinks at exactly those spacing jumps. So: simplify with a SMALL
+ * tolerance (drops tessellation noise, keeps the corner arcs' own
+ * points), then split any long chord so spacing stays balanced and the
+ * curve cannot kink. No smoothing pass — nothing contracts.
  */
-function resampleLoop(loop: Array<[number, number]>, count: number): Array<[number, number]> {
-  const lens: number[] = [];
-  let perimeter = 0;
-  for (let i = 0; i < loop.length; i++) {
-    const a = loop[i], b = loop[(i + 1) % loop.length];
-    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    lens.push(l);
-    perimeter += l;
+function outlineAnchors(loop: Array<[number, number]>, maxDim: number): Array<[number, number]> {
+  // Ramer-Douglas-Peucker on an open run.
+  const dp = (pts: Array<[number, number]>, tol: number): Array<[number, number]> => {
+    if (pts.length <= 2) return pts;
+    const [ax, ay] = pts[0];
+    const [bx, by] = pts[pts.length - 1];
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    let worst = 0, at = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const d = Math.abs((bx - ax) * (ay - pts[i][1]) - (ax - pts[i][0]) * (by - ay)) / len;
+      if (d > worst) { worst = d; at = i; }
+    }
+    if (worst <= tol) return [pts[0], pts[pts.length - 1]];
+    const left = dp(pts.slice(0, at + 1), tol);
+    return [...left.slice(0, -1), ...dp(pts.slice(at), tol)];
+  };
+  const dpClosed = (pts: Array<[number, number]>, tol: number): Array<[number, number]> => {
+    // Split the ring at its two most distant points so DP sees open runs.
+    let aIdx = 0, far = -1;
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]);
+      if (d > far) { far = d; aIdx = i; }
+    }
+    let bIdx = 0; far = -1;
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.hypot(pts[i][0] - pts[aIdx][0], pts[i][1] - pts[aIdx][1]);
+      if (d > far) { far = d; bIdx = i; }
+    }
+    const [lo, hi] = aIdx < bIdx ? [aIdx, bIdx] : [bIdx, aIdx];
+    const half1 = pts.slice(lo, hi + 1);
+    const half2 = [...pts.slice(hi), ...pts.slice(0, lo + 1)];
+    return [...dp(half1, tol).slice(0, -1), ...dp(half2, tol).slice(0, -1)];
+  };
+
+  // Small tolerance: above the tessellation noise, below the corner arcs.
+  let tol = Math.max(0.05, maxDim * 0.004);
+  let pts = dpClosed(loop, tol);
+  for (let i = 0; i < 5 && pts.length > 28; i++) {
+    tol *= 1.7;
+    pts = dpClosed(loop, tol);
   }
-  if (!(perimeter > 0)) return [];
+  if (pts.length < 3) return pts;
+
+  // Balance the spacing: split chords much longer than the median so the
+  // uniform Catmull-Rom never sees a spacing cliff at a corner.
+  const chord = (i: number) => {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    return Math.hypot(b[0] - a[0], b[1] - a[1]);
+  };
+  const sorted = pts.map((_, i) => chord(i)).sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)] || 1;
   const out: Array<[number, number]> = [];
-  const step = perimeter / count;
-  let seg = 0, into = 0;
-  for (let k = 0; k < count; k++) {
-    let target = k * step;
-    while (target > into + lens[seg]) {
-      into += lens[seg];
-      seg = (seg + 1) % loop.length;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    out.push(a);
+    const len = chord(i);
+    const splits = Math.min(4, Math.floor(len / (2.5 * median)));
+    for (let k = 1; k <= splits && out.length < 32; k++) {
+      const t = k / (splits + 1);
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
     }
-    const a = loop[seg], b = loop[(seg + 1) % loop.length];
-    const t = lens[seg] > 0 ? (target - into) / lens[seg] : 0;
-    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
-  }
-  // The rim of a welded region follows the mesh triangulation, which
-  // zigzags where a fillet meets the flat — smoothing the samples keeps
-  // the boundary reading as the shape, not the tessellation.
-  for (let pass = 0; pass < 2; pass++) {
-    const prev = out.map((p) => [...p] as [number, number]);
-    for (let i = 0; i < out.length; i++) {
-      const a = prev[(i + out.length - 1) % out.length];
-      const b = prev[i];
-      const c = prev[(i + 1) % out.length];
-      out[i] = [(a[0] + 2 * b[0] + c[0]) / 4, (a[1] + 2 * b[1] + c[1]) / 4];
-    }
+    if (out.length >= 32) break;
   }
   return out;
 }
