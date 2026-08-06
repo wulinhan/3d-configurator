@@ -29,6 +29,8 @@ export function Select(props: {
   /** Shown when value matches no option (e.g. "follows another part"). */
   placeholder?: string;
   compact?: boolean;
+  /** Greys the control out — used when there is nothing to choose from. */
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -90,7 +92,7 @@ export function Select(props: {
     // else changes.
     <div className={`ui-select${props.compact ? ' compact' : ''}`} ref={rootRef} onClick={(e) => e.preventDefault()}>
       <button
-        type="button" className="ui-select-btn" data-testid={props.testId}
+        type="button" className="ui-select-btn" data-testid={props.testId} disabled={props.disabled}
         role="combobox" aria-expanded={open} aria-haspopup="listbox" aria-label={props.ariaLabel}
         onClick={() => setOpen((o) => !o)} onKeyDown={onKey}
       >
@@ -103,7 +105,7 @@ export function Select(props: {
           <path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
-      {open && (
+      {open && !props.disabled && (
         <div className="ui-select-pop" role="listbox" aria-label={props.ariaLabel} ref={listRef}>
           {props.options.map((o, i) => (
             <button

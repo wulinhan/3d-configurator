@@ -305,6 +305,9 @@ export function validateManifest(input: unknown): ValidationResult {
       if (o.colourHex != null && !HEX.test(o.colourHex)) {
         err(`${at}.colourHex`, `"${o.colourHex}" is not #RRGGBB`);
       }
+      if (o.customerColour != null && typeof o.customerColour !== 'boolean') {
+        err(`${at}.customerColour`, 'must be true or absent');
+      }
       if (o.perChar) {
         if (o.perChar.mode != null && !['line', 'circle'].includes(o.perChar.mode)) {
           err(`${at}.perChar.mode`, 'must be "line" or "circle"');

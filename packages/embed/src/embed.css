@@ -81,6 +81,13 @@
   transition: box-shadow .15s, border-color .15s;
 }
 .cfg-swatch:hover { border-color: #c5c2bb; }
+/* "Same as the part" — no colour of its own, so it reads as a slash. */
+.cfg-swatch-match {
+  background:
+    linear-gradient(to top right, transparent calc(50% - 1px), #b9b5ad calc(50% - 1px),
+      #b9b5ad calc(50% + 1px), transparent calc(50% + 1px)) no-repeat,
+    #fff;
+}
 .cfg-swatch.is-selected {
   border-color: #fff;
   box-shadow: 0 0 0 2px var(--cfg-accent);

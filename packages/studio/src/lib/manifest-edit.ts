@@ -369,6 +369,17 @@ export function partToOrigin(manifest: Manifest, partId: string, raw: Map<string
   return nudge(manifest, partId, deltas);
 }
 
+/** Is the part already centred on X/Z and sitting on the ground? The
+ * "To origin" button reads this to disable itself rather than offering a
+ * move that would do nothing. */
+export function isPartAtOrigin(manifest: Manifest, partId: string, raw: Map<string, PartBounds>): boolean {
+  const box = resolveLayout(manifest, raw).get(partId)?.box;
+  if (!box) return false;
+  return Math.abs(box.min[0] + box.max[0]) < 1e-6
+    && Math.abs(box.min[1]) < 1e-6
+    && Math.abs(box.min[2] + box.max[2]) < 1e-6;
+}
+
 /** Bring a whole assembly to the origin, moving it as one rigid thing. */
 export function groupToOrigin(manifest: Manifest, groupId: string, raw: Map<string, PartBounds>): Manifest {
   const group = manifest.groups?.find((g) => g.id === groupId);
@@ -1330,22 +1341,32 @@ export function addTextSlot(
 export type TextSlotPatch = Partial<Pick<TextOption,
   'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'bendDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label' | 'style'>>
   & { perChar?: { mode?: 'line' | 'circle'; axis?: Axis; gapMm?: number; stepDeg?: number } | null }
-  & { colourHex?: Hex | null };
+  & { colourHex?: Hex | null }
+  & { customerColour?: boolean | null };
 
 export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlotPatch): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
   return edit(manifest, (draft) => {
     const o = draft.options.find((x) => x.id === optionId) as TextOption;
-    const { perChar, colourHex, ...rest } = patch;
+    const { perChar, colourHex, customerColour, ...rest } = patch;
     Object.assign(o, rest);
     if (perChar === null) delete o.perChar;
     else if (perChar !== undefined) o.perChar = perChar;
     if (colourHex === null) delete o.colourHex;
     else if (colourHex !== undefined) o.colourHex = colourHex;
+    // Locking the colour back down drops the opening pick with it — a
+    // locked slot wears the part's colours, full stop.
+    if (customerColour === null || customerColour === false) { delete o.customerColour; delete o.colourHex; }
+    else if (customerColour) o.customerColour = true;
     // Bend and a drawn path are alternative baselines — turning the Bend
     // dial straightens away any drawn curve.
     if (patch.bendDeg !== undefined) delete o.path;
+    // The example text is what customers see and type back, so it can never
+    // outrun the limit: shortening maxLength trims it to fit.
+    if (o.placeholder && o.placeholder.length > (o.maxLength ?? 20)) {
+      o.placeholder = o.placeholder.slice(0, o.maxLength ?? 20);
+    }
     // An emptied field falls back to its default rather than validating as 0.
     for (const key of ['sinkMm', 'rotationDeg', 'bendDeg', 'priceDelta', 'pricePerChar'] as const) {
       if (o[key] === 0) delete o[key];

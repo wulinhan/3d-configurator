@@ -12,7 +12,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 
 import type { Manifest, Part, TextOption, UploadOption } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
-import { partColours, visibleParts, parseUploadState, type UploadState, type Selections } from './state.ts';
+import { partColours, visibleParts, parseUploadState, textColour, type UploadState, type Selections } from './state.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
 import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
 import { fitZoneToRegion, type ZoneFit } from './zone-fit.ts';
@@ -1131,10 +1131,13 @@ export class Viewer {
         this.dropDebossFloor(option.id);
         continue;
       }
+      // The slot's colour: the customer's pick when the merchant opened that
+      // choice, else the pinned colour, else undefined (follows the part).
+      const spec: TextOption = { ...option, colourHex: textColour(this.manifest, selections, option) };
       if (option.perChar) {
         this.dropTextMesh(option.id); // the slot may have just been switched over
         this.dropDebossFloor(option.id);
-        this.syncPerChar(option, carrier, text);
+        this.syncPerChar(spec, carrier, text);
       } else if ((option.style ?? 'emboss') === 'deboss') {
         // Engraved: no glyph mesh — the part's own geometry is cut, and the
         // pocket floor rides as its own mesh in the slot's text colour.
@@ -1142,12 +1145,12 @@ export class Viewer {
         this.dropTextMesh(option.id);
         this.dropPerChar(option.id);
         const jobs = debossJobs.get(option.part) ?? [];
-        jobs.push({ spec: { ...option }, text });
+        jobs.push({ spec, text });
         debossJobs.set(option.part, jobs);
       } else {
         this.dropPerChar(option.id);
         this.dropDebossFloor(option.id);
-        this.syncSingle(option, carrier, text);
+        this.syncSingle(spec, carrier, text);
       }
     }
 

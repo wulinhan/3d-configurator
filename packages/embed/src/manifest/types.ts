@@ -294,10 +294,20 @@ export interface TextOption {
   /** Ghost text in the input; also what the Studio previews on the model. */
   placeholder?: string;
   /**
-   * The text's own colour. Unset, the text shares the carrier part's
-   * material and colours with it; set, it renders in this fixed finish.
+   * The text's own colour. Unset — the default — the text shares the
+   * carrier part's material and colours with it. Set, it renders in this
+   * fixed finish (and, with `customerColour`, that is the colour the
+   * panel opens on).
    */
   colourHex?: Hex;
+  /**
+   * Let CUSTOMERS pick the text's colour: the panel shows the product's
+   * palette under the text box, and their choice is stored alongside the
+   * typed string (selection key `<id>:colour`, empty = follow the part).
+   * Unset, the colour is locked to what the merchant set — the carrier
+   * part's colours, or `colourHex` when pinned.
+   */
+  customerColour?: boolean;
   /**
    * One piece per letter: the carrier part — or, if it belongs to an
    * assembly, the WHOLE assembly — becomes a TEMPLATE, and every character

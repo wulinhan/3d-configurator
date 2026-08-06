@@ -96,6 +96,13 @@ input, select { font: inherit; }
 }
 .gizmo-sep { width: 1px; flex: none; align-self: stretch; margin: 4px 3px; background: var(--line); }
 
+/* A number box is also a scrubber: sideways drag walks the value. The
+ * cursor advertises it, and a live scrub keeps that cursor everywhere so
+ * the pointer leaving the box mid-drag doesn't flicker back to a caret. */
+.field input[type="number"] { cursor: ew-resize; }
+.field.is-scrubbing input[type="number"] { cursor: ew-resize; user-select: none; }
+.field.is-scrubbing { --scrub: 1; }
+
 /* Baseline-shaping dots: anchors drag, midpoints insert. The overlay is
  * pointer-transparent so orbiting keeps working between the dots. */
 .shape-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
@@ -402,6 +409,8 @@ input, select { font: inherit; }
 }
 .ui-select.compact .ui-select-btn { padding: 6px 7px; font-size: 11px; gap: 5px; }
 .ui-select-btn:hover { border-color: #c5c2bb; }
+.ui-select-btn:disabled { opacity: .45; cursor: not-allowed; }
+.ui-select-btn:disabled:hover { border-color: var(--line); }
 .ui-select-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ui-select-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ui-select-caret { flex: none; color: var(--ink2); }

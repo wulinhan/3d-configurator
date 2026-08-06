@@ -11,7 +11,7 @@ import {
   makePartOptional, makePartRequired, setChoicePrice,
   setDefaultSwatch, setCustomColour,
   ungroup, renameGroup, nudgeGroup, partToOrigin, groupToOrigin,
-  matchPose, partCentreMm, setPartCentre,
+  matchPose, partCentreMm, setPartCentre, isPartAtOrigin,
   nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
   setTextSlot, removeTextSlot, setTextPath, type TextSlotPatch,
   setImageZone, nudgeImageZone, removeImageZone, type ImageZonePatch,
@@ -52,7 +52,7 @@ export type RepeatOpts = { count: number; mode: 'line' | 'circle'; axis?: Axis; 
 function EntrySizeSection(props: {
   entryId: string;
   project: Project;
-  act: (fn: () => Manifest) => void;
+  act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
 }) {
   const [lock, setLock] = useState(true);
   let size: [number, number, number];
@@ -78,8 +78,8 @@ function EntrySizeSection(props: {
           <NumberField
             key={label} label={label} value={size[axis]} suffix="mm"
             testId={`set-size-${label.toLowerCase()}`}
-            onCommit={(mm) => props.act(() =>
-              withEntrySizeMm(props.project.manifest, props.entryId, axis as Axis, mm, props.project.raw, lock))}
+            onCommit={(mm, o) => props.act(() =>
+              withEntrySizeMm(props.project.manifest, props.entryId, axis as Axis, mm, props.project.raw, lock), o)}
           />
         ))}
       </div>
@@ -175,8 +175,10 @@ export function GroupEditor(props: {
   const [nudgeTick, setNudgeTick] = useState(0);
   if (!group) return null;
 
-  const act = (fn: () => Manifest) => {
-    try { props.onChange(fn()); setError(null); }
+  // `opts` rides through so a field scrub (many steps, one gesture) lands as
+  // a single history entry instead of one per step.
+  const act = (fn: () => Manifest, opts?: SetManifestOptions) => {
+    try { props.onChange(fn(), opts); setError(null); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
 
@@ -246,8 +248,10 @@ export function VariantEditor(props: {
   const [nudgeTick, setNudgeTick] = useState(0);
   if (!option || option.role !== 'variant') return null;
 
-  const act = (fn: () => Manifest) => {
-    try { props.onChange(fn()); setError(null); }
+  // `opts` rides through so a field scrub (many steps, one gesture) lands as
+  // a single history entry instead of one per step.
+  const act = (fn: () => Manifest, opts?: SetManifestOptions) => {
+    try { props.onChange(fn(), opts); setError(null); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
 
@@ -349,9 +353,15 @@ export function PartEditor(props: {
   // Repeating a bundled part would tear it out of its set — repeat the whole
   // assembly / variant set from ITS editor instead.
   const inGroup = manifest.groups?.some((g) => g.parts.includes(part.id)) ?? false;
+  // Controls that need something to act on: matching wants a second part,
+  // and moving to the origin wants the part to not already be there.
+  const hasOtherParts = manifest.parts.length > 1;
+  const atOrigin = isPartAtOrigin(manifest, part.id, raw);
 
-  const act = (fn: () => Manifest) => {
-    try { props.onChange(fn()); setError(null); }
+  // `opts` rides through so a field scrub (many steps, one gesture) lands as
+  // a single history entry instead of one per step.
+  const act = (fn: () => Manifest, opts?: SetManifestOptions) => {
+    try { props.onChange(fn(), opts); setError(null); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
 
@@ -375,7 +385,7 @@ export function PartEditor(props: {
             <NumberField
               key={label} label={label} value={size[axis]} suffix="mm"
               testId={`size-${label.toLowerCase()}`}
-              onCommit={(mm) => props.onChange(withSizeMm(manifest, part.id, axis as Axis, mm, bounds, lock))}
+              onCommit={(mm, o) => props.onChange(withSizeMm(manifest, part.id, axis as Axis, mm, bounds, lock), o)}
             />
           ))}
         </div>
@@ -394,16 +404,21 @@ export function PartEditor(props: {
           <Select
             ariaLabel="Match position and rotation of" testId="match-select"
             value={matchFrom} placeholder="Match another part…"
+            // Nothing to match against when this is the only part in the scene.
+            disabled={!hasOtherParts}
             options={manifest.parts.filter((p) => p.id !== part.id).map((p) => ({ value: p.id, label: p.label }))}
             onChange={setMatchFrom}
           />
           <button
-            className="mini" data-testid="match-apply" disabled={!matchFrom}
-            title="Land centre-on-centre with the same rotation; follows if that part later moves"
+            className="mini" data-testid="match-apply" disabled={!matchFrom || !hasOtherParts}
+            title={hasOtherParts
+              ? 'Land centre-on-centre with the same rotation; follows if that part later moves'
+              : 'Add a second part to match against'}
             onClick={() => { act(() => matchPose(manifest, matchFrom, part.id)); setMatchFrom(''); }}
           >Apply</button>
           <button
-            className="mini" data-testid="to-origin" title="Centre on X/Y, sit on the ground at Z 0 — anchors survive"
+            className="mini" data-testid="to-origin" disabled={atOrigin}
+            title={atOrigin ? 'Already at the origin' : 'Centre on X/Y, sit on the ground at Z 0 — anchors survive'}
             onClick={() => act(() => partToOrigin(manifest, part.id, raw))}
           >To origin</button>
         </div>
@@ -416,10 +431,10 @@ export function PartEditor(props: {
             <NumberField
               key={label} label={axisTint(label)} value={rotation[axis]} suffix="°" step={5}
               testId={`rot-${label.toLowerCase()}`}
-              onCommit={(deg) => {
+              onCommit={(deg, o) => {
                 const next = [...rotation] as [number, number, number];
                 next[axis] = deg;
-                props.onChange(withRotation(manifest, part.id, next));
+                props.onChange(withRotation(manifest, part.id, next), o);
               }}
             />
           ))}
@@ -455,7 +470,7 @@ export function PartEditor(props: {
               label="Custom colour surcharge" value={colourOption.custom?.priceDelta ?? 0}
               suffix={manifest.pricing.currency} step={1}
               testId={`custom-price-${colourOption.id}`}
-              onCommit={(v) => props.onChange(setCustomColour(manifest, colourOption.id, { allowed: true, priceDelta: v }))}
+              onCommit={(v, o) => props.onChange(setCustomColour(manifest, colourOption.id, { allowed: true, priceDelta: v }), o)}
             />
           )}
         </section>
@@ -472,7 +487,7 @@ export function PartEditor(props: {
             label="Extra when chosen" value={variantOf.choices.find((c) => c.id === part.id)?.priceDelta ?? 0}
             suffix={manifest.pricing.currency} step={1}
             testId="variant-price"
-            onCommit={(price) => props.onChange(setChoicePrice(manifest, variantOf.id, part.id, price || undefined))}
+            onCommit={(price, o) => props.onChange(setChoicePrice(manifest, variantOf.id, part.id, price || undefined), o)}
           />
         </section>
       ) : (
@@ -493,7 +508,7 @@ export function PartEditor(props: {
             <NumberField
               label="Extra when selected" value={addonPrice} suffix={manifest.pricing.currency} step={1}
               testId="addon-price"
-              onCommit={(price) => props.onChange(setChoicePrice(manifest, addon.id, 'yes', price || undefined))}
+              onCommit={(price, o) => props.onChange(setChoicePrice(manifest, addon.id, 'yes', price || undefined), o)}
             />
           )}
         </section>
@@ -549,12 +564,12 @@ function TextSlotEditor(props: {
   slot: TextOption;
   manifest: Manifest;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
-  act: (fn: () => Manifest) => void;
+  act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
   onShapeText: (optionId: string | null) => void;
   shaping: boolean;
 }) {
   const { slot, manifest, act } = props;
-  const patch = (p: TextSlotPatch) => act(() => setTextSlot(manifest, slot.id, p));
+  const patch = (p: TextSlotPatch, o?: SetManifestOptions) => act(() => setTextSlot(manifest, slot.id, p), o);
   return (
     <div className="text-slot" data-testid={`text-slot-${slot.id}`}>
       <label className="field wide">
@@ -578,23 +593,23 @@ function TextSlotEditor(props: {
         </label>
         <NumberField
           label="Size" value={slot.sizeMm} suffix="mm" testId={`text-size-${slot.id}`}
-          onCommit={(v) => patch({ sizeMm: v })}
+          onCommit={(v, o) => patch({ sizeMm: v }, o)}
         />
         <NumberField
           label="Depth" value={slot.depthMm} suffix="mm" testId={`text-depth-${slot.id}`}
-          onCommit={(v) => patch({ depthMm: v })}
+          onCommit={(v, o) => patch({ depthMm: v }, o)}
         />
         {(slot.style ?? 'emboss') === 'emboss' && (
           <NumberField
             label="Sink" value={slot.sinkMm ?? 0} suffix="mm" testId={`text-sink-${slot.id}`}
-            onCommit={(v) => patch({ sinkMm: v })}
+            onCommit={(v, o) => patch({ sinkMm: v }, o)}
           />
         )}
       </div>
       <div className="field-row">
         <NumberField
           label="Rotate" value={slot.rotationDeg ?? 0} suffix="°" step={5} testId={`text-spin-${slot.id}`}
-          onCommit={(v) => patch({ rotationDeg: v })}
+          onCommit={(v, o) => patch({ rotationDeg: v }, o)}
         />
         {!slot.perChar && (
           // The arc the whole run bends through: + arches up, − smiles.
@@ -602,12 +617,12 @@ function TextSlotEditor(props: {
           // Turning the dial straightens away any drawn baseline curve.
           <NumberField
             label="Bend" value={slot.bendDeg ?? 0} suffix="°" step={15} testId={`text-bend-${slot.id}`}
-            onCommit={(v) => patch({ bendDeg: v })}
+            onCommit={(v, o) => patch({ bendDeg: v }, o)}
           />
         )}
         <NumberField
           label="Max letters" value={slot.maxLength ?? 20} step={1} testId={`text-max-${slot.id}`}
-          onCommit={(v) => patch({ maxLength: Math.round(v) })}
+          onCommit={(v, o) => patch({ maxLength: Math.round(v) }, o)}
         />
       </div>
       {!slot.perChar && (
@@ -633,19 +648,31 @@ function TextSlotEditor(props: {
           )}
         </div>
       )}
-      <label className="field wide">
-        <span className="field-label">Text colour</span>
-        <Select
-          ariaLabel="Text colour" testId={`text-colour-${slot.id}`}
-          value={slot.colourHex ?? ''}
-          placeholder="Match the part"
-          options={[
-            { value: '', label: 'Match the part' },
-            ...(manifest.palettes?.[0]?.swatches ?? []).map((s) => ({ value: s.hex, label: s.name, chip: s.hex })),
-          ]}
-          onChange={(v) => patch({ colourHex: v === '' ? null : (v as `#${string}`) })}
+      {/* Text takes the part's colours by default — no control needed for
+        * the common case. Ticking the box hands the choice to customers;
+        * left unticked the colour is locked to what the part wears. */}
+      <label className="lock">
+        <input
+          type="checkbox" checked={!!slot.customerColour} data-testid={`text-colour-choice-${slot.id}`}
+          onChange={(e) => patch({ customerColour: e.target.checked || null })}
         />
+        Customers can choose the text colour
       </label>
+      {slot.customerColour && (
+        <label className="field wide">
+          <span className="field-label">Customers open with</span>
+          <Select
+            ariaLabel="Text colour customers open with" testId={`text-colour-${slot.id}`}
+            value={slot.colourHex ?? ''}
+            placeholder="Same as the part"
+            options={[
+              { value: '', label: 'Same as the part' },
+              ...(manifest.palettes?.[0]?.swatches ?? []).map((s) => ({ value: s.hex, label: s.name, chip: s.hex })),
+            ]}
+            onChange={(v) => patch({ colourHex: v === '' ? null : (v as `#${string}`) })}
+          />
+        </label>
+      )}
       <label className="field wide">
         <span className="field-label">Example text (customers see it as a hint)</span>
         <input
@@ -658,12 +685,12 @@ function TextSlotEditor(props: {
         <NumberField
           label="Extra when used" value={slot.priceDelta ?? 0} suffix={manifest.pricing.currency} step={1}
           testId={`text-price-${slot.id}`}
-          onCommit={(v) => patch({ priceDelta: v })}
+          onCommit={(v, o) => patch({ priceDelta: v }, o)}
         />
         <NumberField
           label="Per letter" value={slot.pricePerChar ?? 0} suffix={manifest.pricing.currency} step={0.5}
           testId={`text-perchar-${slot.id}`}
-          onCommit={(v) => patch({ pricePerChar: v })}
+          onCommit={(v, o) => patch({ pricePerChar: v }, o)}
         />
       </div>
       <label className="lock">
@@ -724,13 +751,13 @@ function TextSlotEditor(props: {
 function ImageZoneEditor(props: {
   zone: UploadOption;
   manifest: Manifest;
-  act: (fn: () => Manifest) => void;
+  act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
 }) {
   const { zone, manifest, act } = props;
   // The slide fields are delta inputs: commit moves the zone, then the field
   // snaps back to 0 (the key tick remounts them) ready for the next step.
   const [tick, setTick] = useState(0);
-  const patch = (p: ImageZonePatch) => act(() => setImageZone(manifest, zone.id, p));
+  const patch = (p: ImageZonePatch, o?: SetManifestOptions) => act(() => setImageZone(manifest, zone.id, p), o);
   const slide = (du: number, dv: number) => {
     act(() => nudgeImageZone(manifest, zone.id, du, dv));
     setTick((t) => t + 1);
@@ -740,15 +767,15 @@ function ImageZoneEditor(props: {
       <div className="field-row">
         <NumberField
           label="Width" value={zone.widthMm} suffix="mm" testId={`image-width-${zone.id}`}
-          onCommit={(v) => patch({ widthMm: v })}
+          onCommit={(v, o) => patch({ widthMm: v }, o)}
         />
         <NumberField
           label="Height" value={zone.heightMm} suffix="mm" testId={`image-height-${zone.id}`}
-          onCommit={(v) => patch({ heightMm: v })}
+          onCommit={(v, o) => patch({ heightMm: v }, o)}
         />
         <NumberField
           label="Rotate" value={zone.rotationDeg ?? 0} suffix="°" step={5} testId={`image-spin-${zone.id}`}
-          onCommit={(v) => patch({ rotationDeg: v })}
+          onCommit={(v, o) => patch({ rotationDeg: v }, o)}
         />
       </div>
       <div className="field-row">
@@ -768,7 +795,7 @@ function ImageZoneEditor(props: {
         <NumberField
           label="Extra when used" value={zone.priceDelta ?? 0} suffix={manifest.pricing.currency} step={1}
           testId={`image-price-${zone.id}`}
-          onCommit={(v) => patch({ priceDelta: v })}
+          onCommit={(v, o) => patch({ priceDelta: v }, o)}
         />
       </div>
       <div className="match-row">
@@ -868,7 +895,7 @@ function AxisAnchorRow(props: {
         <NumberField
           label="" value={partCentreMm(manifest, part.id, props.project.raw)[props.axis]} suffix="mm"
           testId={`pos-${axisName}`}
-          onCommit={(v) => props.onChange(setPartCentre(manifest, part.id, props.axis, v, props.project.raw))}
+          onCommit={(v, o) => props.onChange(setPartCentre(manifest, part.id, props.axis, v, props.project.raw), o)}
         />
       </div>
       {props.open && (

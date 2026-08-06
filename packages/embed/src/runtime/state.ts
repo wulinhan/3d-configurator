@@ -18,12 +18,47 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 
 export const isCustomColour = (value: string): boolean => HEX.test(value);
 
+/**
+ * Where a text slot's CUSTOMER-chosen colour lives in the selections map.
+ * The slot already owns its id (the typed string), so its colour rides a
+ * derived key. An empty value means "follow the carrier part" — what every
+ * slot does until the merchant opens the choice up.
+ */
+export const textColourKey = (optionId: string): string => `${optionId}:colour`;
+
+/** Every #RRGGBB the merchant put in a palette — the allowlist a customer's
+ * text colour must land in, so a hand-edited payload cannot paint the model
+ * a colour the product does not sell. */
+function paletteHexes(manifest: Manifest): Set<string> {
+  const out = new Set<string>();
+  for (const p of manifest.palettes ?? []) {
+    for (const s of p.swatches) if (s.available !== false) out.add(s.hex.toUpperCase());
+  }
+  return out;
+}
+
+/** The colour a text slot renders in: the customer's pick when the slot
+ * opens that choice, otherwise the merchant's pinned colour — and when
+ * neither, undefined, meaning the text shares the carrier part's material. */
+export function textColour(manifest: Manifest, selections: Selections, option: Option): Hex | undefined {
+  if (option.type !== 'text') return undefined;
+  if (!option.customerColour) return option.colourHex;
+  const picked = selections[textColourKey(option.id)] ?? '';
+  if (picked && paletteHexes(manifest).has(picked.toUpperCase())) return picked as Hex;
+  return picked ? option.colourHex : undefined;
+}
+
 /** Every option's starting value, before the customer touches anything. */
 export function defaultSelections(manifest: Manifest): Selections {
   const out: Selections = {};
   for (const o of manifest.options) {
     if (isColour(o) || isChoice(o)) out[o.id] = o.default;
-    else if (o.type === 'text' || o.type === 'upload') out[o.id] = '';
+    else if (o.type === 'text' || o.type === 'upload') {
+      out[o.id] = '';
+      // A slot whose colour customers choose opens on the merchant's pick;
+      // empty means it follows the part, like a locked slot always does.
+      if (o.type === 'text' && o.customerColour) out[textColourKey(o.id)] = o.colourHex ?? '';
+    }
   }
   return out;
 }
@@ -178,6 +213,16 @@ export function coloursInUse(manifest: Manifest, selections: Selections): Array<
  * should not silently un-pick the colour.
  */
 export function applySelection(manifest: Manifest, selections: Selections, optionId: string, value: string): void {
+  // A text slot's colour rides a derived key; only palette colours (or
+  // "follow the part") are accepted, whatever a host page posts in.
+  if (optionId.endsWith(':colour')) {
+    const slot = manifest.options.find(
+      (o) => o.type === 'text' && o.customerColour && textColourKey(o.id) === optionId);
+    if (slot) {
+      selections[optionId] = paletteHexes(manifest).has(value.toUpperCase()) ? value.toUpperCase() : '';
+      return;
+    }
+  }
   const option = manifest.options.find((o) => o.id === optionId);
   if (option?.type === 'text') {
     selections[optionId] = sanitiseText(value, option.maxLength ?? 20);
@@ -299,6 +344,16 @@ export function buildPayload(manifest: Manifest, selections: Selections): Select
     if (isColour(o)) {
       const colour = resolveColour(manifest, selections, o);
       if (colour) colourNames[o.id] = colour.name;
+    }
+    // A customer-chosen text colour is part of the order, so it travels
+    // with the typed string — named, so the workshop reads a colour not a hex.
+    if (o.type === 'text' && o.customerColour) {
+      const key = textColourKey(o.id);
+      const hex = selections[key] ?? '';
+      resolved[key] = hex;
+      const swatch = (manifest.palettes ?? [])
+        .flatMap((p) => p.swatches).find((s) => s.hex.toUpperCase() === hex.toUpperCase());
+      if (swatch) colourNames[key] = swatch.name;
     }
   }
 

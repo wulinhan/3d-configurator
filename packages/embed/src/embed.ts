@@ -9,7 +9,7 @@ import { validateManifest } from './manifest/validate.ts';
 import { Viewer } from './runtime/viewer.ts';
 import {
   defaultSelections, resolveValue, resolveColour, coloursInUse, buildPayload,
-  visibleParts, isOptionActive, applySelection, parseUploadState,
+  visibleParts, isOptionActive, applySelection, parseUploadState, textColourKey,
   type Selections,
 } from './runtime/state.ts';
 
@@ -282,6 +282,32 @@ export async function mount(opts: MountOptions) {
     const row = el('div', 'cfg-text-row');
     row.append(input, count);
     wrap.append(row);
+
+    // When the merchant opened the colour up, the customer picks the text's
+    // finish from the product's palette. The first, swatch-less button hands
+    // it back to the carrier part — what a locked slot always does.
+    if (option.customerColour) {
+      const key = textColourKey(option.id);
+      const chosen = selections[key] ?? '';
+      const grid = el('div', 'cfg-grid');
+      const pickColour = (value: string) => {
+        applySelection(manifest, selections, key, value);
+        viewer.apply(selections);
+        render();
+        post();
+      };
+      const match = el('button', `cfg-swatch cfg-swatch-match${chosen ? '' : ' is-selected'}`);
+      match.type = 'button';
+      match.title = 'Same as the part';
+      match.setAttribute('aria-label', 'Same colour as the part');
+      match.addEventListener('click', () => pickColour(''));
+      grid.append(match);
+      for (const sw of manifest.palettes?.[0]?.swatches ?? []) {
+        if (sw.available === false) continue;
+        grid.append(swatchButton(sw.hex, sw.name, chosen.toUpperCase() === sw.hex.toUpperCase(), () => pickColour(sw.hex)));
+      }
+      wrap.append(el('p', 'cfg-note', 'Text colour'), grid);
+    }
     body.append(wrap);
   }
 
