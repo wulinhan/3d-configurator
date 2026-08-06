@@ -92,6 +92,9 @@ export async function mount(opts: MountOptions) {
     // A growing per-letter run keeps its centre of mass on the origin,
     // easing there — the customer's product grows outward from the middle.
     centreTextRuns: true,
+    // Unless the merchant saved a view, the product opens centred on the
+    // origin and fully in frame, whatever coordinates it was authored at.
+    centreOnOrigin: true,
     resolveUrl: (u) => (opts.baseUrl ? new URL(u, opts.baseUrl).href : u),
     onSelectPart: (partId) => {
       // A part whose visibility hangs on a choice (a variant, an add-on) opens

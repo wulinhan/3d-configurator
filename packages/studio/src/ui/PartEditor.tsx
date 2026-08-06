@@ -11,7 +11,7 @@ import {
   makePartOptional, makePartRequired, setChoicePrice,
   setDefaultSwatch, setCustomColour,
   ungroup, renameGroup, nudgeGroup, partToOrigin, groupToOrigin,
-  matchPose, partCentreMm, setPartCentre, isPartAtOrigin,
+  matchPose, partCentreMm, setPartCentre, isPartAtOrigin, setLockAspect,
   nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
   setTextSlot, removeTextSlot, setTextPath, type TextSlotPatch,
   setImageZone, nudgeImageZone, removeImageZone, type ImageZonePatch,
@@ -21,6 +21,7 @@ import {
 import type { Project, SetManifestOptions } from '../App.tsx';
 import { NumberField } from './fields.tsx';
 import { Select } from './controls.tsx';
+import { Section } from './section.tsx';
 
 const AXIS_LABELS = ['W', 'H', 'D'] as const; // x, y, z in canonical space
 const EDGES: AnchorEdge[] = ['min', 'center', 'max'];
@@ -62,9 +63,9 @@ function EntrySizeSection(props: {
     return null;
   }
   return (
-    <section>
-      <div className="section-head">
-        <h4>Size</h4>
+    <Section
+      title="Size" icon="size" testId="section-set-size"
+      aside={(
         <label className="lock">
           <input
             type="checkbox" checked={lock} data-testid="set-lock-aspect"
@@ -72,7 +73,8 @@ function EntrySizeSection(props: {
           />
           Lock proportions
         </label>
-      </div>
+      )}
+    >
       <div className="field-row">
         {AXIS_LABELS.map((label, axis) => (
           <NumberField
@@ -83,7 +85,7 @@ function EntrySizeSection(props: {
           />
         ))}
       </div>
-    </section>
+    </Section>
   );
 }
 
@@ -103,8 +105,7 @@ function RepeatSection(props: {
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <section>
-      <h4>Repeat</h4>
+    <Section title="Repeat" icon="repeat" testId="section-repeat">
       <p className="hint">
         {mode === 'line'
           ? `Stamps copies of this ${props.what} in a row, spaced edge-to-edge by the gap.`
@@ -155,7 +156,7 @@ function RepeatSection(props: {
         >Apply repeat</button>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
-    </section>
+    </Section>
   );
 }
 
@@ -187,8 +188,7 @@ export function GroupEditor(props: {
       <h3>{group.label} <span className="tag">assembly</span></h3>
       <p className="hint">Rename by double-clicking its name in the explorer.</p>
       <EntrySizeSection entryId={group.id} project={props.project} act={act} />
-      <section>
-        <h4>Move together</h4>
+      <Section title="Move together" icon="position" testId="section-group-move">
         <p className="hint">Shifts every part in the assembly by the given distance. Parts anchored to each other keep their joints.</p>
         <div className="match-row">
           <button
@@ -212,9 +212,8 @@ export function GroupEditor(props: {
             />
           ))}
         </div>
-      </section>
-      <section>
-        <h4>Assembly</h4>
+      </Section>
+      <Section title="Assembly" icon="assembly" testId="section-assembly">
         <p className="hint">
           Parts in an assembly move as one thing but keep their own colours.
           Splitting it up keeps every part exactly where it is.
@@ -227,7 +226,7 @@ export function GroupEditor(props: {
           >Duplicate</button>
           <button className="ghost" onClick={() => { props.onClose(); act(() => ungroup(manifest, group.id)); }}>Split up</button>
         </div>
-      </section>
+      </Section>
       <RepeatSection entryId={group.id} what="assembly" onRepeat={props.onRepeat} />
       {error && <p className="error" role="alert">{error}</p>}
     </div>
@@ -260,8 +259,7 @@ export function VariantEditor(props: {
       <h3>{option.label} <span className="tag">variants</span></h3>
       <p className="hint">Rename by double-clicking its name in the explorer.</p>
       <EntrySizeSection entryId={option.id} project={props.project} act={act} />
-      <section>
-        <h4>Move together</h4>
+      <Section title="Move together" icon="position" testId="section-group-move">
         <p className="hint">Shifts every variant by the given distance — they usually share one spot, so they travel as one.</p>
         <div className="match-row">
           <button
@@ -285,9 +283,8 @@ export function VariantEditor(props: {
             />
           ))}
         </div>
-      </section>
-      <section>
-        <h4>Variant set</h4>
+      </Section>
+      <Section title="Variant set" icon="variant" testId="section-variant-set">
         <p className="hint">
           Customers pick exactly one of these parts; its colour carries over
           when they switch. Dissolving keeps every part, always included.
@@ -300,7 +297,7 @@ export function VariantEditor(props: {
           >Duplicate</button>
           <button className="ghost" onClick={() => { props.onClose(); act(() => dissolveVariantChoice(manifest, option.id)); }}>Dissolve</button>
         </div>
-      </section>
+      </Section>
       <RepeatSection entryId={option.id} what="set" onRepeat={props.onRepeat} />
       {error && <p className="error" role="alert">{error}</p>}
     </div>
@@ -369,17 +366,20 @@ export function PartEditor(props: {
     <div className="part-editor" data-testid={`editor-${part.id}`}>
       <h3>{part.label}</h3>
 
-      <section>
-        <div className="section-head">
-          <h4>Size</h4>
+      <Section
+        title="Size" icon="size" testId="section-size"
+        aside={(
           <label className="lock">
             <input
               type="checkbox" checked={lock} data-testid="lock-aspect"
-              onChange={(e) => setLock(e.target.checked)}
+              // Persisted, not just local: the viewport's scale gizmo reads
+              // it too, so dragging a handle keeps proportions when this is on.
+              onChange={(e) => { setLock(e.target.checked); act(() => setLockAspect(manifest, part.id, e.target.checked)); }}
             />
             Lock proportions
           </label>
-        </div>
+        )}
+      >
         <div className="field-row">
           {AXIS_LABELS.map((label, axis) => (
             <NumberField
@@ -389,10 +389,9 @@ export function PartEditor(props: {
             />
           ))}
         </div>
-      </section>
+      </Section>
 
-      <section>
-        <h4>Position</h4>
+      <Section title="Position" icon="position" testId="section-position">
         {UI_AXES.map(({ label, axis }) => (
           <AxisAnchorRow
             key={label} axis={axis} uiLabel={label} {...props}
@@ -422,10 +421,9 @@ export function PartEditor(props: {
             onClick={() => act(() => partToOrigin(manifest, part.id, raw))}
           >To origin</button>
         </div>
-      </section>
+      </Section>
 
-      <section>
-        <h4>Rotation</h4>
+      <Section title="Rotation" icon="rotation" testId="section-rotation">
         <div className="field-row">
           {UI_AXES.map(({ label, axis }) => (
             <NumberField
@@ -439,11 +437,10 @@ export function PartEditor(props: {
             />
           ))}
         </div>
-      </section>
+      </Section>
 
       {colourOption && palette && (
-        <section>
-          <h4>Colour</h4>
+        <Section title="Colour" icon="colour" testId="section-colour">
           <label className="field wide">
             <span className="field-label">Customers open with</span>
             <Select
@@ -473,12 +470,11 @@ export function PartEditor(props: {
               onCommit={(v, o) => props.onChange(setCustomColour(manifest, colourOption.id, { allowed: true, priceDelta: v }), o)}
             />
           )}
-        </section>
+        </Section>
       )}
 
       {variantOf ? (
-        <section>
-          <h4>Variant set</h4>
+        <Section title="Variant set" icon="variant" testId="section-variant">
           <p className="hint">
             This part is one of the “{variantOf.label}” choices — customers pick
             which one they get. Set a surcharge for picking this part:
@@ -489,11 +485,11 @@ export function PartEditor(props: {
             testId="variant-price"
             onCommit={(price, o) => props.onChange(setChoicePrice(manifest, variantOf.id, part.id, price || undefined), o)}
           />
-        </section>
+        </Section>
       ) : (
-        <section>
-          <div className="section-head">
-            <h4>Optional add-on</h4>
+        <Section
+          title="Optional add-on" icon="addon" testId="section-addon"
+          aside={(
             <label className="lock">
               <input
                 type="checkbox" checked={!!part.visibleWhen} data-testid="addon-toggle"
@@ -503,7 +499,8 @@ export function PartEditor(props: {
               />
               Customer selects this part
             </label>
-          </div>
+          )}
+        >
           {addon && (
             <NumberField
               label="Extra when selected" value={addonPrice} suffix={manifest.pricing.currency} step={1}
@@ -511,10 +508,9 @@ export function PartEditor(props: {
               onCommit={(price, o) => props.onChange(setChoicePrice(manifest, addon.id, 'yes', price || undefined), o)}
             />
           )}
-        </section>
+        </Section>
       )}
-      <section>
-        <h4>3D text</h4>
+      <Section title="3D text" icon="text" testId="section-text">
         <p className="hint">
           Customers type; their words extrude from a flat face of this part.
           Place the sketch plane by clicking a face, then set the typeface,
@@ -533,9 +529,8 @@ export function PartEditor(props: {
             onClick={() => props.onPlaceText(part.id)}
           >＋ Place text on a face</button>
         </div>
-      </section>
-      <section>
-        <h4>Image zone</h4>
+      </Section>
+      <Section title="Image zone" icon="image" testId="section-image">
         <p className="hint">
           Customers upload an image; it is projected onto this part inside the
           zone — flat or curved, the surface takes it. Click a face to place
@@ -551,7 +546,7 @@ export function PartEditor(props: {
             onClick={() => props.onPlaceImage(part.id)}
           >＋ Place image zone on a face</button>
         </div>
-      </section>
+      </Section>
       {!inGroup && !variantOf && <RepeatSection entryId={part.id} what="part" onRepeat={props.onRepeat} />}
       {error && <p className="error" role="alert">{error}</p>}
     </div>

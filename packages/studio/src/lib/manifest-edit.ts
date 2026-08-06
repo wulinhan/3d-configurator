@@ -329,6 +329,16 @@ export function withScale(manifest: Manifest, partId: string, scale: [number, nu
   });
 }
 
+/** Remember whether a part's proportions are locked. The panel's tick box
+ * and the viewport's scale gizmo both read this, so the two agree about
+ * what dragging a scale handle should do. */
+export function setLockAspect(manifest: Manifest, partId: string, lockAspect: boolean): Manifest {
+  return edit(manifest, (draft) => {
+    const part = partOf(draft, partId);
+    part.placement = { ...part.placement, lockAspect };
+  });
+}
+
 /**
  * Shift a part by millimetre deltas — what a translate gizmo commits.
  *
@@ -417,7 +427,21 @@ export function applyGizmoPose(
   let next = manifest;
   const oldScale = part.placement?.scale ?? [1, 1, 1];
   if (pose.scale.some((v, a) => Math.abs(v - oldScale[a]) > 1e-6)) {
-    next = withScale(next, partId, pose.scale.map(round) as [number, number, number]);
+    // Junk is refused before the lock can launder it into a valid ratio.
+    if (pose.scale.some((v) => !Number.isFinite(v) || v <= 0)) {
+      throw new EditError('every scale axis must be a positive number');
+    }
+    // With proportions locked (the default), dragging ONE scale handle
+    // resizes the whole part: the handle that moved furthest from 1 sets
+    // the ratio, and every axis takes it. Unlocked, each axis is its own.
+    let scale = pose.scale;
+    if (part.placement?.lockAspect ?? true) {
+      const drive = pose.scale
+        .map((v, a) => v / (oldScale[a] || 1))
+        .reduce((best, r) => (Math.abs(Math.log(r)) > Math.abs(Math.log(best)) ? r : best), 1);
+      scale = oldScale.map((v) => v * drive) as [number, number, number];
+    }
+    next = withScale(next, partId, scale.map(round) as [number, number, number]);
   }
   const oldRotation = part.placement?.rotation ?? [0, 0, 0];
   if (pose.rotationDeg.some((v, a) => Math.abs(v - oldRotation[a]) > 1e-6)) {

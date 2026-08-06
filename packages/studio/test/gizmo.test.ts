@@ -144,10 +144,18 @@ test('rotation + translation in one drag stay consistent', () => {
 });
 
 test('scaling through the gizmo keeps the panel arithmetic honest', () => {
+  // Proportions are locked by default, so dragging ONE handle takes the
+  // whole part with it — the panel's Lock proportions box and the
+  // viewport's scale gizmo have to agree about that.
   const m = fresh();
   const pose = poseOf(m, 'cap');
   pose.scale = [3, 1, 1];
-  const next = applyGizmoPose(m, 'cap', RAW, pose);
+  const locked = applyGizmoPose(m, 'cap', RAW, pose);
+  assert.deepEqual(sizeMm(locked, 'cap', RAW.get('cap')!), [30, 12, 30]);
+
+  // Unlocked, each axis is its own: the same drag stretches width alone.
+  const free = withScale(m, 'cap', [1, 1, 1], false);
+  const next = applyGizmoPose(free, 'cap', RAW, { ...poseOf(free, 'cap'), scale: [3, 1, 1] });
   assert.deepEqual(sizeMm(next, 'cap', RAW.get('cap')!), [30, 4, 10]);
 });
 

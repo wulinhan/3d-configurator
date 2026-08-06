@@ -155,6 +155,14 @@ export interface ViewerOptions {
    * where the merchant authors against fixed positions.
    */
   centreTextRuns?: boolean;
+  /**
+   * Customiser mode: park the whole product's centre on the world origin so
+   * it orbits around itself and opens fully in frame — whatever coordinates
+   * the merchant authored it at. Off in the Studio, where the merchant works
+   * against fixed positions, and skipped when the manifest carries a view
+   * the merchant saved deliberately.
+   */
+  centreOnOrigin?: boolean;
 }
 
 export class Viewer {
@@ -180,6 +188,10 @@ export class Viewer {
    * pieces[k-1] maps template member part id → its clone for piece k. */
   private perCharText = new Map<string, PerCharEntry>();
   private readonly centreTextRuns: boolean;
+  private readonly centreOnOrigin: boolean;
+  /** How far the group is pushed to bring the product to the origin — added
+   * back wherever a WORLD position is computed from layout (mm) space. */
+  private readonly centreOffset = new THREE.Vector3();
   private lastTick = 0;
   /** partId → pristine geometry, captured before the first deboss cut. */
   private debossBase = new Map<string, THREE.BufferGeometry>();
@@ -219,6 +231,7 @@ export class Viewer {
     this.onSelectPart = opts.onSelectPart;
     this.resolveUrl = opts.resolveUrl ?? ((u) => u);
     this.centreTextRuns = opts.centreTextRuns ?? false;
+    this.centreOnOrigin = (opts.centreOnOrigin ?? false) && !opts.manifest.camera?.userSet;
 
     const cam = opts.manifest.camera ?? {};
     this.renderer = new THREE.WebGLRenderer({ canvas: opts.canvas, antialias: true, preserveDrawingBuffer: true });
@@ -385,17 +398,21 @@ export class Viewer {
     catcher.receiveShadow = true;
     this.scene.add(catcher);
     this.shadowCatcher = catcher;
+    this.recentreGroup();
     this.fitShadowCatcher();
     this.applyScene();
 
     // Only frame the model automatically when the manifest didn't say where to
     // look — a merchant's chosen angle must survive.
-    if (!this.manifest.camera?.target) {
+    if (!this.manifest.camera?.target || this.centreOnOrigin) {
       const b = modelBounds(layout);
-      const centre = new THREE.Vector3(...[0, 1, 2].map((a) => (b.min[a] + b.max[a]) / 2) as [number, number, number]);
+      const centre = new THREE.Vector3(...[0, 1, 2].map((a) => (b.min[a] + b.max[a]) / 2) as [number, number, number])
+        .add(this.centreOffset);
       this.controls.target.copy(centre);
       this.controls.update();
     }
+    // No saved view: open on the whole product, centred and fully in frame.
+    if (this.centreOnOrigin) this.frame();
   }
 
   /**
@@ -431,6 +448,7 @@ export class Viewer {
         this.syncPartTexture(part, material);
       }
     }
+    this.recentreGroup();
     this.fitShadowCatcher();
     this.applyScene();
   }
@@ -455,12 +473,34 @@ export class Viewer {
     catcher.visible = true;
     catcher.scale.setScalar(span * 1.4);
     // A hair below the ground plane so coplanar bottom faces don't z-fight.
-    catcher.position.set((b.min[0] + b.max[0]) / 2, Math.min(b.min[1], 0) - 0.05, (b.min[2] + b.max[2]) / 2);
+    catcher.position.set(
+      (b.min[0] + b.max[0]) / 2 + this.centreOffset.x,
+      Math.min(b.min[1], 0) + this.centreOffset.y - 0.05,
+      (b.min[2] + b.max[2]) / 2 + this.centreOffset.z,
+    );
   }
 
   /** Where the laid-out model currently sits, in mm. */
   layoutBounds(): Box {
     return modelBounds(this.layout);
+  }
+
+  /**
+   * Bring the whole product to the world origin (customiser only): the
+   * group is pushed by minus its own centre, so the model orbits around
+   * itself and opens centred however the merchant laid it out. Everything
+   * that turns layout mm into a WORLD position adds this offset back.
+   */
+  private recentreGroup(): void {
+    if (!this.centreOnOrigin) return;
+    const b = this.layoutBounds();
+    if (!Number.isFinite(b.min[0])) return;
+    this.centreOffset.set(
+      -(b.min[0] + b.max[0]) / 2,
+      -(b.min[1] + b.max[1]) / 2,
+      -(b.min[2] + b.max[2]) / 2,
+    );
+    this.group.position.copy(this.centreOffset);
   }
 
   /**
@@ -473,7 +513,8 @@ export class Viewer {
   frame(): void {
     const b = this.layoutBounds();
     if (!Number.isFinite(b.min[0])) return;
-    const centre = new THREE.Vector3(...[0, 1, 2].map((a) => (b.min[a] + b.max[a]) / 2) as [number, number, number]);
+    const centre = new THREE.Vector3(...[0, 1, 2].map((a) => (b.min[a] + b.max[a]) / 2) as [number, number, number])
+      .add(this.centreOffset);
     const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2], 1);
     const direction = this.camera.position.clone().sub(this.controls.target).normalize();
     if (!direction.lengthSq()) direction.set(0, 0.35, 1).normalize();
