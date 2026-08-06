@@ -1432,18 +1432,19 @@ export function addTextSlot(
 /** The fields a merchant tunes after placing a slot. `perChar: null` turns
  * one-piece-per-letter back off; `colourHex: null` re-matches the part. */
 export type TextSlotPatch = Partial<Pick<TextOption,
-  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'bendDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label' | 'style'>>
+  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'bendDeg' | 'liftMm' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label' | 'style'>>
   & { perChar?: { mode?: 'line' | 'circle'; axis?: Axis; gapMm?: number; stepDeg?: number } | null }
   & { colourHex?: Hex | null }
   & { customerColour?: boolean | null }
-  & { colourChoices?: Hex[] | null };
+  & { colourChoices?: Hex[] | null }
+  & { wrapSurface?: boolean | null };
 
 export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlotPatch): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
   return edit(manifest, (draft) => {
     const o = draft.options.find((x) => x.id === optionId) as TextOption;
-    const { perChar, colourHex, customerColour, colourChoices, ...rest } = patch;
+    const { perChar, colourHex, customerColour, colourChoices, wrapSurface, ...rest } = patch;
     Object.assign(o, rest);
     if (perChar === null) delete o.perChar;
     else if (perChar !== undefined) o.perChar = perChar;
@@ -1458,6 +1459,10 @@ export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlo
     } else if (customerColour) o.customerColour = true;
     if (colourChoices === null || colourChoices?.length === 0) delete o.colourChoices;
     else if (colourChoices !== undefined) o.colourChoices = colourChoices;
+    // Straightening the slot back onto its sketch plane drops the lift with
+    // it — a float only means something against a surface.
+    if (wrapSurface === null || wrapSurface === false) { delete o.wrapSurface; delete o.liftMm; }
+    else if (wrapSurface) o.wrapSurface = true;
     // Bend and a drawn path are alternative baselines — turning the Bend
     // dial straightens away any drawn curve.
     if (patch.bendDeg !== undefined) delete o.path;
@@ -1467,7 +1472,7 @@ export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlo
       o.placeholder = o.placeholder.slice(0, o.maxLength ?? 20);
     }
     // An emptied field falls back to its default rather than validating as 0.
-    for (const key of ['sinkMm', 'rotationDeg', 'bendDeg', 'priceDelta', 'pricePerChar'] as const) {
+    for (const key of ['sinkMm', 'rotationDeg', 'bendDeg', 'liftMm', 'priceDelta', 'pricePerChar'] as const) {
       if (o[key] === 0) delete o[key];
     }
   });

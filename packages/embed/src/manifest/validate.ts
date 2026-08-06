@@ -335,6 +335,20 @@ export function validateManifest(input: unknown): ValidationResult {
       if (o.customerColour != null && typeof o.customerColour !== 'boolean') {
         err(`${at}.customerColour`, 'must be true or absent');
       }
+      if (o.colourChoices != null) {
+        if (!Array.isArray(o.colourChoices) || o.colourChoices.some((h) => !HEX.test(h))) {
+          err(`${at}.colourChoices`, 'must be a list of #RRGGBB swatches customers may pick');
+        }
+      }
+      if (o.wrapSurface != null && typeof o.wrapSurface !== 'boolean') {
+        err(`${at}.wrapSurface`, 'must be true or absent');
+      }
+      if (o.liftMm != null && (!Number.isFinite(o.liftMm) || o.liftMm < 0 || o.liftMm > 50)) {
+        err(`${at}.liftMm`, 'must be between 0 and 50 millimetres');
+      }
+      if (o.wrapSurface && (o.style ?? 'emboss') === 'deboss') {
+        warn(`${at}.wrapSurface`, 'engraved slots do not follow the surface yet — the cut stays flat');
+      }
       if (o.perChar) {
         if (o.perChar.mode != null && !['line', 'circle'].includes(o.perChar.mode)) {
           err(`${at}.perChar.mode`, 'must be "line" or "circle"');

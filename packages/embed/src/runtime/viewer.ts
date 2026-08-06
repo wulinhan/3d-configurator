@@ -15,9 +15,11 @@ import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, parseUploadState, textColour, type UploadState, type Selections } from './state.ts';
 import { repeatInstances } from './repeat.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
+import type { Font } from 'three/examples/jsm/loaders/FontLoader.js';
 import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
 import { fitZoneToRegion, type ZoneFit } from './zone-fit.ts';
-import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor } from './engrave.ts';
+import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor, wrappedTextGeometry } from './engrave.ts';
+import type { SurfaceProbe } from './wrap.ts';
 
 /**
  * three.js r155 switched to physically-based light units: a directional
@@ -492,6 +494,61 @@ export class Viewer {
   private partScale(partId: string): [number, number, number] {
     const t = this.layout.get(partId);
     return t ? ([...t.scale] as [number, number, number]) : [1, 1, 1];
+  }
+
+  /**
+   * A ray-casting surface probe for a text slot, in WORLD space: sketch
+   * (u, v) → wherever the part's geometry is under it. Rays start well
+   * clear of the model and come in along the slot's normal, so a curved
+   * face reports the point and normal the letter should sit on. Working in
+   * world space means a scaled or rotated part needs no special case — the
+   * caller bakes the result back into local space with the inverse matrix.
+   */
+  private surfaceProbe(spec: TextOption): SurfaceProbe | null {
+    const carrier = this.meshes.get(spec.part);
+    if (!carrier) return null;
+    carrier.updateMatrixWorld();
+    // The sketch basis, matching placeGlyph, carried into world space.
+    const n = new THREE.Vector3(...spec.normal).normalize();
+    const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+    const x = new THREE.Vector3().crossVectors(upRef, n).normalize();
+    const y = new THREE.Vector3().crossVectors(n, x).normalize();
+    if (spec.rotationDeg) {
+      const spin = new THREE.Quaternion().setFromAxisAngle(n, spec.rotationDeg * Math.PI / 180);
+      x.applyQuaternion(spin);
+      y.applyQuaternion(spin);
+    }
+    const origin = new THREE.Vector3(...spec.origin);
+    const worldOrigin = carrier.localToWorld(origin.clone());
+    const worldX = x.clone().transformDirection(carrier.matrixWorld).normalize();
+    const worldY = y.clone().transformDirection(carrier.matrixWorld).normalize();
+    const worldN = n.clone().transformDirection(carrier.matrixWorld).normalize();
+    // Start outside the part: its own diagonal is always far enough.
+    const box = this.laidOut(spec.part);
+    const standoff = box ? Math.max(...box.size) + 10 : 100;
+
+    const raycaster = new THREE.Raycaster();
+    const from = new THREE.Vector3();
+    return (u, v) => {
+      from.copy(worldOrigin)
+        .addScaledVector(worldX, u)
+        .addScaledVector(worldY, v)
+        .addScaledVector(worldN, standoff);
+      raycaster.set(from, worldN.clone().negate());
+      // `false` — the part's own children are text and zone overlays, not
+      // surface. (They also carry no-op raycasts, but this is cheaper.)
+      const hit = raycaster.intersectObject(carrier, false)[0];
+      if (!hit?.face) return null;
+      const normal = hit.face.normal.clone()
+        .transformDirection(carrier.matrixWorld).normalize();
+      // A back-facing hit means the ray came in through the far side; flip
+      // so the extrusion always leaves the material.
+      if (normal.dot(worldN) < 0) normal.negate();
+      return {
+        point: [hit.point.x, hit.point.y, hit.point.z],
+        normal: [normal.x, normal.y, normal.z],
+      };
+    };
   }
 
   /** A part's laid-out centre and extent, mm — what a repeat patterns. */
@@ -1484,6 +1541,7 @@ export class Viewer {
       text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
       option.rotationDeg, option.bendDeg, option.path, option.origin, option.normal, option.part,
       option.colourHex, option.style, this.partScale(option.part),
+      option.wrapSurface, option.liftMm, carrier.geometry.uuid,
     ]);
     if (existing?.key === key) return;
     this.textMeshes.set(option.id, { mesh: existing?.mesh, key, customMat: existing?.customMat });
@@ -1492,7 +1550,14 @@ export class Viewer {
     loadFont(option.font ?? DEFAULT_FONT).then((font) => {
       const current = this.textMeshes.get(option.id);
       if (current?.key !== key) return; // superseded while the font loaded
-      const geo = buildTextGeometry(text, font, spec);
+      // Wrapped slots follow the geometry: the run is laid ON the surface
+      // and baked into the carrier's local space, so the mesh itself needs
+      // no pose. Engraved slots keep the flat cut for now, and a run that
+      // finds no surface falls back to the flat plane rather than vanishing.
+      const wrapped = spec.wrapSurface && (spec.style ?? 'emboss') === 'emboss'
+        ? this.wrapText(text, font, spec)
+        : null;
+      const geo = wrapped?.geometry ?? buildTextGeometry(text, font, spec);
       let mesh = current.mesh;
       if (!mesh) {
         mesh = new THREE.Mesh(geo, this.textMaterial(spec, current));
@@ -1512,8 +1577,30 @@ export class Viewer {
         const parent = this.meshes.get(spec.part);
         if (parent && mesh.parent !== parent) parent.add(mesh);
       }
-      placeGlyph(mesh, spec, this.partScale(spec.part));
+      if (wrapped) {
+        // Already posed, in the carrier's own space.
+        mesh.position.set(0, 0, 0);
+        mesh.quaternion.identity();
+        mesh.scale.set(1, 1, 1);
+      } else {
+        placeGlyph(mesh, spec, this.partScale(spec.part));
+      }
     });
+  }
+
+  /** The run laid on the part's surface, baked into the carrier's local
+   * space. Null when there is no geometry under the slot at all. */
+  private wrapText(text: string, font: Font, spec: TextOption) {
+    const carrier = this.meshes.get(spec.part);
+    const probe = this.surfaceProbe(spec);
+    if (!carrier || !probe) return null;
+    carrier.updateMatrixWorld();
+    const toLocal = new THREE.Matrix4().copy(carrier.matrixWorld).invert();
+    const out = wrappedTextGeometry(text, font, spec, probe, toLocal);
+    if (out?.missed.length) {
+      console.warn(`[configurator] "${spec.id}": ${out.missed.length} character(s) ran off the surface`);
+    }
+    return out;
   }
 
   /** A per-char template: the carrier's whole assembly, or just the carrier. */

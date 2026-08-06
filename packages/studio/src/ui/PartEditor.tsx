@@ -710,6 +710,29 @@ function TextSlotEditor(props: {
         />
       </div>
       {!slot.perChar && (
+        // Follow the geometry instead of the flat sketch plane — what puts
+        // a name around a barrel or over a dome.
+        <>
+          <label className="lock">
+            <input
+              type="checkbox" checked={!!slot.wrapSurface} data-testid={`text-wrap-${slot.id}`}
+              disabled={(slot.style ?? 'emboss') === 'deboss'}
+              onChange={(e) => patch({ wrapSurface: e.target.checked || null })}
+            />
+            Wrap onto the surface
+            {(slot.style ?? 'emboss') === 'deboss' && ' (embossed text only)'}
+          </label>
+          {slot.wrapSurface && (slot.style ?? 'emboss') === 'emboss' && (
+            <div className="field-row">
+              <NumberField
+                label="Float above" value={slot.liftMm ?? 0} suffix="mm" testId={`text-lift-${slot.id}`}
+                onCommit={(v, o) => patch({ liftMm: v }, o)}
+              />
+            </div>
+          )}
+        </>
+      )}
+      {!slot.perChar && (
         // Freeform baseline: the letters walk a curve drawn on the surface.
         <div className="match-row">
           {props.shaping ? (

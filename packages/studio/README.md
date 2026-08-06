@@ -293,6 +293,22 @@ the pocket's walls and floor all follow the arc exactly. (Hidden while
 one-piece-per-letter is on — spawned pieces have their own line/circle
 patterns.)
 
+**Wrap onto the surface** takes the run off the flat sketch plane and lays
+it on the geometry itself: each glyph is dropped onto the surface under it
+and turned to that surface's own normal, so a name rides a bottle, a
+bracelet or a dome instead of flying off it at the ends. Spacing is
+measured ALONG the surface — the baseline is sampled in small steps, each
+projected onto the geometry, and the real 3D distance accumulated — so
+letters don't bunch where the surface curves away, which is what a
+"project straight down" scheme does. It composes with the two flat
+baselines: Bend or a drawn curve shapes the run in the sketch plane, and
+the wrap lays THAT curve onto the geometry. **Float above** lifts the run
+off the surface along its own normal. Letters are rigid, so a glyph chords
+a fraction of a millimetre on a tight radius; any that run off the end of
+the surface fall back to flat placement rather than vanishing. Embossed
+slots only for now — an engraved slot keeps its flat cut, and the box
+greys out.
+
 **Curve the baseline** goes freeform: draggable anchor dots appear pinned
 to the slot's face (seeded as a straight three-dot run), and the letters
 walk the open Catmull-Rom curve through them — drag a dot to bow the
@@ -505,7 +521,19 @@ test/compress.test.ts  3 — meshopt output is tagged, smaller, and within
                       0.05 mm of the input
 test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
-test/repeat (embed)    7 — live part patterns: a linear row marches at
+test/wrap (embed)     11 — surface-wrapped text against ANALYTIC surfaces, so
+                      every assertion is exact maths: a flat probe
+                      reproduces the flat layout, a cylinder puts every
+                      glyph on the barrel facing straight out, spacing is
+                      the arc between letters (the chord trailing it
+                      proves the walk measures the surface, not the flat
+                      shadow), a dome carries text too (doubly curved, so
+                      no unrolling scheme could), Bend composes with the
+                      wrap, lift pushes out along the local normal,
+                      overruns and empty probes report rather than
+                      vanish, and the baked geometry hugs the barrel in
+                      the caller's target space
+test/repeat (embed)    8 — live part patterns: a linear row marches at
                       size + gap (negative overlaps), a ring turns each
                       copy with its swing so it faces the tangent, an
                       explicit step fans instead of rings, patterns STACK

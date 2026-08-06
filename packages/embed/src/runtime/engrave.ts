@@ -9,6 +9,7 @@ import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
 import type { Font } from 'three/examples/jsm/loaders/FontLoader.js';
 import type { TextOption } from '../manifest/types.ts';
 import { walkPath, type Pt } from './text-path.ts';
+import { wrapGlyphs, type SurfaceProbe } from './wrap.ts';
 
 type Csg = typeof import('three-bvh-csg');
 
@@ -61,38 +62,62 @@ export function glyphStations(
   font: Font,
   spec: TextOption,
 ): Array<{ ch: string; x: number; y: number; angleRad: number; advance: number }> {
+  const run = glyphRun(text, font, spec);
+  const at = baselineAt(spec, run.total);
+  return run.glyphs.map((g) => ({ ch: g.ch, advance: g.advance, ...at(g.mid) }));
+}
+
+/** The characters that land, with their advances and their midpoints along
+ * the baseline (signed, from the run's centre). Spaces advance the pen but
+ * never land, so they shape the spacing without leaving a glyph. */
+export function glyphRun(
+  text: string,
+  font: Font,
+  spec: TextOption,
+): { glyphs: Array<{ ch: string; advance: number; mid: number }>; total: number } {
   const data = (font as Font & { data: FontMetrics }).data;
   const scale = spec.sizeMm / (data.resolution ?? 1000);
   const advance = (ch: string) => ((data.glyphs[ch] ?? data.glyphs['?'])?.ha ?? 0) * scale;
   const chars = [...text];
   const total = chars.reduce((sum, ch) => sum + advance(ch), 0);
-  const walk = (spec.path?.length ?? 0) >= 2 ? walkPath(spec.path as Pt[]) : null;
-  const theta = ((spec.bendDeg ?? 0) * Math.PI) / 180;
-  const out: Array<{ ch: string; x: number; y: number; angleRad: number; advance: number }> = [];
-  let pen = -total / 2; // the run is centred, like the straight path
+  const glyphs: Array<{ ch: string; advance: number; mid: number }> = [];
+  let pen = -total / 2; // the run is centred on the sketch origin
   for (const ch of chars) {
     const a = advance(ch);
     const mid = pen + a / 2;
     pen += a;
-    if (!ch.trim() || !(a > 0)) continue;
-    if (walk) {
-      // Centred on the curve's middle: mid 0 lands at arc length L/2.
-      const st = walk.at(walk.length / 2 + mid);
-      out.push({ ch, x: st.point[0], y: st.point[1], angleRad: st.angleRad, advance: a });
-      continue;
-    }
-    if (!theta || !(total > 0)) {
-      out.push({ ch, x: mid, y: 0, angleRad: 0, advance: a });
-      continue;
-    }
-    // Signed radius: the arc through the origin, tangent to +x there.
-    // p(α) = (R sin α, R (cos α − 1)) walks the circle at unit arc speed,
-    // and the tangent turns by −α — both signs of bend fall out of R.
-    const r = total / theta;
-    const alpha = mid / r;
-    out.push({ ch, x: r * Math.sin(alpha), y: r * (Math.cos(alpha) - 1), angleRad: -alpha, advance: a });
+    if (ch.trim() && a > 0) glyphs.push({ ch, advance: a, mid });
   }
-  return out;
+  return { glyphs, total };
+}
+
+/**
+ * The slot's baseline as a function of arc length from the run's centre:
+ * the drawn `path` when there is one, else the `bendDeg` arc, else the
+ * straight line. Sampling it by arc length is what lets the surface walk
+ * (see wrap.ts) re-space glyphs by the distance they actually travel.
+ */
+export function baselineAt(
+  spec: TextOption,
+  totalAdvance: number,
+): (s: number) => { x: number; y: number; angleRad: number } {
+  const walk = (spec.path?.length ?? 0) >= 2 ? walkPath(spec.path as Pt[]) : null;
+  if (walk) {
+    return (s) => {
+      const st = walk.at(walk.length / 2 + s);
+      return { x: st.point[0], y: st.point[1], angleRad: st.angleRad };
+    };
+  }
+  const theta = ((spec.bendDeg ?? 0) * Math.PI) / 180;
+  if (!theta || !(totalAdvance > 0)) return (s) => ({ x: s, y: 0, angleRad: 0 });
+  // Signed radius: the arc through the origin, tangent to +x there.
+  // p(α) = (R sin α, R (cos α − 1)) walks the circle at unit arc speed,
+  // and the tangent turns by −α — both signs of bend fall out of R.
+  const r = totalAdvance / theta;
+  return (s) => {
+    const alpha = s / r;
+    return { x: r * Math.sin(alpha), y: r * (Math.cos(alpha) - 1), angleRad: -alpha };
+  };
 }
 
 /** The bent run as ONE merged prism: each glyph is extruded alone, centred
@@ -147,6 +172,69 @@ function bentTextGeometry(text: string, font: Font, spec: TextOption): THREE.Buf
     geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
   }
   return geo;
+}
+
+/**
+ * A run laid ON the part's surface: each glyph is extruded alone and
+ * carried to its own surface frame, then everything is merged into one
+ * geometry — already posed, so the mesh that carries it needs no transform
+ * of its own. `toTarget` converts the probe's space into the space the
+ * geometry will live in (the viewer probes in WORLD space and bakes into
+ * the carrier's local space, which is what keeps a scaled or rotated part
+ * honest). Extrude groups are preserved, and letters the surface could not
+ * carry come back in `missed` for the caller to place flat.
+ */
+export function wrappedTextGeometry(
+  text: string,
+  font: Font,
+  spec: TextOption,
+  probe: SurfaceProbe,
+  toTarget?: THREE.Matrix4,
+): { geometry: THREE.BufferGeometry; missed: string[] } | null {
+  const run = glyphRun(text, font, spec);
+  if (!run.glyphs.length) return null;
+  const wrapped = wrapGlyphs(run.glyphs, baselineAt(spec, run.total), probe, { liftMm: spec.liftMm });
+  if (!wrapped.glyphs.length) return null;
+
+  const lids: number[] = [];
+  const walls: number[] = [];
+  const v = new THREE.Vector3();
+  const pose = new THREE.Matrix4();
+  const centreAdvance = new THREE.Matrix4();
+  for (const g of wrapped.glyphs) {
+    const glyph = new TextGeometry(g.ch, {
+      font, size: spec.sizeMm, depth: spec.depthMm, curveSegments: 4, bevelEnabled: false,
+    });
+    const pos = glyph.attributes.position;
+    if (!pos) { glyph.dispose(); continue; }
+    // The glyph's own frame IS the surface frame at its station: +x runs
+    // with the baseline, +y is in-surface up, +z extrudes outward.
+    pose.makeBasis(
+      new THREE.Vector3(...g.xAxis),
+      new THREE.Vector3(...g.yAxis),
+      new THREE.Vector3(...g.normal),
+    ).setPosition(...g.position);
+    if (toTarget) pose.premultiply(toTarget);
+    // TextGeometry lays a glyph from its own left edge; centre it on its
+    // advance so the station lands mid-letter, as the flat path does.
+    pose.multiply(centreAdvance.makeTranslation(-g.advance / 2, 0, 0));
+    const groups = glyph.groups.length ? glyph.groups : [{ start: 0, count: pos.count, materialIndex: 0 }];
+    for (const grp of groups) {
+      const sink = grp.materialIndex === 1 ? walls : lids;
+      for (let i = grp.start; i < grp.start + grp.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(pose);
+        sink.push(v.x, v.y, v.z);
+      }
+    }
+    glyph.dispose();
+  }
+  if (!lids.length && !walls.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from([...lids, ...walls]), 3));
+  geometry.addGroup(0, lids.length / 3, 0);
+  geometry.addGroup(lids.length / 3, walls.length / 3, 1);
+  geometry.computeVertexNormals();
+  return { geometry, missed: wrapped.missed };
 }
 
 /**

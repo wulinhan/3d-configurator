@@ -303,6 +303,20 @@ export interface TextOption {
    * one-piece-per-letter spawning.
    */
   path?: Array<[number, number]>;
+  /**
+   * Follow the part's SURFACE instead of the flat sketch plane: each glyph
+   * is dropped onto the geometry under it and turned to the surface's own
+   * normal, with spacing measured along the surface rather than across its
+   * flat shadow. This is what puts a name around a cylinder or over a dome
+   * — a curve in the sketch plane (`bendDeg`, `path`) still shapes the
+   * baseline, and the wrap lays that baseline onto the geometry. Letters
+   * that run off the end of the surface fall back to flat placement.
+   * Embossed slots only for now; engraved slots ignore it.
+   */
+  wrapSurface?: boolean;
+  /** With `wrapSurface`, how far the run floats off the surface before it
+   * extrudes, mm. Default 0. */
+  liftMm?: Millimetres;
   /** One of TEXT_FONTS. Default 'sans-bold' — bold survives extrusion best. */
   font?: TextFont;
   /** Glyph height, mm. */
