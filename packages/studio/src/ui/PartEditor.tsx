@@ -4,7 +4,7 @@
 // calls a tested edit op; these components only render and route.
 
 import { useState, type ReactNode } from 'react';
-import type { Manifest, AnchorEdge, ColourOption, ChoiceOption, TextOption, UploadOption, TextFont } from '../../../embed/src/manifest/types.ts';
+import type { Manifest, AnchorEdge, ColourOption, ChoiceOption, TextOption, UploadOption, TextFont, Part } from '../../../embed/src/manifest/types.ts';
 import { FONT_CHOICES } from '../../../embed/src/runtime/fonts.ts';
 import {
   sizeMm, withSizeMm, withAnchor, withRotation,
@@ -16,6 +16,7 @@ import {
   setTextSlot, removeTextSlot, setTextPath, type TextSlotPatch,
   setImageZone, nudgeImageZone, removeImageZone, type ImageZonePatch,
   entrySizeMm, withEntrySizeMm,
+  addRepeat, setRepeat, removeRepeat,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -488,7 +489,7 @@ export function PartEditor(props: {
         </Section>
       ) : (
         <Section
-          title="Optional add-on" icon="addon" testId="section-addon"
+          title="Add-on" icon="addon" testId="section-addon"
           aside={(
             <label className="lock">
               <input
@@ -547,9 +548,91 @@ export function PartEditor(props: {
           >＋ Place image zone on a face</button>
         </div>
       </Section>
-      {!inGroup && !variantOf && <RepeatSection entryId={part.id} what="part" onRepeat={props.onRepeat} />}
+      {!inGroup && !variantOf && (
+        <PartRepeatSection part={part} manifest={manifest} act={act} />
+      )}
       {error && <p className="error" role="alert">{error}</p>}
     </div>
+  );
+}
+
+// A part's LIVE patterns: each one is a parameter of the part, retunable
+// after the fact, and several stack into a grid. (Assemblies and variant
+// sets still use the stamping RepeatSection above — copying a whole set is
+// a different job from patterning one part.)
+function PartRepeatSection(props: {
+  part: Part;
+  manifest: Manifest;
+  act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
+}) {
+  const { part, manifest, act } = props;
+  const repeats = part.repeats ?? [];
+  const total = repeats.reduce((n, r) => n * Math.max(1, r.count), 1);
+  return (
+    <Section
+      title="Repeat" icon="repeat" testId="section-repeat"
+      aside={repeats.length ? <span className="hint">{total} in total</span> : undefined}
+    >
+      <p className="hint">
+        Patterns this part. Every copy is the part itself — recolour, resize
+        or retexture it and they all follow. Stack patterns to build a grid.
+      </p>
+      {repeats.map((spec) => (
+        <div key={spec.id} className="text-slot" data-testid={`repeat-${spec.id}`}>
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">Pattern</span>
+              <Select
+                ariaLabel="Repeat pattern" testId={`repeat-mode-${spec.id}`} compact
+                value={spec.mode}
+                options={[{ value: 'line', label: 'Linear' }, { value: 'circle', label: 'Circular' }]}
+                onChange={(v) => act(() => setRepeat(manifest, part.id, spec.id, { mode: v as 'line' | 'circle' }))}
+              />
+            </label>
+            <NumberField
+              label="Total" value={spec.count} step={1} testId={`repeat-count-${spec.id}`}
+              onCommit={(v, o) => act(() => setRepeat(manifest, part.id, spec.id, { count: v }), o)}
+            />
+          </div>
+          {spec.mode === 'line' ? (
+            <div className="field-row">
+              <label className="field">
+                <span className="field-label">Axis</span>
+                <Select
+                  ariaLabel="Repeat axis" testId={`repeat-axis-${spec.id}`} compact
+                  value={String(spec.axis ?? 0)}
+                  options={UI_AXES.map(({ label, axis }) => ({ value: String(axis), label, tint: AXIS_COLOURS[label] }))}
+                  onChange={(v) => act(() => setRepeat(manifest, part.id, spec.id, { axis: Number(v) as Axis }))}
+                />
+              </label>
+              <NumberField
+                label="Gap" value={spec.gapMm ?? 5} suffix="mm" testId={`repeat-gap-${spec.id}`}
+                onCommit={(v, o) => act(() => setRepeat(manifest, part.id, spec.id, { gapMm: v }), o)}
+              />
+            </div>
+          ) : (
+            <NumberField
+              label="Step" value={spec.stepDeg ?? Math.round(360 / Math.max(2, spec.count))}
+              suffix="°" step={5} testId={`repeat-step-${spec.id}`}
+              onCommit={(v, o) => act(() => setRepeat(manifest, part.id, spec.id, { stepDeg: v }), o)}
+            />
+          )}
+          <div className="match-row">
+            <button
+              className="mini" data-testid={`repeat-remove-${spec.id}`}
+              onClick={() => act(() => removeRepeat(manifest, part.id, spec.id))}
+            >Remove pattern</button>
+          </div>
+        </div>
+      ))}
+      <div className="match-row">
+        <button
+          className="mini" data-testid="repeat-add"
+          title="Copies spawn live — tweak the numbers and the row re-forms"
+          onClick={() => act(() => addRepeat(manifest, part.id))}
+        >＋ Add pattern</button>
+      </div>
+    </Section>
   );
 }
 

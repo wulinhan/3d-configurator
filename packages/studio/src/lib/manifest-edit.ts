@@ -8,7 +8,7 @@
 // concentrate.
 
 import type {
-  Manifest, Part, Option, ColourOption, ChoiceOption, TextOption, UploadOption, TextureType, AxisPlacement, AnchorEdge, Hex,
+  Manifest, Part, Option, ColourOption, ChoiceOption, TextOption, UploadOption, TextureType, AxisPlacement, AnchorEdge, Hex, RepeatSpec,
 } from '../../../embed/src/manifest/types.ts';
 import { validateManifest } from '../../../embed/src/manifest/validate.ts';
 import { resolveLayout, modelBounds } from '../../../embed/src/runtime/layout.ts';
@@ -1169,6 +1169,75 @@ export function duplicateEntry(manifest: Manifest, entryId: string, raw: Map<str
  * instances, original included. Studio-only — the stamped copies are
  * ordinary parts by the time customers see them.
  */
+// ── live repeats (parts) ────────────────────────────────────────────────────
+
+/**
+ * Add a pattern to a part. Unlike the stamping tool below — which is still
+ * how a whole assembly is copied — this stays a PARAMETER of the part: the
+ * renderer spawns the copies, the merchant retunes them afterwards, and
+ * several stack into a grid.
+ */
+export function addRepeat(
+  manifest: Manifest,
+  partId: string,
+  spec?: Partial<Omit<RepeatSpec, 'id'>>,
+): Manifest {
+  partOf(manifest, partId);
+  return edit(manifest, (draft) => {
+    const part = partOf(draft, partId);
+    const repeats = part.repeats ?? [];
+    let id = `${partId}-repeat`;
+    for (let n = 2; repeats.some((r) => r.id === id); n++) id = `${partId}-repeat-${n}`;
+    // Stacking should build a GRID, not a longer line: a new row picks the
+    // first axis the existing rows aren't already marching along.
+    const taken = new Set(repeats.filter((r) => r.mode === 'line').map((r) => r.axis ?? 0));
+    const freeAxis = ([0, 2, 1] as Axis[]).find((a) => !taken.has(a)) ?? 0;
+    repeats.push({
+      id,
+      mode: spec?.mode ?? 'line',
+      count: Math.round(spec?.count ?? 3),
+      ...(spec?.axis != null ? { axis: spec.axis } : { axis: freeAxis }),
+      ...(spec?.gapMm != null ? { gapMm: spec.gapMm } : { gapMm: 5 }),
+      ...(spec?.stepDeg != null ? { stepDeg: spec.stepDeg } : {}),
+    });
+    part.repeats = repeats;
+  });
+}
+
+/** Retune a pattern in place — what makes a repeat live. */
+export function setRepeat(
+  manifest: Manifest,
+  partId: string,
+  repeatId: string,
+  patch: Partial<Omit<RepeatSpec, 'id'>>,
+): Manifest {
+  const part = partOf(manifest, partId);
+  if (!part.repeats?.some((r) => r.id === repeatId)) {
+    throw new EditError(`"${partId}" has no repeat "${repeatId}"`);
+  }
+  return edit(manifest, (draft) => {
+    const spec = partOf(draft, partId).repeats!.find((r) => r.id === repeatId)!;
+    Object.assign(spec, patch);
+    if (patch.count != null) spec.count = Math.round(patch.count);
+    // Switching pattern drops the other mode's knob rather than leaving a
+    // stale number to reappear on the way back.
+    if (patch.mode === 'circle') delete spec.axis;
+    if (patch.mode === 'line') delete spec.stepDeg;
+  });
+}
+
+export function removeRepeat(manifest: Manifest, partId: string, repeatId: string): Manifest {
+  const part = partOf(manifest, partId);
+  if (!part.repeats?.some((r) => r.id === repeatId)) {
+    throw new EditError(`"${partId}" has no repeat "${repeatId}"`);
+  }
+  return edit(manifest, (draft) => {
+    const p = partOf(draft, partId);
+    p.repeats = p.repeats!.filter((r) => r.id !== repeatId);
+    if (!p.repeats.length) delete p.repeats;
+  });
+}
+
 export function repeatEntry(
   manifest: Manifest,
   entryId: string,

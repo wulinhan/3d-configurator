@@ -12,6 +12,7 @@ import {
   renamePart, removePart, setDefaultSwatch, copyPlacement, snapFaces,
   withAnchor, makePartOptional, nudge, withRotation,
   matchPose, partCentreMm, setPartCentre, EditError,
+  addRepeat, setRepeat, removeRepeat,
 } from '../src/lib/manifest-edit.ts';
 
 const near = (a: number, b: number, tol = 1e-6) => assert.ok(Math.abs(a - b) < tol, `${a} !== ${b}`);
@@ -188,4 +189,54 @@ test('snapFaces rejects same part, angled faces, and mismatched axes', () => {
   assert.throws(() => snapFaces(fresh(), { partId: 'cap', normal: [0, -1, 0] }, { partId: 'cap', normal: [0, 1, 0] }), EditError);
   assert.throws(() => snapFaces(fresh(), { partId: 'cap', normal: [0.6, 0.6, 0.52] }, { partId: 'body', normal: [0, 1, 0] }), /angled|axis/);
   assert.throws(() => snapFaces(fresh(), { partId: 'cap', normal: [1, 0, 0] }, { partId: 'body', normal: [0, 1, 0] }), /same axis/);
+});
+
+// ── live repeats ────────────────────────────────────────────────────────────
+
+test('repeats are parameters of a part: added, retuned live, stacked, removed', () => {
+  let m = addRepeat(fresh(), 'cap');
+  valid(m);
+  const first = m.parts.find((p) => p.id === 'cap')!.repeats![0];
+  assert.equal(first.mode, 'line');
+  assert.equal(first.count, 3);
+
+  // Retuning is an edit in place — the same pattern, new numbers.
+  m = setRepeat(m, 'cap', first.id, { count: 5, gapMm: 12 });
+  valid(m);
+  const tuned = m.parts.find((p) => p.id === 'cap')!.repeats![0];
+  assert.equal(tuned.id, first.id, 'the pattern keeps its identity');
+  assert.equal(tuned.count, 5);
+  assert.equal(tuned.gapMm, 12);
+
+  // Switching to a ring drops the row axis rather than leaving it stale.
+  m = setRepeat(m, 'cap', first.id, { mode: 'circle' });
+  assert.equal(m.parts.find((p) => p.id === 'cap')!.repeats![0].axis, undefined);
+
+  // Stacking: a second pattern repeats everything the first produced.
+  m = addRepeat(m, 'cap', { axis: 2, count: 2 });
+  valid(m);
+  const stack = m.parts.find((p) => p.id === 'cap')!.repeats!;
+  assert.equal(stack.length, 2);
+  assert.notEqual(stack[0].id, stack[1].id, 'ids dedupe');
+
+  // Removing the last one clears the field instead of leaving an empty list.
+  m = removeRepeat(m, 'cap', stack[0].id);
+  m = removeRepeat(m, 'cap', stack[1].id);
+  valid(m);
+  assert.equal(m.parts.find((p) => p.id === 'cap')!.repeats, undefined);
+  assert.throws(() => removeRepeat(m, 'cap', 'ghost'), EditError);
+  assert.throws(() => setRepeat(m, 'cap', 'ghost', { count: 2 }), EditError);
+});
+
+test('a repeat count outside the range never reaches the manifest', () => {
+  const m = addRepeat(fresh(), 'cap');
+  const id = m.parts.find((p) => p.id === 'cap')!.repeats![0].id;
+  assert.throws(() => setRepeat(m, 'cap', id, { count: 1 }), EditError);
+  assert.throws(() => setRepeat(m, 'cap', id, { count: 99 }), EditError);
+});
+
+test('deleting a part takes its repeats with it', () => {
+  const m = removePart(addRepeat(fresh(), 'cap'), 'cap', RAW);
+  valid(m);
+  assert.ok(!m.parts.some((p) => p.id === 'cap'));
 });

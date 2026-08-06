@@ -56,6 +56,12 @@ cap live WebGL contexts, so rebuild-per-keystroke dies within a minute of
 real use. When an edit moves the model outside the current view by more than
 a 25% band, the camera refits while keeping the merchant's orbit angle.
 
+The CUSTOMISER (not the Studio, where merchants author against fixed
+coordinates) parks the product's centre on the world origin and frames the
+whole of it on open, unless the merchant saved a view — so a model
+authored off in a corner still opens centred and orbits around itself
+rather than swinging around empty space.
+
 ## Gizmos
 
 One combined gizmo (toolbar: Orbit / Transform / Snap): translate arrows
@@ -195,17 +201,31 @@ flat axes, sitting on the ground. The orientation preset (which way the
 file is up) sits in the explorer and applies to the next file added.
 **New project** in the topbar returns to the empty viewport.
 
-**Repeat** (in the part / assembly / variant-set editors, hidden from
-customers) stamps copies along an axis — pitched at the entry's own size
+**Repeat** on a PART is a live pattern, not a stamp: it is stored on the
+part (`repeats`), the renderer spawns the copies, and every parameter
+stays editable afterwards — change the count or the gap and the row
+re-forms under the cursor. Patterns STACK, each one repeating everything
+the ones before it produced, so ×5 along X plus ×3 along Y is a 5×3 grid
+of fifteen (a new pattern defaults to the first axis the existing ones
+aren't using, so stacking builds a grid rather than a longer line). Every
+copy IS the part: it shares the geometry, material and colour option, so
+recolouring, resizing, engraving or hiding the part carries all of them,
+clicking a copy selects the part, and the explorer still lists one entry
+(the header shows "15 in total"). Copies clone the part's children too,
+so extruded text and image zones come along.
+
+**Repeat** on an assembly or variant set (hidden from customers) still
+stamps copies along an axis — pitched at the entry's own size
 plus a gap (negative gaps overlap pieces, for interlocking chains) — or in a ring: a RIGID turn about the vertical
 axis through the world origin, where the original is taken as facing the
 tangent and every copy (parts and whole assemblies alike) both orbits and
 spins by its share of the circle, keeping its face to the ring. Anchors on
 circle copies collapse to absolute offsets — a rotated copy cannot keep
-axis-aligned joints. Copies are ordinary parts with their own colour
-options (labels count up: "Base 2", "Base 3"), so any of them can be
-recoloured, moved or deleted afterwards; the whole stamp is one undo
-step.
+axis-aligned joints. Stamped copies are ordinary parts with their own
+colour options (labels count up: "Base 2", "Base 3"), so any of them can
+be recoloured, moved or deleted afterwards; the whole stamp is one undo
+step. Copying a whole SET is a different job from patterning one part,
+which is why the two tools stayed separate.
 
 Publish lives in a floating modal off the topbar CTA (validation report,
 manifest and compressed-GLB downloads); the left panel keeps only Parts,
@@ -242,7 +262,14 @@ part's material. Follows the customer's text live — glyph **size**, extrusion 
 spin about the normal, a length limit, example text (rendered as
 the model's preview and the input's ghost), and pricing — flat and/or
 per-character, recomputed server-side like every other delta. The text mesh
-shares the carrier part's material, so it colours with the part; the payload
+shares the carrier part's material, so it colours with the part — that is
+the default and needs no control. Ticking **Customers can choose the text
+colour** hands that choice over: the customer panel shows the product's
+palette under the text box (the first, slashed swatch means "same as the
+part"), and the pick rides the order payload named, not as a hex. Left
+unticked the colour is LOCKED to what the part wears. Customer picks are
+checked against the palette, so a hand-edited payload cannot paint a
+colour the product doesn't sell. The payload
 carries the typed string on the order. Deleting or renaming the carrier part
 deletes or renames the slot with it.
 
@@ -327,6 +354,27 @@ image*. Offsets are clamped so the image never abandons the zone — in the
 panel and again in the pricing layer, which treats the selection value (a
 JSON string carrying the data-URL image, offset and size) as untrusted.
 Deleting or renaming the carrier part deletes or renames the zone with it.
+
+## Panel chrome
+
+Every properties section folds behind an icon header (caret, a
+Lucide-geometry glyph drawn inline — no icon dependency — and the title).
+Controls that belong on the header row, like *Lock proportions* or
+*Customer selects this part*, stay reachable while the body is folded, and
+folded titles are remembered for the session so switching parts doesn't
+reopen what the merchant just tidied away.
+
+Every number box is also a SCRUBBER: press and drag sideways to walk the
+value in that field's own step (0.1 mm, 5°, 1 letter). A press that never
+moves still focuses for typing, so the two gestures don't fight, and a
+whole scrub lands as ONE history entry — the first step records it, the
+rest ride it — so it rewinds in a single Ctrl+Z. *Lock proportions* is
+persisted on the part, so a scale-gizmo drag with it on takes every axis
+with it; unlocked, each axis is its own.
+
+Controls with nothing to act on grey out instead of failing: **Match
+another part** until a second part exists, **To origin** when the part is
+already centred and on the ground.
 
 ## Anchors: summary first, controls on demand
 
@@ -448,7 +496,13 @@ test/compress.test.ts  3 — meshopt output is tagged, smaller, and within
                       0.05 mm of the input
 test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
-test/parts.test.ts    15 — rename ripples (colour, add-on, variant entries),
+test/repeat (embed)    7 — live part patterns: a linear row marches at
+                      size + gap (negative overlaps), a ring turns each
+                      copy with its swing so it faces the tangent, an
+                      explicit step fans instead of rings, patterns STACK
+                      into a grid (each repeating what came before), and
+                      nonsense counts are skipped rather than rendered
+test/parts.test.ts    18 — rename ripples (colour, add-on, variant entries),
                       delete repair, match-pose, absolute positioning, snap
 test/structure.test.ts 36 — assemblies merge colours without double-painting,
                       variant sets are exclusive by construction (and absorb
@@ -503,8 +557,10 @@ test/studio.smoke.mjs browser assertions — the full merchant journey
                       the real embed and switching a variant set, the
                       resizable/collapsible explorer, surface-glow snapping
                       (hover, sticky first pick, flush + centred landing), the
-                      Studio's own dialogs and listboxes, the repeat tool
-                      stamping and un-stamping copies, the compressed
+                      Studio's own dialogs and listboxes, live repeat
+                      patterns (copies spawn without adding parts, retuning
+                      count and gap re-forms the row, a second pattern
+                      stacks into a grid, removal returns the part to one), the compressed
                       download, New project resetting to the empty stage,
                       3D text end to end (face pick → slot → typeface
                       dropdown reshaping the extrusion → Bend arching the

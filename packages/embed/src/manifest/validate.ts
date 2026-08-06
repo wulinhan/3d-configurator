@@ -118,6 +118,33 @@ export function validateManifest(input: unknown): ValidationResult {
       }
     }
 
+    if (p?.repeats != null) {
+      if (!Array.isArray(p.repeats)) err(`${at}.repeats`, 'must be a list of patterns');
+      else {
+        const seen = new Set<string>();
+        p.repeats.forEach((r, ri) => {
+          const rat = `${at}.repeats[${ri}]`;
+          if (!r?.id) err(`${rat}.id`, 'required');
+          else if (seen.has(r.id)) err(`${rat}.id`, `duplicate id "${r.id}"`);
+          else seen.add(r.id);
+          if (!['line', 'circle'].includes(r?.mode)) err(`${rat}.mode`, 'must be "line" or "circle"');
+          if (!Number.isInteger(r?.count) || r.count < 2 || r.count > 64) {
+            err(`${rat}.count`, 'must be a whole number between 2 and 64');
+          }
+          if (r?.axis != null && ![0, 1, 2].includes(r.axis)) err(`${rat}.axis`, 'must be 0 (x), 1 (y) or 2 (z)');
+          if (r?.gapMm != null && (!Number.isFinite(r.gapMm) || Math.abs(r.gapMm) > 500)) {
+            err(`${rat}.gapMm`, 'must be a number between -500 and 500 millimetres');
+          }
+          if (r?.stepDeg != null && (!Number.isFinite(r.stepDeg) || Math.abs(r.stepDeg) > 360)) {
+            err(`${rat}.stepDeg`, 'must be between -360 and 360 degrees');
+          }
+        });
+        // Stacked patterns multiply; a runaway stack is a merchant mistake.
+        const total = p.repeats.reduce((n, r) => n * (Number.isInteger(r?.count) ? Math.max(1, r.count) : 1), 1);
+        if (total > 512) err(`${at}.repeats`, `stacks to ${total} copies — keep the total under 512`);
+      }
+    }
+
     const deps: string[] = [];
     for (const axis of ['x', 'y', 'z'] as const) {
       const a = p?.placement?.[axis] as AxisPlacement | undefined;

@@ -13,6 +13,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { Manifest, Part, TextOption, UploadOption } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
 import { partColours, visibleParts, parseUploadState, textColour, type UploadState, type Selections } from './state.ts';
+import { repeatInstances } from './repeat.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
 import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
 import { fitZoneToRegion, type ZoneFit } from './zone-fit.ts';
@@ -225,6 +226,9 @@ export class Viewer {
   /** Each part's untransformed centre — the pivot every transform is about. */
   private centres = new Map<string, [number, number, number]>();
   private layout: ReturnType<typeof resolveLayout> = new Map();
+  /** partId → the live repeat copies riding alongside its own mesh, and the
+   * signature (pattern + geometry + children) they were built from. */
+  private repeatCopies = new Map<string, { meshes: THREE.Object3D[]; sig: string }>();
 
   constructor(opts: ViewerOptions) {
     this.manifest = opts.manifest;
@@ -398,6 +402,7 @@ export class Viewer {
     catcher.receiveShadow = true;
     this.scene.add(catcher);
     this.shadowCatcher = catcher;
+    this.syncRepeats();
     this.recentreGroup();
     this.fitShadowCatcher();
     this.applyScene();
@@ -448,6 +453,7 @@ export class Viewer {
         this.syncPartTexture(part, material);
       }
     }
+    this.syncRepeats();
     this.recentreGroup();
     this.fitShadowCatcher();
     this.applyScene();
@@ -480,9 +486,92 @@ export class Viewer {
     );
   }
 
-  /** Where the laid-out model currently sits, in mm. */
+  /** A part's laid-out centre and extent, mm — what a repeat patterns. */
+  private laidOut(partId: string): { centre: [number, number, number]; size: [number, number, number] } | null {
+    const t = this.layout.get(partId);
+    if (!t) return null;
+    return {
+      centre: [0, 1, 2].map((a) => (t.box.min[a] + t.box.max[a]) / 2) as [number, number, number],
+      size: [0, 1, 2].map((a) => t.box.max[a] - t.box.min[a]) as [number, number, number],
+    };
+  }
+
+  /**
+   * Live repeat copies: a part's `repeats` spawn clones of its mesh — the
+   * whole mesh, children included, so engraved geometry, extruded text and
+   * image zones all come along. Copies carry the part's id, so clicking one
+   * selects the part; they share geometry and material, so recolouring or
+   * hiding the part takes every copy with it. Rebuilt only when the pattern,
+   * the geometry or the child set actually changes; otherwise just re-posed.
+   */
+  private syncRepeats(): void {
+    for (const part of this.manifest.parts) {
+      const mesh = this.meshes.get(part.id);
+      const laid = this.laidOut(part.id);
+      if (!mesh || !laid) continue;
+      const instances = repeatInstances(part.repeats, laid.centre, laid.size).slice(1);
+      const sig = JSON.stringify([
+        part.repeats ?? null, instances.length, mesh.geometry.uuid,
+        mesh.children.map((c) => c.name),
+      ]);
+      let entry = this.repeatCopies.get(part.id);
+      if (!entry || entry.sig !== sig) {
+        for (const old of entry?.meshes ?? []) old.removeFromParent();
+        const meshes = instances.map(() => {
+          const copy = mesh.clone(true);
+          // A copy is the part, not a new one: same id for picking, and its
+          // cloned children (text, zone overlays) stay transparent to rays
+          // exactly like the originals they came from.
+          copy.userData.part = part.id;
+          copy.traverse((o) => { if (o !== copy) o.raycast = () => {}; });
+          this.group.add(copy);
+          return copy;
+        });
+        entry = { meshes, sig };
+        this.repeatCopies.set(part.id, entry);
+      }
+      instances.forEach((inst, i) => {
+        const copy = entry!.meshes[i];
+        if (!copy) return;
+        copy.scale.copy(mesh.scale);
+        copy.quaternion.copy(mesh.quaternion);
+        if (inst.spinDeg) {
+          // Circle mode: the copy's centre swings about the origin and the
+          // body turns with it — one rigid turn, so it faces the tangent.
+          copy.quaternion.premultiply(
+            new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), inst.spinDeg * Math.PI / 180));
+        }
+        copy.position.set(inst.centre[0], inst.centre[1], inst.centre[2]);
+        copy.visible = mesh.visible;
+      });
+    }
+    // Parts that lost their repeats (or the part itself) leave nothing behind.
+    for (const [partId, entry] of this.repeatCopies) {
+      if (this.manifest.parts.some((p) => p.id === partId)) continue;
+      for (const old of entry.meshes) old.removeFromParent();
+      this.repeatCopies.delete(partId);
+    }
+  }
+
+  /** Where the laid-out model currently sits, in mm — repeat copies
+   * included, so framing, the grid and the shadow cover the whole row. */
   layoutBounds(): Box {
-    return modelBounds(this.layout);
+    const b = modelBounds(this.layout);
+    for (const part of this.manifest.parts) {
+      if (!part.repeats?.length) continue;
+      const laid = this.laidOut(part.id);
+      if (!laid) continue;
+      // A turned copy's box is not axis-aligned; its bounding sphere is.
+      const reach = Math.max(...laid.size) / 2;
+      for (const inst of repeatInstances(part.repeats, laid.centre, laid.size)) {
+        for (const a of [0, 1, 2]) {
+          const half = inst.spinDeg ? reach : laid.size[a] / 2;
+          b.min[a] = Math.min(b.min[a], inst.centre[a] - half);
+          b.max[a] = Math.max(b.max[a], inst.centre[a] + half);
+        }
+      }
+    }
+    return b;
   }
 
   /**
@@ -912,6 +1001,9 @@ export class Viewer {
     }
     this.syncText(selections);
     this.syncImages(selections);
+    // After the text and zones settle: copies mirror whatever the part
+    // ended up being — cut geometry, extruded glyphs, painted zones.
+    this.syncRepeats();
     this.highlight(this.highlighted);
   }
 

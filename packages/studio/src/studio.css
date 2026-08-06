@@ -290,9 +290,13 @@ input, select { font: inherit; }
   text-align: left;
 }
 .section-toggle:hover { color: var(--ink); }
+/* A long title keeps its line; its header control drops below rather than
+ * overlapping it in a narrow panel. */
 .section-toggle h4 { white-space: nowrap; }
-/* The header's own control (a lock, a toggle) yields before the title does. */
-.section-head > .lock { min-width: 0; text-align: right; }
+.section-head { flex-wrap: wrap; }
+.section-head > .lock, .section-head > .hint { min-width: 0; margin-left: auto; }
+/* The title yields its slack to the header control rather than colliding. */
+.section-toggle { flex: 0 1 auto; }
 .section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 .section-caret { flex: none; transition: transform .16s ease; }
 .section-toggle[aria-expanded="true"] .section-caret { transform: rotate(90deg); }

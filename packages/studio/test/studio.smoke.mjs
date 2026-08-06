@@ -1195,59 +1195,66 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     hookBox);
 }
 
-// ── 14. repeat a part along an axis (merchant-only pattern tool) ───────────
+// ── 14. live repeats: a pattern is a parameter of the part ────────────────
 {
   await page.click('.part-name:has-text("Base")');
   await page.waitForTimeout(200);
-  check('part editor offers the repeat tool', await page.isVisible('[data-testid="repeat-apply"]'), '');
-  await page.fill('[data-testid="repeat-count"]', '3');
-  await page.press('[data-testid="repeat-count"]', 'Enter');
-  await page.fill('[data-testid="repeat-gap"]', '6');
-  await page.press('[data-testid="repeat-gap"]', 'Enter');
+  check('part editor offers the pattern tool', await page.isVisible('[data-testid="repeat-add"]'), '');
+  const copies = () => page.evaluate(() => {
+    let n = 0;
+    window.__studioViewer.scene.traverse((o) => { if (o.isMesh && o.userData.part === 'base') n++; });
+    return n;
+  });
   const gridBefore = await page.evaluate(() => window.__studioGrid.scale.x);
-  await page.click('[data-testid="repeat-apply"]');
-  await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 4, { timeout: 20000 });
-  await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  await page.click('[data-testid="repeat-add"]');
+  await page.waitForTimeout(500);
   m = await manifest();
-  check('repeat ×3 stamps two more copies with counted labels',
-    m.parts.length === 4 && m.parts.filter((p) => /base/.test(p.id)).length === 3
-    && m.parts.some((p) => / 2$/.test(p.label)) && m.parts.some((p) => / 3$/.test(p.label)),
-    m.parts.map((p) => p.label));
+  const rid = m.parts.find((p) => p.id === 'base').repeats[0].id;
+  check('adding a pattern spawns copies WITHOUT adding parts',
+    await copies() === 3 && m.parts.length === 2, { copies: await copies(), parts: m.parts.length });
   const repeatVerdict = validateManifest(m);
-  check('manifest still valid after the repeat', repeatVerdict.ok, repeatVerdict.errors);
+  check('manifest still valid with the pattern', repeatVerdict.ok, repeatVerdict.errors);
+
+  // Retuning is live: the row re-forms, it is not re-stamped.
+  await page.fill(`[data-testid="repeat-count-${rid}"]`, '4');
+  await page.press(`[data-testid="repeat-count-${rid}"]`, 'Enter');
+  await page.fill(`[data-testid="repeat-gap-${rid}"]`, '6');
+  await page.press(`[data-testid="repeat-gap-${rid}"]`, 'Enter');
+  await page.waitForTimeout(500);
+  check('retuning count and gap updates the row live', await copies() === 4, await copies());
+
   // Copies march along X, pitched at the base's width plus the 6mm gap.
-  const centres = await page.evaluate(() => {
-    const v = window.__studioViewer;
-    return ['base', 'base-copy', 'base-copy-2'].map((id) => {
-      const b = v.partBox(id);
-      return b ? (b.min[0] + b.max[0]) / 2 : null;
-    });
+  const spread = await page.evaluate(() => {
+    const xs = [];
+    window.__studioViewer.scene.traverse((o) => { if (o.isMesh && o.userData.part === 'base') xs.push(o.position.x); });
+    return xs.sort((a, b) => a - b);
   });
   const width = await page.evaluate(() => {
     const b = window.__studioViewer.partBox('base');
     return b.max[0] - b.min[0];
   });
   check('copies sit gap apart edge-to-edge along X',
-    centres.every((c) => c !== null)
-    && near(centres[1] - centres[0], width + 6, 0.1) && near(centres[2] - centres[1], width + 6, 0.1),
-    { centres, width });
-  // The desk grows under the marching copies: the grid must now cover the
-  // full row, not just the original part.
-  const gridAfter = await page.evaluate(() => ({
-    scale: window.__studioGrid.scale.x,
-    reach: Math.max(...['base', 'base-copy', 'base-copy-2'].flatMap((id) => {
-      const b = window.__studioViewer.partBox(id);
-      return b ? [Math.abs(b.min[0]), Math.abs(b.max[0])] : [0];
-    })),
-  }));
-  check('the ground grid expands to cover the repeated row',
-    gridAfter.scale > gridBefore && gridAfter.scale / 2 >= gridAfter.reach,
-    { gridBefore, ...gridAfter });
+    spread.length === 4 && spread.every((x, i) => i === 0 || near(x - spread[i - 1], width + 6, 0.1)),
+    { spread, width });
 
-  await page.keyboard.press('Control+z');
-  await page.waitForTimeout(300);
+  // The desk grows under the marching copies.
+  const gridAfter = await page.evaluate(() => window.__studioGrid.scale.x);
+  check('the ground grid expands to cover the repeated row', gridAfter > gridBefore, { gridBefore, gridAfter });
+
+  // Stacking: a second pattern repeats everything the first produced, on a
+  // different axis by default — a grid, not a longer line.
+  await page.click('[data-testid="repeat-add"]');
+  await page.waitForTimeout(600);
   m = await manifest();
-  check('one undo removes the whole repeat', m.parts.length === 2, m.parts.length);
+  check('a second pattern stacks into a grid',
+    await copies() === 12 && m.parts.find((p) => p.id === 'base').repeats.length === 2
+    && m.parts.length === 2, { copies: await copies(), parts: m.parts.length });
+
+  // Removing the patterns returns the part to one mesh.
+  const ids = await page.evaluate(() => window.__studio.manifest.parts.find((p) => p.id === 'base').repeats.map((r) => r.id));
+  for (const id of ids) { await page.click(`[data-testid="repeat-remove-${id}"]`); await page.waitForTimeout(300); }
+  check('removing the patterns leaves the part alone',
+    await copies() === 1 && (await manifest()).parts.find((p) => p.id === 'base').repeats === undefined, await copies());
 }
 
 // ── 15. 3D text: place on a face, tune the typeface, customer types ────────
@@ -1359,6 +1366,10 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     m.options.find((o) => o.type === 'text')?.path === undefined, m.options.find((o) => o.type === 'text'));
 
   // The text takes its own colour, independent of the part it sits on.
+  // Text colour follows the part by default; the dropdown only exists once
+  // the merchant hands the choice to customers.
+  await page.check('[data-testid="text-colour-choice-base-text"]');
+  await page.waitForTimeout(200);
   await pick('text-colour-base-text', '#C82020');
   m = await manifest();
   check('the text-colour dropdown pins the slot colour',

@@ -102,6 +102,34 @@ export interface SceneSettings {
   shadowOpacity?: number;
 }
 
+/**
+ * A live pattern on a part: the renderer spawns `count - 1` extra copies
+ * of it, so the pattern stays a PARAMETER of the part rather than a pile
+ * of stamped duplicates. Copies share the original's geometry, material
+ * and colour option — recolouring or hiding the part carries all of them.
+ *
+ * `line` marches copies along a canonical axis at the part's laid-out
+ * size plus `gapMm` (negative overlaps on purpose). `circle` turns each
+ * copy `stepDeg`° further around the vertical axis through the world
+ * origin, the original taken as facing the tangent — the same rigid turn
+ * the stamping tool uses, so a part off-centre rings around the middle.
+ *
+ * Several repeats STACK: each one repeats everything the ones before it
+ * produced, so ×3 along X then ×2 along Y is a 3×2 grid of six.
+ */
+export interface RepeatSpec {
+  id: string;
+  mode: 'line' | 'circle';
+  /** Total instances including the original. 2–64. */
+  count: number;
+  /** line: which canonical axis the row marches along. Default 0 (x). */
+  axis?: 0 | 1 | 2;
+  /** line: edge-to-edge spacing. Default 5. */
+  gapMm?: Millimetres;
+  /** circle: degrees between copies. Default 360 / count. */
+  stepDeg?: number;
+}
+
 export interface Part {
   id: string;
   label: string;
@@ -109,6 +137,8 @@ export interface Part {
   mesh: string;
   placement?: Placement;
   material?: PartMaterial;
+  /** Live patterns applied to this part, in order — see RepeatSpec. */
+  repeats?: RepeatSpec[];
   /**
    * Only rendered when this option's current value is in the list — the
    * mechanism behind swappable model variants and optional add-ons.
