@@ -9,7 +9,7 @@ import { validateManifest } from './manifest/validate.ts';
 import { Viewer } from './runtime/viewer.ts';
 import {
   defaultSelections, resolveValue, resolveColour, coloursInUse, buildPayload,
-  visibleParts, isOptionActive, applySelection, parseUploadState, textColourKey,
+  visibleParts, isOptionActive, applySelection, parseUploadState, textColourKey, textColourChoices,
   type Selections,
 } from './runtime/state.ts';
 
@@ -299,14 +299,19 @@ export async function mount(opts: MountOptions) {
         render();
         post();
       };
-      const match = el('button', `cfg-swatch cfg-swatch-match${chosen ? '' : ' is-selected'}`);
+      // The merchant's own colour is the slot's default; the first button
+      // hands the text back to it.
+      const asAuthored = option.colourHex ?? '';
+      const match = el('button', `cfg-swatch${asAuthored ? '' : ' cfg-swatch-match'}${chosen ? '' : ' is-selected'}`);
       match.type = 'button';
-      match.title = 'Same as the part';
-      match.setAttribute('aria-label', 'Same colour as the part');
+      if (asAuthored) match.style.background = asAuthored;
+      match.title = asAuthored ? 'As designed' : 'Same as the part';
+      match.setAttribute('aria-label', match.title);
       match.addEventListener('click', () => pickColour(''));
       grid.append(match);
-      for (const sw of manifest.palettes?.[0]?.swatches ?? []) {
-        if (sw.available === false) continue;
+      const offered = textColourChoices(manifest, option);
+      for (const sw of manifest.palettes?.flatMap((p) => p.swatches) ?? []) {
+        if (sw.available === false || !offered.includes(sw.hex.toUpperCase())) continue;
         grid.append(swatchButton(sw.hex, sw.name, chosen.toUpperCase() === sw.hex.toUpperCase(), () => pickColour(sw.hex)));
       }
       wrap.append(el('p', 'cfg-note', 'Text colour'), grid);

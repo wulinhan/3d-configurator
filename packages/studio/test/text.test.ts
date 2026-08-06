@@ -7,7 +7,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateManifest } from '../../embed/src/manifest/validate.ts';
 import type { Manifest, TextOption } from '../../embed/src/manifest/types.ts';
-import { defaultSelections, applySelection, priceDeltas, sanitiseText, isOptionActive } from '../../embed/src/runtime/state.ts';
+import {
+  defaultSelections, applySelection, priceDeltas, sanitiseText, isOptionActive,
+  textColour, textColourChoices,
+} from '../../embed/src/runtime/state.ts';
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
   addTextSlot, setTextSlot, setTextPath, removeTextSlot, removePart, renamePart, EditError,
@@ -225,4 +228,42 @@ test('validator: the slot geometry rules hold', () => {
   assert.ok(!broken({ part: 'ghost' }).ok, 'unknown part');
   assert.ok(broken({ placeholder: 'a'.repeat(30) }).warnings.some((w) => /maxLength/.test(w.message)),
     'over-long placeholder warns');
+});
+
+test('the merchant colour stands alone; the checkbox only adds a customer choice', () => {
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  // Pinning a colour needs no permission from the customer-choice flag.
+  m = setTextSlot(m, 'body-text', { colourHex: '#C82020' });
+  valid(m);
+  assert.equal(slotOf(m).colourHex, '#C82020');
+  assert.equal(slotOf(m).customerColour, undefined);
+  const locked = defaultSelections(m);
+  assert.equal(locked['body-text:colour'], undefined, 'a locked slot has no colour to choose');
+  assert.equal(textColour(m, locked, slotOf(m)), '#C82020', 'and renders in the merchant colour');
+
+  // Opening the choice keeps that colour as the opening one.
+  m = setTextSlot(m, 'body-text', { customerColour: true });
+  valid(m);
+  assert.equal(slotOf(m).colourHex, '#C82020');
+  const s = defaultSelections(m);
+  assert.equal(s['body-text:colour'], '#C82020');
+
+  // Narrowing the offer to two swatches: anything else is refused.
+  const palette = m.palettes![0].swatches;
+  m = setTextSlot(m, 'body-text', { colourChoices: [palette[0].hex, palette[1].hex] });
+  valid(m);
+  assert.deepEqual(textColourChoices(m, slotOf(m)), [palette[0].hex.toUpperCase(), palette[1].hex.toUpperCase()]);
+  applySelection(m, s, 'body-text:colour', palette[1].hex);
+  assert.equal(s['body-text:colour'], palette[1].hex.toUpperCase());
+  const offPalette = palette.find((sw) => ![palette[0].hex, palette[1].hex].includes(sw.hex));
+  if (offPalette) {
+    applySelection(m, s, 'body-text:colour', offPalette.hex);
+    assert.equal(s['body-text:colour'], '', 'a swatch outside the offer never sticks');
+  }
+
+  // Closing the choice again keeps the colour and drops only the offer.
+  m = setTextSlot(m, 'body-text', { customerColour: null });
+  assert.equal(slotOf(m).colourHex, '#C82020', 'the merchant colour survives');
+  assert.equal(slotOf(m).customerColour, undefined);
+  assert.equal(slotOf(m).colourChoices, undefined);
 });

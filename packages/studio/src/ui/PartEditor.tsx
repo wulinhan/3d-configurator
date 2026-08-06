@@ -648,6 +648,7 @@ function TextSlotEditor(props: {
 }) {
   const { slot, manifest, act } = props;
   const patch = (p: TextSlotPatch, o?: SetManifestOptions) => act(() => setTextSlot(manifest, slot.id, p), o);
+  const swatches = manifest.palettes?.flatMap((p) => p.swatches) ?? [];
   return (
     <div className="text-slot" data-testid={`text-slot-${slot.id}`}>
       <label className="field wide">
@@ -659,6 +660,8 @@ function TextSlotEditor(props: {
           onChange={(v) => patch({ font: v as TextFont })}
         />
       </label>
+      {/* Style and size get a row to themselves; the depth knobs get the
+        * next one. Four fields side by side squeezed all of them illegible. */}
       <div className="field-row">
         <label className="field">
           <span className="field-label">Style</span>
@@ -673,8 +676,11 @@ function TextSlotEditor(props: {
           label="Size" value={slot.sizeMm} suffix="mm" testId={`text-size-${slot.id}`}
           onCommit={(v, o) => patch({ sizeMm: v }, o)}
         />
+      </div>
+      <div className="field-row">
         <NumberField
-          label="Depth" value={slot.depthMm} suffix="mm" testId={`text-depth-${slot.id}`}
+          label={(slot.style ?? 'emboss') === 'emboss' ? 'Depth' : 'Engrave depth'}
+          value={slot.depthMm} suffix="mm" testId={`text-depth-${slot.id}`}
           onCommit={(v, o) => patch({ depthMm: v }, o)}
         />
         {(slot.style ?? 'emboss') === 'emboss' && (
@@ -726,9 +732,22 @@ function TextSlotEditor(props: {
           )}
         </div>
       )}
-      {/* Text takes the part's colours by default — no control needed for
-        * the common case. Ticking the box hands the choice to customers;
-        * left unticked the colour is locked to what the part wears. */}
+      {/* The merchant's own colour, always available: unset it follows the
+        * part, set it is what the text renders in — whether or not
+        * customers are allowed to repaint it. */}
+      <label className="field wide">
+        <span className="field-label">Text colour</span>
+        <Select
+          ariaLabel="Text colour" testId={`text-colour-${slot.id}`}
+          value={slot.colourHex ?? ''}
+          placeholder="Same as the part"
+          options={[
+            { value: '', label: 'Same as the part' },
+            ...swatches.map((s) => ({ value: s.hex, label: s.name, chip: s.hex })),
+          ]}
+          onChange={(v) => patch({ colourHex: v === '' ? null : (v as `#${string}`) })}
+        />
+      </label>
       <label className="lock">
         <input
           type="checkbox" checked={!!slot.customerColour} data-testid={`text-colour-choice-${slot.id}`}
@@ -737,19 +756,31 @@ function TextSlotEditor(props: {
         Customers can choose the text colour
       </label>
       {slot.customerColour && (
-        <label className="field wide">
-          <span className="field-label">Customers open with</span>
-          <Select
-            ariaLabel="Text colour customers open with" testId={`text-colour-${slot.id}`}
-            value={slot.colourHex ?? ''}
-            placeholder="Same as the part"
-            options={[
-              { value: '', label: 'Same as the part' },
-              ...(manifest.palettes?.[0]?.swatches ?? []).map((s) => ({ value: s.hex, label: s.name, chip: s.hex })),
-            ]}
-            onChange={(v) => patch({ colourHex: v === '' ? null : (v as `#${string}`) })}
-          />
-        </label>
+        // Which swatches they get. None ticked = the whole palette.
+        <div className="swatch-picks" data-testid={`text-colour-picks-${slot.id}`}>
+          <span className="field-label">Customers may pick</span>
+          <div className="swatch-pick-row">
+            {swatches.map((sw) => {
+              const chosen = slot.colourChoices?.some((h) => h.toUpperCase() === sw.hex.toUpperCase()) ?? false;
+              return (
+                <label key={sw.id} className="swatch-pick" title={sw.name}>
+                  <input
+                    type="checkbox" checked={chosen}
+                    data-testid={`text-colour-pick-${slot.id}-${sw.id}`}
+                    onChange={(e) => {
+                      const kept = (slot.colourChoices ?? []).filter((h) => h.toUpperCase() !== sw.hex.toUpperCase());
+                      patch({ colourChoices: e.target.checked ? [...kept, sw.hex as `#${string}`] : kept });
+                    }}
+                  />
+                  <span className="chip small" style={{ background: sw.hex }} />
+                </label>
+              );
+            })}
+          </div>
+          <span className="hint">
+            {slot.colourChoices?.length ? `${slot.colourChoices.length} offered` : 'None ticked — the whole palette is offered'}
+          </span>
+        </div>
       )}
       <label className="field wide">
         <span className="field-label">Example text (customers see it as a hint)</span>

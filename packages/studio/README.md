@@ -60,7 +60,11 @@ The CUSTOMISER (not the Studio, where merchants author against fixed
 coordinates) parks the product's centre on the world origin and frames the
 whole of it on open, unless the merchant saved a view — so a model
 authored off in a corner still opens centred and orbits around itself
-rather than swinging around empty space.
+rather than swinging around empty space. The opening shot looks DOWN the
+45° diagonal (turned 45° round, so a top, a front and a side all read at
+once), pulled back off the product's own bounding sphere — the span the
+ground grid covers — rather than a fixed distance, so a keyring and a
+tabletop open filling the same share of the frame.
 
 ## Gizmos
 
@@ -258,19 +262,24 @@ shells or flipped winding, where raw CSG loses its inside/outside bearings
 and leaves see-through pockets. The pocket FLOOR — the flat face, not the
 walls — renders as its own mesh in the slot's text colour, so engraved
 letters read in colour at the bottom of the cut while the walls stay the
-part's material. Follows the customer's text live — glyph **size**, extrusion **depth**, a
+part's material. Text is authored in REAL millimetres and stays there: the glyph carries the
+inverse of its carrier's scale, so growing a part to make room for a longer
+name leaves the lettering exactly the size it was set to (the engrave cutter
+shrinks the same way, so an engraved name keeps its true depth and size
+too). Follows the customer's text live — glyph **size**, extrusion **depth**, a
 spin about the normal, a length limit, example text (rendered as
 the model's preview and the input's ghost), and pricing — flat and/or
-per-character, recomputed server-side like every other delta. The text mesh
-shares the carrier part's material, so it colours with the part — that is
-the default and needs no control. Ticking **Customers can choose the text
-colour** hands that choice over: the customer panel shows the product's
-palette under the text box (the first, slashed swatch means "same as the
-part"), and the pick rides the order payload named, not as a hex. Left
-unticked the colour is LOCKED to what the part wears. Customer picks are
-checked against the palette, so a hand-edited payload cannot paint a
-colour the product doesn't sell. The payload
-carries the typed string on the order. Deleting or renaming the carrier part
+per-character, recomputed server-side like every other delta. **Text colour** is the merchant's to set at any time: left alone the text
+shares the carrier part's material and colours with it, or pick a swatch
+and the text renders in that — no permission needed from anything else.
+Ticking **Customers can choose the text colour** ADDS a picker on top:
+tick the swatches customers may choose from (none ticked offers the whole
+palette), and the customer panel shows them under the text box with the
+merchant's own colour as the first button. Their pick rides the order
+payload named, not as a hex, and is checked against the offered subset, so
+a hand-edited payload cannot order a finish the merchant never listed.
+Closing the choice again keeps the colour and drops only the offer. The
+payload carries the typed string on the order. Deleting or renaming the carrier part
 deletes or renames the slot with it.
 
 **Bend** curves the run along a circular arc: the number is the angle the

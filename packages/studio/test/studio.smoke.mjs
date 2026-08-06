@@ -1366,10 +1366,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     m.options.find((o) => o.type === 'text')?.path === undefined, m.options.find((o) => o.type === 'text'));
 
   // The text takes its own colour, independent of the part it sits on.
-  // Text colour follows the part by default; the dropdown only exists once
-  // the merchant hands the choice to customers.
-  await page.check('[data-testid="text-colour-choice-base-text"]');
-  await page.waitForTimeout(200);
+  // The merchant's colour stands on its own — no permission needed from the
+  // customer-choice box, which only adds a picker on top.
   await pick('text-colour-base-text', '#C82020');
   m = await manifest();
   check('the text-colour dropdown pins the slot colour',

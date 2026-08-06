@@ -416,8 +416,9 @@ export class Viewer {
       this.controls.target.copy(centre);
       this.controls.update();
     }
-    // No saved view: open on the whole product, centred and fully in frame.
-    if (this.centreOnOrigin) this.frame();
+    // No saved view: open on the whole product, centred, from a 45° three-
+    // quarter angle, far enough out that all of it is in frame.
+    if (this.centreOnOrigin) this.frameFromDefaultAngle();
   }
 
   /**
@@ -484,6 +485,13 @@ export class Viewer {
       Math.min(b.min[1], 0) + this.centreOffset.y - 0.05,
       (b.min[2] + b.max[2]) / 2 + this.centreOffset.z,
     );
+  }
+
+  /** The scale layout gives a part — text divides by it so lettering keeps
+   * its authored millimetres however the part is resized. */
+  private partScale(partId: string): [number, number, number] {
+    const t = this.layout.get(partId);
+    return t ? ([...t.scale] as [number, number, number]) : [1, 1, 1];
   }
 
   /** A part's laid-out centre and extent, mm — what a repeat patterns. */
@@ -612,6 +620,46 @@ export class Viewer {
     this.camera.position.copy(centre).addScaledVector(direction, distance);
     this.controls.minDistance = span * 0.4;
     this.controls.maxDistance = span * 8;
+    this.camera.near = Math.max(distance / 100, 0.1);
+    this.camera.far = distance * 20;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+  }
+
+  /**
+   * The customiser's opening shot when the merchant saved no view: looking
+   * down the 45° diagonal at the centred product, pulled back until the
+   * whole of it fits — measured off the model's own footprint (the span the
+   * ground grid covers) rather than a fixed distance, so a keyring and a
+   * tabletop both open filling the same amount of frame.
+   */
+  private frameFromDefaultAngle(): void {
+    const b = this.layoutBounds();
+    if (!Number.isFinite(b.min[0])) return;
+    const centre = new THREE.Vector3(...[0, 1, 2].map((a) => (b.min[a] + b.max[a]) / 2) as [number, number, number])
+      .add(this.centreOffset);
+    // The bounding SPHERE is what has to fit, so a product turned on the
+    // grid can't poke out of frame at some other orbit angle.
+    const radius = Math.max(
+      0.5 * Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]),
+      1,
+    );
+    const fov = (this.camera.fov * Math.PI) / 180;
+    // Fit vertically AND horizontally, then leave a 12% margin.
+    const fitV = radius / Math.sin(fov / 2);
+    const fitH = radius / Math.sin(Math.atan(Math.tan(fov / 2) * this.camera.aspect));
+    const distance = Math.max(fitV, fitH) * 1.12;
+    // Looking DOWN at 45°, turned 45° round: the three-quarter view that
+    // shows a top face, a front face and a side at once. (A normalised
+    // (1,1,1) would only be 35° above the ground — the height has to be
+    // sin 45° with the remaining cos 45° split across the two ground axes.)
+    const up = Math.SQRT1_2;          // sin 45°
+    const flat = Math.SQRT1_2 * up;   // cos 45°, split evenly over x and z
+    const dir = new THREE.Vector3(flat, up, flat).normalize();
+    this.controls.target.copy(centre);
+    this.camera.position.copy(centre).addScaledVector(dir, distance);
+    this.controls.minDistance = radius * 0.6;
+    this.controls.maxDistance = radius * 12;
     this.camera.near = Math.max(distance / 100, 0.1);
     this.camera.far = distance * 20;
     this.camera.updateProjectionMatrix();
@@ -1332,8 +1380,9 @@ export class Viewer {
         if (this.debossSig.get(partId) !== sig) return; // superseded meanwhile
         const base = this.debossBase.get(partId)!;
         let geo: THREE.BufferGeometry = base;
+        const scale = this.partScale(partId);
         list.forEach((j, i) => {
-          const next = cutTextGeometry(geo, j.text, fonts[i], j.spec, csg);
+          const next = cutTextGeometry(geo, j.text, fonts[i], j.spec, csg, scale);
           applyBoxUvs(next); // procedural finishes keep tiling on the cut part
           if (geo !== base) geo.dispose();
           geo = next;
@@ -1349,13 +1398,14 @@ export class Viewer {
         list.forEach((j, i) => {
           const floorKey = JSON.stringify([
             j.text, j.spec.font, j.spec.sizeMm, j.spec.depthMm,
-            j.spec.rotationDeg, j.spec.bendDeg, j.spec.path, j.spec.origin, j.spec.normal, j.spec.colourHex,
+            j.spec.rotationDeg, j.spec.bendDeg, j.spec.path, j.spec.origin, j.spec.normal,
+            j.spec.colourHex, scale,
           ]);
           let entry = this.debossFloors.get(j.spec.id);
           if (entry?.key === floorKey && entry.mesh.parent === target) return;
           if (entry) { entry.mesh.removeFromParent(); entry.mesh.geometry.dispose(); }
           const holder = { customMat: entry?.customMat };
-          const mesh = new THREE.Mesh(pocketFloor(j.text, fonts[i], j.spec), undefined as unknown as THREE.Material);
+          const mesh = new THREE.Mesh(pocketFloor(j.text, fonts[i], j.spec, scale), undefined as unknown as THREE.Material);
           mesh.material = this.textMaterial(j.spec, holder) ?? mesh.material;
           mesh.castShadow = mesh.receiveShadow = true;
           mesh.raycast = () => {};
@@ -1432,7 +1482,8 @@ export class Viewer {
     const existing = this.textMeshes.get(option.id);
     const key = JSON.stringify([
       text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
-      option.rotationDeg, option.bendDeg, option.path, option.origin, option.normal, option.part, option.colourHex, option.style,
+      option.rotationDeg, option.bendDeg, option.path, option.origin, option.normal, option.part,
+      option.colourHex, option.style, this.partScale(option.part),
     ]);
     if (existing?.key === key) return;
     this.textMeshes.set(option.id, { mesh: existing?.mesh, key, customMat: existing?.customMat });
@@ -1461,7 +1512,7 @@ export class Viewer {
         const parent = this.meshes.get(spec.part);
         if (parent && mesh.parent !== parent) parent.add(mesh);
       }
-      placeGlyph(mesh, spec);
+      placeGlyph(mesh, spec, this.partScale(spec.part));
     });
   }
 
@@ -1542,13 +1593,13 @@ export class Viewer {
           chars.forEach((ch, k) => {
             const target = k === 0 ? carrier : current.pieces[k - 1]?.get(spec.part);
             if (!target) return;
-            const geo = ch === ' ' ? base.clone() : cutTextGeometry(base, ch, font, spec, csg);
+            const geo = ch === ' ' ? base.clone() : cutTextGeometry(base, ch, font, spec, csg, this.partScale(spec.part));
             if (ch !== ' ') applyBoxUvs(geo);
             target.geometry = geo;
             current.ownGeometries!.push(geo);
             if (ch !== ' ') {
               // Each piece's pocket floor carries the text colour.
-              const floor = new THREE.Mesh(pocketFloor(ch, font, spec), floorMaterial);
+              const floor = new THREE.Mesh(pocketFloor(ch, font, spec, this.partScale(spec.part)), floorMaterial);
               floor.castShadow = floor.receiveShadow = true;
               floor.raycast = () => {};
               floor.name = `text-${spec.id}-${k}`;
@@ -1570,7 +1621,7 @@ export class Viewer {
             glyph.castShadow = glyph.receiveShadow = true;
             glyph.raycast = () => {};
             glyph.name = `text-${spec.id}-${k}`;
-            placeGlyph(glyph, spec);
+            placeGlyph(glyph, spec, this.partScale(spec.part));
             parent.add(glyph);
             current.glyphs.push(glyph);
           });

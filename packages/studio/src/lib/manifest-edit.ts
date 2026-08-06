@@ -1435,23 +1435,29 @@ export type TextSlotPatch = Partial<Pick<TextOption,
   'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'bendDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label' | 'style'>>
   & { perChar?: { mode?: 'line' | 'circle'; axis?: Axis; gapMm?: number; stepDeg?: number } | null }
   & { colourHex?: Hex | null }
-  & { customerColour?: boolean | null };
+  & { customerColour?: boolean | null }
+  & { colourChoices?: Hex[] | null };
 
 export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlotPatch): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);
   if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
   return edit(manifest, (draft) => {
     const o = draft.options.find((x) => x.id === optionId) as TextOption;
-    const { perChar, colourHex, customerColour, ...rest } = patch;
+    const { perChar, colourHex, customerColour, colourChoices, ...rest } = patch;
     Object.assign(o, rest);
     if (perChar === null) delete o.perChar;
     else if (perChar !== undefined) o.perChar = perChar;
+    // The merchant's colour stands on its own — it is what the text renders
+    // in whether or not customers may repaint it.
     if (colourHex === null) delete o.colourHex;
     else if (colourHex !== undefined) o.colourHex = colourHex;
-    // Locking the colour back down drops the opening pick with it — a
-    // locked slot wears the part's colours, full stop.
-    if (customerColour === null || customerColour === false) { delete o.customerColour; delete o.colourHex; }
-    else if (customerColour) o.customerColour = true;
+    // Closing the choice keeps that colour and drops only the offer.
+    if (customerColour === null || customerColour === false) {
+      delete o.customerColour;
+      delete o.colourChoices;
+    } else if (customerColour) o.customerColour = true;
+    if (colourChoices === null || colourChoices?.length === 0) delete o.colourChoices;
+    else if (colourChoices !== undefined) o.colourChoices = colourChoices;
     // Bend and a drawn path are alternative baselines — turning the Bend
     // dial straightens away any drawn curve.
     if (patch.bendDeg !== undefined) delete o.path;

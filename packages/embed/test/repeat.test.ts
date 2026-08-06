@@ -73,3 +73,15 @@ test('nonsense counts are skipped, and a runaway stack is capped', () => {
     { id: `r${i}`, mode: 'line' as const, count: 8, axis: 0 as const, gapMm: 1 }));
   assert.ok(repeatInstances(huge, CENTRE, SIZE).length <= 4096, 'never unbounded');
 });
+
+test('a negative step turns the ring the other way', () => {
+  const cw = repeatInstances([{ id: 'r', mode: 'circle', count: 3, stepDeg: -30 }], [10, 0, 0], SIZE);
+  const ccw = repeatInstances([{ id: 'r', mode: 'circle', count: 3, stepDeg: 30 }], [10, 0, 0], SIZE);
+  assert.deepEqual(cw.map((i) => i.spinDeg), [0, 30, 60], 'the spin follows the sign');
+  // Mirror images about the starting radius: same distance, opposite swing.
+  cw.forEach((inst, i) => {
+    near(Math.hypot(inst.centre[0], inst.centre[2]), 10, 1e-9);
+    near(inst.centre[0], ccw[i].centre[0], 1e-9);
+    near(inst.centre[2], -ccw[i].centre[2], 1e-9);
+  });
+});

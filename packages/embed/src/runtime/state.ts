@@ -37,15 +37,27 @@ function paletteHexes(manifest: Manifest): Set<string> {
   return out;
 }
 
+/** The swatches a text slot offers its customers: the merchant's chosen
+ * subset, or the whole palette when they didn't narrow it. Always a subset
+ * of the palette — a stale hex in `colourChoices` offers nothing. */
+export function textColourChoices(manifest: Manifest, option: Option): string[] {
+  if (option.type !== 'text') return [];
+  const palette = paletteHexes(manifest);
+  const wanted = option.colourChoices?.map((h) => h.toUpperCase()).filter((h) => palette.has(h));
+  return wanted?.length ? wanted : [...palette];
+}
+
 /** The colour a text slot renders in: the customer's pick when the slot
  * opens that choice, otherwise the merchant's pinned colour — and when
  * neither, undefined, meaning the text shares the carrier part's material. */
 export function textColour(manifest: Manifest, selections: Selections, option: Option): Hex | undefined {
   if (option.type !== 'text') return undefined;
+  // The merchant's colour is the slot's colour, full stop — opening the
+  // choice up only lets a customer paint OVER it.
   if (!option.customerColour) return option.colourHex;
-  const picked = selections[textColourKey(option.id)] ?? '';
-  if (picked && paletteHexes(manifest).has(picked.toUpperCase())) return picked as Hex;
-  return picked ? option.colourHex : undefined;
+  const picked = (selections[textColourKey(option.id)] ?? '').toUpperCase();
+  if (picked && textColourChoices(manifest, option).includes(picked)) return picked as Hex;
+  return option.colourHex;
 }
 
 /** Every option's starting value, before the customer touches anything. */
@@ -219,7 +231,8 @@ export function applySelection(manifest: Manifest, selections: Selections, optio
     const slot = manifest.options.find(
       (o) => o.type === 'text' && o.customerColour && textColourKey(o.id) === optionId);
     if (slot) {
-      selections[optionId] = paletteHexes(manifest).has(value.toUpperCase()) ? value.toUpperCase() : '';
+      const offered = textColourChoices(manifest, slot);
+      selections[optionId] = offered.includes(value.toUpperCase()) ? value.toUpperCase() : '';
       return;
     }
   }

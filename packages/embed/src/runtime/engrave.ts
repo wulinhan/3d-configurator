@@ -157,7 +157,14 @@ function bentTextGeometry(text: string, font: Font, spec: TextOption): THREE.Buf
  * front. Sink lowers the sketch plane into the part; what stays proud of
  * the surface is depth − sink.
  */
-export function placeGlyph(mesh: THREE.Object3D, spec: TextOption): void {
+export function placeGlyph(
+  mesh: THREE.Object3D,
+  spec: TextOption,
+  /** The carrier part's scale. Text is authored in REAL millimetres, so the
+   * glyph carries its inverse: resizing the part to fit more text must not
+   * blow the lettering up with it. */
+  partScale: [number, number, number] = [1, 1, 1],
+): void {
   const n = new THREE.Vector3(...spec.normal).normalize();
   const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
   const xAxis = new THREE.Vector3().crossVectors(upRef, n).normalize();
@@ -166,7 +173,13 @@ export function placeGlyph(mesh: THREE.Object3D, spec: TextOption): void {
   if (spec.rotationDeg) {
     mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(n, spec.rotationDeg * Math.PI / 180));
   }
+  mesh.scale.set(...invScale(partScale));
   mesh.position.set(...spec.origin).addScaledVector(n, -(spec.sinkMm ?? 0));
+}
+
+/** 1/scale per axis, guarding the degenerate zero. */
+export function invScale(scale: [number, number, number]): [number, number, number] {
+  return scale.map((v) => (Math.abs(v) > 1e-9 ? 1 / v : 1)) as [number, number, number];
 }
 
 /** The triangle soup of one material group, index resolved — CSG results
@@ -192,10 +205,13 @@ export function trianglesOfGroup(geo: THREE.BufferGeometry, materialIndex: numbe
  * walls, or its bottom lid (the pocket floor). The top lid — the opening —
  * is never kept. ExtrudeGeometry groups: 0 = the two lids, 1 = the walls;
  * the lids separate cleanly by extrusion depth. */
-function prismTriangles(text: string, font: Font, spec: TextOption, keep: 'walls' | 'floor'): number[] {
+function prismTriangles(
+  text: string, font: Font, spec: TextOption, keep: 'walls' | 'floor',
+  partScale: [number, number, number] = [1, 1, 1],
+): number[] {
   const prism = buildTextGeometry(text, font, spec); // exact depth, flush with the surface
   const posed = new THREE.Mesh(prism);
-  placeGlyph(posed, { ...spec, sinkMm: spec.depthMm });
+  placeGlyph(posed, { ...spec, sinkMm: spec.depthMm }, partScale);
   posed.updateMatrixWorld();
   const matrix = posed.matrixWorld;
   const pos = prism.attributes.position;
@@ -222,16 +238,20 @@ function prismTriangles(text: string, font: Font, spec: TextOption, keep: 'walls
 /** The engraved pocket's side walls, posed where the cut runs. The floor is
  * NOT included — it renders as its own mesh so it can carry the slot's text
  * colour (see pocketFloor). */
-export function pocketLining(text: string, font: Font, spec: TextOption): number[] {
-  return prismTriangles(text, font, spec, 'walls');
+export function pocketLining(
+  text: string, font: Font, spec: TextOption, partScale: [number, number, number] = [1, 1, 1],
+): number[] {
+  return prismTriangles(text, font, spec, 'walls', partScale);
 }
 
 /** The pocket's flat floor as its own geometry, in the carrier's local
  * space — the face that carries the slot's text colour. */
-export function pocketFloor(text: string, font: Font, spec: TextOption): THREE.BufferGeometry {
+export function pocketFloor(
+  text: string, font: Font, spec: TextOption, partScale: [number, number, number] = [1, 1, 1],
+): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position',
-    new THREE.BufferAttribute(Float32Array.from(prismTriangles(text, font, spec, 'floor')), 3));
+    new THREE.BufferAttribute(Float32Array.from(prismTriangles(text, font, spec, 'floor', partScale)), 3));
   geo.computeVertexNormals();
   return geo;
 }
@@ -253,6 +273,10 @@ export function cutTextGeometry(
   font: Font,
   spec: TextOption,
   csg: Csg,
+  /** The carrier's scale — the cut is made in the part's UNSCALED local
+   * space, so the cutter shrinks by its inverse and the engraving comes out
+   * the authored size once the part's own scale is applied. */
+  partScale: [number, number, number] = [1, 1, 1],
 ): THREE.BufferGeometry {
   const { Evaluator, Brush, SUBTRACTION } = csg;
   // The cutter overshoots the surface by 0.2mm so the hole opens cleanly.
@@ -263,19 +287,20 @@ export function cutTextGeometry(
     evaluator.useGroups = true; // group 0 = faces from the part, 1 = cut faces
     if (!source.attributes.normal) source.computeVertexNormals();
     const posed = new THREE.Mesh(cutGeo);
-    placeGlyph(posed, { ...spec, sinkMm: spec.depthMm }); // cutter bottom at full depth
+    placeGlyph(posed, { ...spec, sinkMm: spec.depthMm }, partScale); // cutter bottom at full depth
     const a = new Brush(source);
     a.updateMatrixWorld();
     const b = new Brush(cutGeo);
     b.position.copy(posed.position);
     b.quaternion.copy(posed.quaternion);
+    b.scale.copy(posed.scale);
     b.updateMatrixWorld();
     const out = evaluator.evaluate(a, b, SUBTRACTION);
 
     const merged = new THREE.BufferGeometry();
     const soup = new Float32Array([
       ...trianglesOfGroup(out.geometry, 0),
-      ...pocketLining(text, font, spec),
+      ...pocketLining(text, font, spec, partScale),
     ]);
     merged.setAttribute('position', new THREE.BufferAttribute(soup, 3));
     merged.computeVertexNormals();

@@ -331,13 +331,21 @@ export interface TextOption {
    */
   colourHex?: Hex;
   /**
-   * Let CUSTOMERS pick the text's colour: the panel shows the product's
-   * palette under the text box, and their choice is stored alongside the
-   * typed string (selection key `<id>:colour`, empty = follow the part).
-   * Unset, the colour is locked to what the merchant set — the carrier
-   * part's colours, or `colourHex` when pinned.
+   * Let CUSTOMERS pick the text's colour too. The panel shows the swatches
+   * `colourChoices` allows (the whole palette when unset) under the text
+   * box, and their pick is stored alongside the typed string (selection
+   * key `<id>:colour`; empty = the merchant's own colour above). Unset,
+   * `colourHex` is simply what the text renders in — the merchant's choice
+   * stands on its own and does not depend on this flag.
    */
   customerColour?: boolean;
+  /**
+   * With `customerColour`, the subset of palette swatches customers may
+   * pick from — hexes, matched against the product's palettes. Unset means
+   * the whole palette. A pick outside the list is refused, so a tampered
+   * payload cannot order a finish the merchant never offered.
+   */
+  colourChoices?: Hex[];
   /**
    * One piece per letter: the carrier part — or, if it belongs to an
    * assembly, the WHOLE assembly — becomes a TEMPLATE, and every character

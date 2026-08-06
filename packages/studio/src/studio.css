@@ -280,9 +280,16 @@ input, select { font: inherit; }
 .part-editor h4 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--ink2); }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 
-/* Collapsible sections: the whole title row is the hit target, and the
- * caret turns to point down when the body is open. */
+/* Collapsible sections: the whole title row is a banner — tinted, ruled and
+ * clickable — so the panel reads as stacked cards rather than a run-on list. */
 .panel-section { display: flex; flex-direction: column; gap: 8px; }
+.panel-section > .section-head {
+  background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 10px; margin-bottom: 2px;
+}
+.panel-section > .section-head:hover { border-color: #c5c2bb; }
+.panel-section .section-body { padding: 0 2px; }
 .panel-section .section-body { display: flex; flex-direction: column; gap: 8px; }
 .section-toggle {
   display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
@@ -301,6 +308,21 @@ input, select { font: inherit; }
 .section-caret { flex: none; transition: transform .16s ease; }
 .section-toggle[aria-expanded="true"] .section-caret { transform: rotate(90deg); }
 .section-icon { flex: none; }
+.section-toggle h4 { color: var(--ink); }
+
+/* Which palette swatches a text slot offers its customers. The swatch IS
+ * the control — a ticked one wears a ring, like the customer panel's. */
+.swatch-picks { display: flex; flex-direction: column; gap: 6px; }
+.swatch-pick-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch-pick { display: inline-flex; cursor: pointer; }
+.swatch-pick input { position: absolute; opacity: 0; width: 0; height: 0; }
+.swatch-pick .chip.small {
+  width: 20px; height: 20px; border-radius: 6px;
+  border: 1.5px solid var(--line); box-shadow: none;
+  transition: box-shadow .15s, border-color .15s;
+}
+.swatch-pick input:checked + .chip.small { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.swatch-pick input:focus-visible + .chip.small { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lock { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink2); }
 
 .field-row { display: flex; gap: 8px; }

@@ -8,9 +8,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
 import sansBold from '../src/fonts/sans-bold.ts';
-import { buildTextGeometry, glyphStations, pocketFloor, pocketLining } from '../src/runtime/engrave.ts';
+import { buildTextGeometry, glyphStations, placeGlyph, pocketFloor, pocketLining } from '../src/runtime/engrave.ts';
 import type { TextOption } from '../src/manifest/types.ts';
 
 const font = new FontLoader().parse(sansBold as never);
@@ -166,4 +167,34 @@ test('path engrave: the pocket follows the drawn curve', () => {
   floor.computeBoundingBox();
   assert.ok(floor.boundingBox!.max.y > 9, 'the floor rides the curve');
   assert.ok(pocketLining('HI', font, s).length >= 9, 'walls intact');
+});
+
+// ── text keeps its authored millimetres ─────────────────────────────────────
+
+test('a glyph carries the inverse of its part scale, so resizing the part leaves the lettering alone', () => {
+  const mesh = new THREE.Object3D();
+  placeGlyph(mesh, spec(), [2, 2, 2]);
+  // The part doubles; the glyph halves, so the two cancel in world space.
+  near(mesh.scale.x, 0.5); near(mesh.scale.y, 0.5); near(mesh.scale.z, 0.5);
+
+  // Non-uniform stretching is cancelled axis by axis — 8mm text on a part
+  // stretched 3× wide is still 8mm text, not 24mm.
+  placeGlyph(mesh, spec(), [3, 1, 0.5]);
+  near(mesh.scale.x, 1 / 3); near(mesh.scale.y, 1); near(mesh.scale.z, 2);
+
+  // An unscaled part leaves the glyph at its natural size.
+  placeGlyph(mesh, spec(), [1, 1, 1]);
+  near(mesh.scale.x, 1);
+  // A degenerate zero never divides by zero.
+  placeGlyph(mesh, spec(), [0, 1, 1]);
+  near(mesh.scale.x, 1);
+});
+
+test('an engraved pocket shrinks with the part so the cut stays true size', () => {
+  const s = spec({ style: 'deboss' });
+  const plain = pocketFloor('HI', font, s);
+  const onScaled = pocketFloor('HI', font, s, [2, 2, 2]);
+  // Same letters, half the local size: the part's own 2× scale restores them.
+  near(span(onScaled, 'x'), span(plain, 'x') / 2, 1e-4);
+  near(span(onScaled, 'y'), span(plain, 'y') / 2, 1e-4);
 });
