@@ -305,9 +305,25 @@ baselines: Bend or a drawn curve shapes the run in the sketch plane, and
 the wrap lays THAT curve onto the geometry. **Float above** lifts the run
 off the surface along its own normal. Letters are rigid, so a glyph chords
 a fraction of a millimetre on a tight radius; any that run off the end of
-the surface fall back to flat placement rather than vanishing. Embossed
-slots only for now — an engraved slot keeps its flat cut, and the box
-greys out.
+the surface fall back to flat placement rather than vanishing.
+
+The box ticks ITSELF when you place a slot on a curve. The click that
+drops a slot already knows the face it landed on: the face is grown by
+welding neighbouring triangles that share its plane, and the smallest
+angle to the neighbours that weld REJECTED is the face's break angle — a
+flat panel breaks hard at its edges (90° on a box), a barrel's facets
+break by a couple of degrees. Under 30° the surface is a curve rather than
+a face, so the slot arrives wrapped and the panel says why instead of
+leaving a checkbox for the merchant to find. Untick it and the run
+returns to the flat sketch plane; nothing is forced.
+
+Engraving wraps too. The cutter is the same wrapped run, sunk by the
+engrave depth along each glyph's own surface normal and overshot slightly,
+so the pocket it subtracts curves with the letters — walls square to the
+surface, floor parallel to it at depth, all the way round a bottle. The
+pocket lining and floor are lifted from that same wrapped prism, so the
+engraved look is the embossed geometry's exact negative and the two can't
+drift apart.
 
 **Curve the baseline** goes freeform: draggable anchor dots appear pinned
 to the slot's face (seeded as a straight three-dot run), and the letters
@@ -521,7 +537,7 @@ test/compress.test.ts  3 — meshopt output is tagged, smaller, and within
                       0.05 mm of the input
 test/camera.test.ts    5 — saved views round and mark userSet; the cube's 14
                       quick views are unit-length and cover every octant
-test/wrap (embed)     11 — surface-wrapped text against ANALYTIC surfaces, so
+test/wrap (embed)     14 — surface-wrapped text against ANALYTIC surfaces, so
                       every assertion is exact maths: a flat probe
                       reproduces the flat layout, a cylinder puts every
                       glyph on the barrel facing straight out, spacing is
@@ -531,8 +547,13 @@ test/wrap (embed)     11 — surface-wrapped text against ANALYTIC surfaces, so
                       no unrolling scheme could), Bend composes with the
                       wrap, lift pushes out along the local normal,
                       overruns and empty probes report rather than
-                      vanish, and the baked geometry hugs the barrel in
-                      the caller's target space
+                      vanish, the baked geometry hugs the barrel in
+                      the caller's target space, and the wrapped ENGRAVE
+                      pieces line up: the cutter sinks below the surface
+                      by the engrave depth, the pocket floor rides the
+                      barrel at that depth, and the lining walls stand
+                      square to the surface rather than to the sketch
+                      plane
 test/repeat (embed)    8 — live part patterns: a linear row marches at
                       size + gap (negative overlaps), a ring turns each
                       copy with its swing so it faces the tangent, an
@@ -562,7 +583,7 @@ test/text-bend (embed) 14 — curved text: bend stations lie on the arc with
                       recentring), and carry the engrave pocket along —
                       all against a real bundled font, the same geometry
                       the viewer renders
-test/text.test.ts     12 — text slots bind valid, tune through validation,
+test/text.test.ts     15 — text slots bind valid, tune through validation,
                       sanitise + clamp customer text, price flat + per
                       character, follow their carrier part (hidden = inert,
                       deleted = gone, renamed = renamed), per-letter
@@ -572,7 +593,10 @@ test/text.test.ts     12 — text slots bind valid, tune through validation,
                       the slot's own colour pins and releases, Bend
                       validates ±360° with 0 clearing back to straight,
                       and the drawn baseline path rounds, validates, and
-                      displaces Bend (and vice versa)
+                      displaces Bend (and vice versa); a slot dropped on a
+                      curved face arrives wrapped while a flat pick does
+                      not, and wrapping otherwise sets, tunes and clears
+                      like any other slot field
 test/image.test.ts     8 — image zones bind valid with defaults, tune and
                       nudge through validation (the nudge slides in the
                       zone's own surface plane, both face orientations),

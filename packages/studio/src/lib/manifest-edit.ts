@@ -1411,7 +1411,14 @@ const TEXT_DEFAULTS = { font: 'sans-bold', sizeMm: 8, depthMm: 2, maxLength: 20,
 export function addTextSlot(
   manifest: Manifest,
   partId: string,
-  place: { origin: [number, number, number]; normal: [number, number, number] },
+  place: {
+    origin: [number, number, number];
+    normal: [number, number, number];
+    /** The pick landed on a curve, so the slot wraps from the start —
+     * merchants shouldn't have to know their face is curved before the
+     * text looks right on it. */
+    curved?: boolean;
+  },
 ): Manifest {
   const part = partOf(manifest, partId);
   let id = `${partId}-text`;
@@ -1425,6 +1432,7 @@ export function addTextSlot(
       origin: place.origin.map(round3) as [number, number, number],
       normal: place.normal.map(round3) as [number, number, number],
       ...TEXT_DEFAULTS,
+      ...(place.curved ? { wrapSurface: true } : {}),
     });
   });
 }

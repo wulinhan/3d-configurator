@@ -346,9 +346,7 @@ export function validateManifest(input: unknown): ValidationResult {
       if (o.liftMm != null && (!Number.isFinite(o.liftMm) || o.liftMm < 0 || o.liftMm > 50)) {
         err(`${at}.liftMm`, 'must be between 0 and 50 millimetres');
       }
-      if (o.wrapSurface && (o.style ?? 'emboss') === 'deboss') {
-        warn(`${at}.wrapSurface`, 'engraved slots do not follow the surface yet — the cut stays flat');
-      }
+
       if (o.perChar) {
         if (o.perChar.mode != null && !['line', 'circle'].includes(o.perChar.mode)) {
           err(`${at}.perChar.mode`, 'must be "line" or "circle"');

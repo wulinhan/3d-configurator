@@ -267,3 +267,33 @@ test('the merchant colour stands alone; the checkbox only adds a customer choice
   assert.equal(slotOf(m).customerColour, undefined);
   assert.equal(slotOf(m).colourChoices, undefined);
 });
+
+test('a slot placed on a curve wraps from the start; a flat pick does not', () => {
+  const curved = addTextSlot(fresh(), 'body', { ...PLACE, curved: true });
+  valid(curved);
+  assert.equal(slotOf(curved).wrapSurface, true, 'the merchant should not have to notice');
+
+  const flat = addTextSlot(fresh(), 'body', { ...PLACE, curved: false });
+  assert.equal(slotOf(flat).wrapSurface, undefined);
+  assert.equal(slotOf(addTextSlot(fresh(), 'body', PLACE)).wrapSurface, undefined, 'absent = flat');
+});
+
+test('wrapping is a slot field like any other: set, tuned, cleared', () => {
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  m = setTextSlot(m, 'body-text', { wrapSurface: true, liftMm: 2 });
+  valid(m);
+  assert.equal(slotOf(m).wrapSurface, true);
+  assert.equal(slotOf(m).liftMm, 2);
+
+  // Engraved slots wrap too — the cut follows the surface.
+  valid(setTextSlot(m, 'body-text', { style: 'deboss' }));
+
+  assert.throws(() => setTextSlot(m, 'body-text', { liftMm: -1 }), /liftMm/);
+  assert.throws(() => setTextSlot(m, 'body-text', { liftMm: 99 }), /liftMm/);
+
+  // Turning wrapping off drops the float with it — a lift means nothing
+  // against a flat plane.
+  const off = setTextSlot(m, 'body-text', { wrapSurface: null });
+  assert.equal(slotOf(off).wrapSurface, undefined);
+  assert.equal(slotOf(off).liftMm, undefined);
+});

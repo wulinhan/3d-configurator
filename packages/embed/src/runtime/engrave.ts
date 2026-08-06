@@ -190,6 +190,11 @@ export function wrappedTextGeometry(
   spec: TextOption,
   probe: SurfaceProbe,
   toTarget?: THREE.Matrix4,
+  /** Which part of each glyph prism to keep, filtered in the GLYPH's own
+   * frame before it is carried to the surface — 'walls' and 'floor' are how
+   * an engraved pocket is lined and floored, exactly as the flat path does
+   * it (see prismTriangles). */
+  keep: 'all' | 'walls' | 'floor' = 'all',
 ): { geometry: THREE.BufferGeometry; missed: string[] } | null {
   const run = glyphRun(text, font, spec);
   if (!run.glyphs.length) return null;
@@ -220,10 +225,21 @@ export function wrappedTextGeometry(
     pose.multiply(centreAdvance.makeTranslation(-g.advance / 2, 0, 0));
     const groups = glyph.groups.length ? glyph.groups : [{ start: 0, count: pos.count, materialIndex: 0 }];
     for (const grp of groups) {
-      const sink = grp.materialIndex === 1 ? walls : lids;
-      for (let i = grp.start; i < grp.start + grp.count; i++) {
-        v.fromBufferAttribute(pos, i).applyMatrix4(pose);
-        sink.push(v.x, v.y, v.z);
+      const isWalls = grp.materialIndex === 1;
+      if (keep !== 'all' && (keep === 'walls') !== isWalls) continue;
+      const sink = isWalls ? walls : lids;
+      for (let i = grp.start; i < grp.start + grp.count; i += 3) {
+        // The pocket's FLOOR is the inner lid; the outer one is the opening
+        // and is never kept. Judged in the glyph's own frame, where the
+        // extrusion still runs 0..depth along +z.
+        if (keep === 'floor') {
+          const cap = Math.max(pos.getZ(i), pos.getZ(i + 1), pos.getZ(i + 2));
+          if (cap > spec.depthMm / 2) continue;
+        }
+        for (let c = 0; c < 3; c++) {
+          v.fromBufferAttribute(pos, i + c).applyMatrix4(pose);
+          sink.push(v.x, v.y, v.z);
+        }
       }
     }
     glyph.dispose();
@@ -342,6 +358,81 @@ export function pocketFloor(
     new THREE.BufferAttribute(Float32Array.from(prismTriangles(text, font, spec, 'floor', partScale)), 3));
   geo.computeVertexNormals();
   return geo;
+}
+
+/**
+ * `source` minus a run that FOLLOWS THE SURFACE — the engraved twin of
+ * wrappedTextGeometry.
+ *
+ * The cutter is the same wrapped prism, pushed a depth INWARD (so it spans
+ * from just proud of the surface down to full depth) and overshooting by
+ * 0.2mm so the hole opens cleanly. Everything is already posed in the
+ * target space, so the brush needs no transform of its own. As in the flat
+ * cut, only the part's own clipped faces are kept and the pocket is then
+ * CLOSED with an exact lining built from the same prism — a merchant mesh
+ * with open shells can confuse the CSG's inside/outside test, but the
+ * lining never depends on the part being a perfect manifold.
+ */
+export function cutWrappedTextGeometry(
+  source: THREE.BufferGeometry,
+  text: string,
+  font: Font,
+  spec: TextOption,
+  csg: Csg,
+  probe: SurfaceProbe,
+  toTarget?: THREE.Matrix4,
+): THREE.BufferGeometry {
+  const { Evaluator, Brush, SUBTRACTION } = csg;
+  // Sunk by a full depth: the prism's outer lid sits at the surface and
+  // its floor a depth below, which is exactly the pocket to remove.
+  const sunk = { ...spec, liftMm: (spec.liftMm ?? 0) - spec.depthMm };
+  const cutter = wrappedTextGeometry(
+    text, font, { ...sunk, depthMm: spec.depthMm + 0.2 }, probe, toTarget);
+  const lining = wrappedTextGeometry(text, font, sunk, probe, toTarget, 'walls');
+  if (!cutter) return source.clone();
+  try {
+    const evaluator = new Evaluator();
+    evaluator.attributes = ['position', 'normal'];
+    evaluator.useGroups = true; // group 0 = faces from the part, 1 = cut faces
+    if (!source.attributes.normal) source.computeVertexNormals();
+    const a = new Brush(source);
+    a.updateMatrixWorld();
+    const b = new Brush(cutter.geometry);
+    b.updateMatrixWorld(); // already posed in the target space
+    const out = evaluator.evaluate(a, b, SUBTRACTION);
+
+    const wallPos = lining?.geometry.attributes.position;
+    const walls: number[] = [];
+    if (wallPos) for (let i = 0; i < wallPos.count; i++) walls.push(wallPos.getX(i), wallPos.getY(i), wallPos.getZ(i));
+    const merged = new THREE.BufferGeometry();
+    merged.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array([...trianglesOfGroup(out.geometry, 0), ...walls]), 3));
+    merged.computeVertexNormals();
+    out.geometry.dispose();
+    return merged;
+  } catch (err) {
+    console.warn('[configurator] wrapped engrave failed — showing the part uncut', err);
+    return source.clone();
+  } finally {
+    cutter.geometry.dispose();
+    lining?.geometry.dispose();
+  }
+}
+
+/** The wrapped pocket's floor — the face that carries the slot's text
+ * colour, following the surface like the rest of the cut. */
+export function wrappedPocketFloor(
+  text: string,
+  font: Font,
+  spec: TextOption,
+  probe: SurfaceProbe,
+  toTarget?: THREE.Matrix4,
+): THREE.BufferGeometry | null {
+  const out = wrappedTextGeometry(
+    text, font, { ...spec, liftMm: (spec.liftMm ?? 0) - spec.depthMm }, probe, toTarget, 'floor');
+  if (!out) return null;
+  out.geometry.computeVertexNormals();
+  return out.geometry;
 }
 
 /**

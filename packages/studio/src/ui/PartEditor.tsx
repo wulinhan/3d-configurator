@@ -716,19 +716,24 @@ function TextSlotEditor(props: {
           <label className="lock">
             <input
               type="checkbox" checked={!!slot.wrapSurface} data-testid={`text-wrap-${slot.id}`}
-              disabled={(slot.style ?? 'emboss') === 'deboss'}
               onChange={(e) => patch({ wrapSurface: e.target.checked || null })}
             />
             Wrap onto the surface
-            {(slot.style ?? 'emboss') === 'deboss' && ' (embossed text only)'}
           </label>
-          {slot.wrapSurface && (slot.style ?? 'emboss') === 'emboss' && (
-            <div className="field-row">
-              <NumberField
-                label="Float above" value={slot.liftMm ?? 0} suffix="mm" testId={`text-lift-${slot.id}`}
-                onCommit={(v, o) => patch({ liftMm: v }, o)}
-              />
-            </div>
+          {slot.wrapSurface && (
+            <>
+              <p className="hint" data-testid={`text-wrap-hint-${slot.id}`}>
+                {(slot.style ?? 'emboss') === 'deboss'
+                  ? 'The cut follows the surface — the pocket curves with the letters.'
+                  : 'This face is curved — the letters follow it instead of the flat plane.'}
+              </p>
+              <div className="field-row">
+                <NumberField
+                  label="Float above" value={slot.liftMm ?? 0} suffix="mm" testId={`text-lift-${slot.id}`}
+                  onCommit={(v, o) => patch({ liftMm: v }, o)}
+                />
+              </div>
+            </>
           )}
         </>
       )}

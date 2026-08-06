@@ -9,7 +9,9 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
 import sansBold from '../src/fonts/sans-bold.ts';
-import { glyphRun, baselineAt, wrappedTextGeometry } from '../src/runtime/engrave.ts';
+import {
+  glyphRun, baselineAt, wrappedTextGeometry, wrappedPocketFloor, pocketFloor,
+} from '../src/runtime/engrave.ts';
 import { wrapGlyphs, type SurfaceProbe, type V3 } from '../src/runtime/wrap.ts';
 import type { TextOption } from '../src/manifest/types.ts';
 
@@ -224,4 +226,78 @@ test('the geometry lands in the caller\'s target space', () => {
 
 test('no surface under the slot yields nothing to render, not a broken mesh', () => {
   assert.equal(wrappedTextGeometry('X', font, spec(), () => null), null);
+});
+
+// ── engraving that follows the surface (step 3) ─────────────────────────────
+
+test('the wrapped pocket floor sits a depth INSIDE the surface', () => {
+  const R = 18;
+  const s = spec({ style: 'deboss' });
+  const floor = wrappedPocketFloor('HI', font, s, cylinderProbe(R));
+  assert.ok(floor, 'an engraved wrapped slot has a floor');
+  const pos = floor!.attributes.position;
+  assert.ok(pos.count >= 3);
+  // Every floor vertex lies on the barrel of radius R − depth, following
+  // the curve rather than a flat plane. Each letter's lid is flat, so its
+  // corners chord a little outward — but never out through the surface,
+  // which would mean the pocket was not fully cut.
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const r = Math.hypot(pos.getX(i), pos.getZ(i));
+    min = Math.min(min, r); max = Math.max(max, r);
+  }
+  near(min, R - s.depthMm, 0.05);                     // tangent under each letter
+  assert.ok(max < R - s.depthMm + 0.5, `chord lift ${max - (R - s.depthMm)}`);
+  assert.ok(max < R, 'the floor stays inside the material');
+
+  // A FLAT engrave on the same slot would cut a plane, so its floor would
+  // dive far deeper at the ends than the wrapped one ever does.
+  const flatFloor = pocketFloor('HI', font, s);
+  const fp = flatFloor.attributes.position;
+  let flatMin = Infinity;
+  for (let i = 0; i < fp.count; i++) flatMin = Math.min(flatMin, fp.getZ(i));
+  assert.ok(Math.abs(flatMin) >= s.depthMm - 1e-6, 'the flat cut is a plane at depth');
+});
+
+test('the wrapped cutter spans surface to full depth, and only that', () => {
+  // The cutter is the prism the boolean subtracts. It must reach from just
+  // proud of the barrel (a 0.2mm overshoot opens the hole cleanly) down to
+  // exactly the engrave depth — no further, or a thin wall is cut through.
+  const R = 18;
+  const s = spec({ style: 'deboss', depthMm: 2 });
+  const sunk = { ...s, liftMm: -s.depthMm };
+  const cutter = wrappedTextGeometry('HI', font, { ...sunk, depthMm: s.depthMm + 0.2 }, cylinderProbe(R))!;
+  const pos = cutter.geometry.attributes.position;
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const r = Math.hypot(pos.getX(i), pos.getZ(i));
+    min = Math.min(min, r); max = Math.max(max, r);
+  }
+  near(min, R - s.depthMm, 0.05);          // floor at full depth
+  assert.ok(max > R, 'the cutter breaks the surface');
+  assert.ok(max < R + 1.5, `overshoot ${max - R}mm stays small`);
+});
+
+test('a wrapped engrave keeps the part closed: walls come back with the cut', () => {
+  const R = 18;
+  const s = spec({ style: 'deboss' });
+  const sunk = { ...s, liftMm: -s.depthMm };
+  const walls = wrappedTextGeometry('HI', font, sunk, cylinderProbe(R), undefined, 'walls');
+  const floor = wrappedTextGeometry('HI', font, sunk, cylinderProbe(R), undefined, 'floor');
+  assert.ok(walls && walls.geometry.attributes.position.count >= 9, 'the pocket has side walls');
+  assert.ok(floor && floor.geometry.attributes.position.count >= 3, 'and a floor');
+  // Walls span the depth; the floor sits at the bottom of it.
+  const span = (g) => {
+    const p = g.geometry.attributes.position;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < p.count; i++) {
+      const r = Math.hypot(p.getX(i), p.getZ(i));
+      lo = Math.min(lo, r); hi = Math.max(hi, r);
+    }
+    return { lo, hi };
+  };
+  const w = span(walls!);
+  near(w.lo, R - s.depthMm, 0.3);   // the walls reach the floor…
+  near(w.hi, R, 0.3);               // …and rise to the surface
+  assert.ok(span(floor!).hi < R, 'the floor stays below the opening');
 });

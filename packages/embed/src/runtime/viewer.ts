@@ -18,7 +18,10 @@ import { loadFont, DEFAULT_FONT } from './fonts.ts';
 import type { Font } from 'three/examples/jsm/loaders/FontLoader.js';
 import { proceduralNormalMap, applyBoxUvs, BASE_TILE_MM } from './textures.ts';
 import { fitZoneToRegion, type ZoneFit } from './zone-fit.ts';
-import { buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor, wrappedTextGeometry } from './engrave.ts';
+import {
+  buildTextGeometry, placeGlyph, cutTextGeometry, pocketFloor,
+  wrappedTextGeometry, cutWrappedTextGeometry, wrappedPocketFloor,
+} from './engrave.ts';
 import type { SurfaceProbe } from './wrap.ts';
 
 /**
@@ -129,7 +132,20 @@ export interface SurfaceHit {
   /** The rectangle hugging the region — how an image zone conforms to the
    * picked face: its centre, edge alignment and true extents. */
   zone: ZoneFit | null;
+  /**
+   * The smallest angle (degrees) between this face and the neighbours the
+   * weld rejected. A gentle break is a curve carrying on — a tessellated
+   * barrel or dome; a hard one is a real edge. `curved` applies the
+   * threshold, and is what turns surface wrapping on for a placed slot.
+   */
+  breakDeg: number;
+  curved: boolean;
 }
+
+/** Below this, a rejected neighbour is the same surface continuing round a
+ * curve rather than a genuine edge. A 24-facet barrel breaks at 15°, a
+ * cube at 90°. */
+export const CURVE_BREAK_DEG = 30;
 
 /** One per-letter run's live state (see Viewer.syncPerChar). */
 interface PerCharEntry {
@@ -504,10 +520,24 @@ export class Viewer {
    * world space means a scaled or rotated part needs no special case — the
    * caller bakes the result back into local space with the inverse matrix.
    */
-  private surfaceProbe(spec: TextOption): SurfaceProbe | null {
+  private surfaceProbe(spec: TextOption, geometry?: THREE.BufferGeometry): SurfaceProbe | null {
     const carrier = this.meshes.get(spec.part);
     if (!carrier) return null;
     carrier.updateMatrixWorld();
+    // Engraving probes the PRISTINE geometry: by the time a re-cut runs, the
+    // carrier may still be wearing the previous pass's pockets, and sampling
+    // those would sink the new cut into the old one.
+    // DoubleSide matters: part meshes render double-sided because merchant
+    // meshes arrive with whatever winding their tool produced, and a
+    // front-side scratch mesh lets the ray sail through the NEAR wall and
+    // report the far one — which put engraved pockets on the wrong side of
+    // a barrel.
+    const target = geometry
+      ? Object.assign(
+        new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })),
+        { matrixWorld: carrier.matrixWorld },
+      )
+      : carrier;
     // The sketch basis, matching placeGlyph, carried into world space.
     const n = new THREE.Vector3(...spec.normal).normalize();
     const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
@@ -537,7 +567,7 @@ export class Viewer {
       raycaster.set(from, worldN.clone().negate());
       // `false` — the part's own children are text and zone overlays, not
       // surface. (They also carry no-op raycasts, but this is cheaper.)
-      const hit = raycaster.intersectObject(carrier, false)[0];
+      const hit = raycaster.intersectObject(target, false)[0];
       if (!hit?.face) return null;
       const normal = hit.face.normal.clone()
         .transformDirection(carrier.matrixWorld).normalize();
@@ -963,6 +993,23 @@ export class Viewer {
       }
     }
 
+    // Is the picked face part of a CURVE, or a genuine flat face?
+    //
+    // The weld stops at the first bend, so on a tessellated cylinder the
+    // region is one narrow facet strip whose neighbours lean a few degrees
+    // away, while on a box the neighbours are a hard 90° off. The smallest
+    // angle to a rejected neighbour tells the two apart: a gentle break is
+    // curvature carrying on, a sharp one is a real edge. Reported in
+    // degrees so callers can pick their own threshold.
+    let breakDeg = 180;
+    for (const f of faces) {
+      for (const next of adjacency[f]) {
+        if (seen.has(next) && faces.includes(next)) continue;
+        const cos = Math.min(1, Math.abs(localNormal(next, n).dot(seedNormal)));
+        breakDeg = Math.min(breakDeg, Math.acos(cos) * 180 / Math.PI);
+      }
+    }
+
     // Area-weighted centroid of the region in the part's LOCAL space — where
     // a text slot binds, so it must be in the same space the text mesh will
     // be parented into. The local normal is the world pick normal carried
@@ -1021,6 +1068,8 @@ export class Viewer {
       localCentre: [centroid.x, centroid.y, centroid.z],
       localNormal: [outwardLocal.x, outwardLocal.y, outwardLocal.z],
       zone,
+      breakDeg,
+      curved: breakDeg < CURVE_BREAK_DEG,
     };
   }
 
@@ -1425,6 +1474,7 @@ export class Viewer {
       const sig = JSON.stringify(list.map((j) => [
         j.spec.id, j.text, j.spec.font, j.spec.sizeMm, j.spec.depthMm,
         j.spec.rotationDeg, j.spec.bendDeg, j.spec.path, j.spec.origin, j.spec.normal,
+        j.spec.wrapSurface, j.spec.liftMm,
       ]));
       if (this.debossSig.get(partId) === sig) continue;
       this.debossSig.set(partId, sig);
@@ -1438,8 +1488,20 @@ export class Viewer {
         const base = this.debossBase.get(partId)!;
         let geo: THREE.BufferGeometry = base;
         const scale = this.partScale(partId);
+        const carrierMesh = this.meshes.get(partId);
+        const toLocal = carrierMesh
+          ? new THREE.Matrix4().copy(carrierMesh.matrixWorld).invert()
+          : new THREE.Matrix4();
+        // Wrapped cuts follow the surface, so they probe the PRISTINE base
+        // rather than whatever the chain has already carved.
+        const probeFor = (spec: TextOption) => (spec.wrapSurface
+          ? this.surfaceProbe(spec, base)
+          : null);
         list.forEach((j, i) => {
-          const next = cutTextGeometry(geo, j.text, fonts[i], j.spec, csg, scale);
+          const probe = probeFor(j.spec);
+          const next = probe
+            ? cutWrappedTextGeometry(geo, j.text, fonts[i], j.spec, csg, probe, toLocal)
+            : cutTextGeometry(geo, j.text, fonts[i], j.spec, csg, scale);
           applyBoxUvs(next); // procedural finishes keep tiling on the cut part
           if (geo !== base) geo.dispose();
           geo = next;
@@ -1456,13 +1518,16 @@ export class Viewer {
           const floorKey = JSON.stringify([
             j.text, j.spec.font, j.spec.sizeMm, j.spec.depthMm,
             j.spec.rotationDeg, j.spec.bendDeg, j.spec.path, j.spec.origin, j.spec.normal,
-            j.spec.colourHex, scale,
+            j.spec.colourHex, scale, j.spec.wrapSurface, j.spec.liftMm,
           ]);
           let entry = this.debossFloors.get(j.spec.id);
           if (entry?.key === floorKey && entry.mesh.parent === target) return;
           if (entry) { entry.mesh.removeFromParent(); entry.mesh.geometry.dispose(); }
           const holder = { customMat: entry?.customMat };
-          const mesh = new THREE.Mesh(pocketFloor(j.text, fonts[i], j.spec, scale), undefined as unknown as THREE.Material);
+          const wrapProbe = probeFor(j.spec);
+          const floorGeo = (wrapProbe && wrappedPocketFloor(j.text, fonts[i], j.spec, wrapProbe, toLocal))
+            || pocketFloor(j.text, fonts[i], j.spec, scale);
+          const mesh = new THREE.Mesh(floorGeo, undefined as unknown as THREE.Material);
           mesh.material = this.textMaterial(j.spec, holder) ?? mesh.material;
           mesh.castShadow = mesh.receiveShadow = true;
           mesh.raycast = () => {};
@@ -1590,9 +1655,9 @@ export class Viewer {
 
   /** The run laid on the part's surface, baked into the carrier's local
    * space. Null when there is no geometry under the slot at all. */
-  private wrapText(text: string, font: Font, spec: TextOption) {
+  private wrapText(text: string, font: Font, spec: TextOption, geometry?: THREE.BufferGeometry) {
     const carrier = this.meshes.get(spec.part);
-    const probe = this.surfaceProbe(spec);
+    const probe = this.surfaceProbe(spec, geometry);
     if (!carrier || !probe) return null;
     carrier.updateMatrixWorld();
     const toLocal = new THREE.Matrix4().copy(carrier.matrixWorld).invert();

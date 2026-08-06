@@ -311,7 +311,8 @@ export interface TextOption {
    * — a curve in the sketch plane (`bendDeg`, `path`) still shapes the
    * baseline, and the wrap lays that baseline onto the geometry. Letters
    * that run off the end of the surface fall back to flat placement.
-   * Embossed slots only for now; engraved slots ignore it.
+   * Engraved slots wrap too: the boolean cutter follows the surface, so
+   * the pocket, its walls and its coloured floor curve with the letters.
    */
   wrapSurface?: boolean;
   /** With `wrapSurface`, how far the run floats off the surface before it

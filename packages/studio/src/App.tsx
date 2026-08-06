@@ -290,6 +290,7 @@ export function App() {
     origin: [number, number, number];
     normal: [number, number, number];
     zone?: { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number };
+    curved?: boolean;
   }) => {
     const old = projectRef.current;
     const kind = placing?.kind ?? 'text';
@@ -306,6 +307,8 @@ export function App() {
           heightMm: place.zone?.heightMm,
           rotationDeg: place.zone?.angleDeg,
         })
+        // A slot placed on a curve wraps from the start — merchants should
+        // not have to know whether their face is flat before it looks right.
         : addTextSlot(old.manifest, partId, place));
       setSelectedPart(partId); // keep the slot's editor on screen
     } finally {

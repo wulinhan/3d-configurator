@@ -42,6 +42,9 @@ export function ViewerPane(props: {
     /** Face-hugging rectangle, when the pick could measure one — an image
      * zone conforms to it (centre, edge alignment, extents). */
     zone?: { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number };
+    /** The pick landed on a curve (a barrel, a dome), not a flat face — a
+     * text slot placed here wraps by default. */
+    curved?: boolean;
   }) => void;
   onSurfaceCancel: () => void;
   /** Non-null puts the viewport in baseline-shaping mode for that text
@@ -424,7 +427,9 @@ export function ViewerPane(props: {
       const hit = hitOnTarget(e);
       if (!hit) return;
       viewerRef.current?.clearSurfaceHighlights();
-      pickCtx.current.onSurfacePick(hit.partId, { origin: hit.localCentre, normal: hit.localNormal, zone: hit.zone ?? undefined });
+      pickCtx.current.onSurfacePick(hit.partId, {
+        origin: hit.localCentre, normal: hit.localNormal, zone: hit.zone ?? undefined, curved: hit.curved,
+      });
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onSurfaceCancel(); };
     canvas.addEventListener('pointermove', onMove);
