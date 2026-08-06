@@ -68,6 +68,20 @@ test('setTextSlot tunes fields through validation; bad values throw whole', () =
   assert.equal(slotOf(cleared).sinkMm, undefined);
 });
 
+test('bendDeg curves the run through validation; 0 straightens it back off', () => {
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  assert.equal(slotOf(m).bendDeg, undefined, 'slots start straight');
+  m = setTextSlot(m, 'body-text', { bendDeg: 90 });
+  valid(m);
+  assert.equal(slotOf(m).bendDeg, 90);
+  // A smile is a negative bend; the full circle is the extreme of the range.
+  valid(setTextSlot(m, 'body-text', { bendDeg: -360 }));
+  assert.throws(() => setTextSlot(m, 'body-text', { bendDeg: 400 }), /bendDeg/);
+  assert.throws(() => setTextSlot(m, 'body-text', { bendDeg: NaN }), /bendDeg/);
+  // Zero is "straight" — the default, not a stored field.
+  assert.equal(slotOf(setTextSlot(m, 'body-text', { bendDeg: 0 })).bendDeg, undefined);
+});
+
 test('removeTextSlot, removePart and renamePart keep the manifest whole', () => {
   let m = addTextSlot(fresh(), 'body', PLACE);
   assert.ok(!removeTextSlot(m, 'body-text').options.some((o) => o.id === 'body-text'));

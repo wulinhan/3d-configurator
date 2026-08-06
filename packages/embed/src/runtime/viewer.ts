@@ -1183,7 +1183,7 @@ export class Viewer {
     for (const [partId, list] of jobs) {
       const sig = JSON.stringify(list.map((j) => [
         j.spec.id, j.text, j.spec.font, j.spec.sizeMm, j.spec.depthMm,
-        j.spec.rotationDeg, j.spec.origin, j.spec.normal,
+        j.spec.rotationDeg, j.spec.bendDeg, j.spec.origin, j.spec.normal,
       ]));
       if (this.debossSig.get(partId) === sig) continue;
       this.debossSig.set(partId, sig);
@@ -1213,7 +1213,7 @@ export class Viewer {
         list.forEach((j, i) => {
           const floorKey = JSON.stringify([
             j.text, j.spec.font, j.spec.sizeMm, j.spec.depthMm,
-            j.spec.rotationDeg, j.spec.origin, j.spec.normal, j.spec.colourHex,
+            j.spec.rotationDeg, j.spec.bendDeg, j.spec.origin, j.spec.normal, j.spec.colourHex,
           ]);
           let entry = this.debossFloors.get(j.spec.id);
           if (entry?.key === floorKey && entry.mesh.parent === target) return;
@@ -1296,7 +1296,7 @@ export class Viewer {
     const existing = this.textMeshes.get(option.id);
     const key = JSON.stringify([
       text, option.font, option.sizeMm, option.depthMm, option.sinkMm,
-      option.rotationDeg, option.origin, option.normal, option.part, option.colourHex, option.style,
+      option.rotationDeg, option.bendDeg, option.origin, option.normal, option.part, option.colourHex, option.style,
     ]);
     if (existing?.key === key) return;
     this.textMeshes.set(option.id, { mesh: existing?.mesh, key, customMat: existing?.customMat });

@@ -283,6 +283,9 @@ export function validateManifest(input: unknown): ValidationResult {
         err(`${at}.sinkMm`, 'must be less than depthMm — sinking the whole extrusion leaves nothing visible');
       }
       if (o.rotationDeg != null && !Number.isFinite(o.rotationDeg)) err(`${at}.rotationDeg`, 'must be a number');
+      if (o.bendDeg != null && (!Number.isFinite(o.bendDeg) || Math.abs(o.bendDeg) > 360)) {
+        err(`${at}.bendDeg`, 'must be between -360 and 360 degrees — the arc the whole run bends through');
+      }
       if (o.maxLength != null && (!Number.isInteger(o.maxLength) || o.maxLength < 1 || o.maxLength > 60)) {
         err(`${at}.maxLength`, 'must be a whole number between 1 and 60');
       }

@@ -11,8 +11,15 @@ import type { TextOption } from '../manifest/types.ts';
 
 type Csg = typeof import('three-bvh-csg');
 
-/** One extruded glyph run, centred on the sketch origin. */
+/** One extruded glyph run, centred on the sketch origin. With `bendDeg`
+ * set, the run curves along a circular arc — built per glyph and merged,
+ * so every consumer (emboss mesh, engrave cutter, pocket lining and
+ * floor) gets the bend for free. */
 export function buildTextGeometry(text: string, font: Font, spec: TextOption): THREE.BufferGeometry {
+  if (spec.bendDeg) {
+    const bent = bentTextGeometry(text, font, spec);
+    if (bent) return bent;
+  }
   const geo = new TextGeometry(text, {
     font,
     size: spec.sizeMm,
@@ -23,6 +30,103 @@ export function buildTextGeometry(text: string, font: Font, spec: TextOption): T
   geo.computeBoundingBox();
   const bb = geo.boundingBox!;
   // Centre the run on the sketch origin; extrusion spans z 0..depth.
+  geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
+  return geo;
+}
+
+/** Font metrics: how far the pen advances for one character, in mm at the
+ * slot's size. Spaces have real advances; characters the font lacks fall
+ * back to '?' (what generateShapes substitutes anyway). */
+type FontMetrics = { resolution?: number; glyphs: Record<string, { ha?: number } | undefined> };
+
+/**
+ * Per-glyph stations of a bent run, in the sketch plane. The BASELINE
+ * follows a circular arc subtending `bendDeg` over the whole run's length:
+ * positive bends arch up (the middle is the crest, the ends drop away),
+ * negative bends smile. Each printable glyph lands with its advance
+ * midpoint at (x, y), turned by `angleRad` to the local tangent — spacing
+ * along the arc equals the straight run's spacing, so kerning survives the
+ * bend. Spaces advance the pen but land nothing. Pure layout maths,
+ * unit-tested headless; geometry assembly happens in bentTextGeometry.
+ */
+export function bendStations(
+  text: string,
+  font: Font,
+  spec: TextOption,
+): Array<{ ch: string; x: number; y: number; angleRad: number; advance: number }> {
+  const data = (font as Font & { data: FontMetrics }).data;
+  const scale = spec.sizeMm / (data.resolution ?? 1000);
+  const advance = (ch: string) => ((data.glyphs[ch] ?? data.glyphs['?'])?.ha ?? 0) * scale;
+  const chars = [...text];
+  const total = chars.reduce((sum, ch) => sum + advance(ch), 0);
+  const theta = ((spec.bendDeg ?? 0) * Math.PI) / 180;
+  const out: Array<{ ch: string; x: number; y: number; angleRad: number; advance: number }> = [];
+  let pen = -total / 2; // the run is centred on the origin, like the straight path
+  for (const ch of chars) {
+    const a = advance(ch);
+    const mid = pen + a / 2;
+    pen += a;
+    if (!ch.trim() || !(a > 0)) continue;
+    if (!theta || !(total > 0)) {
+      out.push({ ch, x: mid, y: 0, angleRad: 0, advance: a });
+      continue;
+    }
+    // Signed radius: the arc through the origin, tangent to +x there.
+    // p(α) = (R sin α, R (cos α − 1)) walks the circle at unit arc speed,
+    // and the tangent turns by −α — both signs of bend fall out of R.
+    const r = total / theta;
+    const alpha = mid / r;
+    out.push({ ch, x: r * Math.sin(alpha), y: r * (Math.cos(alpha) - 1), angleRad: -alpha, advance: a });
+  }
+  return out;
+}
+
+/** The bent run as ONE merged prism: each glyph is extruded alone, centred
+ * on its advance, then rigidly carried to its arc station. The extrude
+ * group convention is preserved (0 = the two lids, 1 = the walls) and z
+ * still spans 0..depth, so prismTriangles reads a bent run exactly like a
+ * straight one — the engraved pocket's walls and floor follow the arc with
+ * no extra code. Null when nothing printable survives (the straight path
+ * then yields the canonical empty geometry). */
+function bentTextGeometry(text: string, font: Font, spec: TextOption): THREE.BufferGeometry | null {
+  const stations = bendStations(text, font, spec);
+  if (!stations.length) return null;
+  const lids: number[] = [];
+  const walls: number[] = [];
+  const v = new THREE.Vector3();
+  const pose = new THREE.Matrix4();
+  const centreAdvance = new THREE.Matrix4();
+  for (const st of stations) {
+    const glyph = new TextGeometry(st.ch, {
+      font,
+      size: spec.sizeMm,
+      depth: spec.depthMm,
+      curveSegments: 4,
+      bevelEnabled: false,
+    });
+    const pos = glyph.attributes.position;
+    if (!pos) { glyph.dispose(); continue; }
+    pose.makeRotationZ(st.angleRad).setPosition(st.x, st.y, 0)
+      .multiply(centreAdvance.makeTranslation(-st.advance / 2, 0, 0));
+    const groups = glyph.groups.length ? glyph.groups : [{ start: 0, count: pos.count, materialIndex: 0 }];
+    for (const g of groups) {
+      const sink = g.materialIndex === 1 ? walls : lids;
+      for (let i = g.start; i < g.start + g.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(pose);
+        sink.push(v.x, v.y, v.z);
+      }
+    }
+    glyph.dispose();
+  }
+  if (!lids.length && !walls.length) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(Float32Array.from([...lids, ...walls]), 3));
+  geo.addGroup(0, lids.length / 3, 0);
+  geo.addGroup(lids.length / 3, walls.length / 3, 1);
+  geo.computeVertexNormals(); // triangle soup → flat shading, same as ExtrudeGeometry
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox!;
+  // Same convention as the straight run: centred on the sketch origin.
   geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
   return geo;
 }

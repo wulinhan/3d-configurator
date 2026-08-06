@@ -1328,7 +1328,7 @@ export function addTextSlot(
 /** The fields a merchant tunes after placing a slot. `perChar: null` turns
  * one-piece-per-letter back off; `colourHex: null` re-matches the part. */
 export type TextSlotPatch = Partial<Pick<TextOption,
-  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label' | 'style'>>
+  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'bendDeg' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label' | 'style'>>
   & { perChar?: { mode?: 'line' | 'circle'; axis?: Axis; gapMm?: number; stepDeg?: number } | null }
   & { colourHex?: Hex | null };
 
@@ -1344,7 +1344,7 @@ export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlo
     if (colourHex === null) delete o.colourHex;
     else if (colourHex !== undefined) o.colourHex = colourHex;
     // An emptied field falls back to its default rather than validating as 0.
-    for (const key of ['sinkMm', 'rotationDeg', 'priceDelta', 'pricePerChar'] as const) {
+    for (const key of ['sinkMm', 'rotationDeg', 'bendDeg', 'priceDelta', 'pricePerChar'] as const) {
       if (o[key] === 0) delete o[key];
     }
   });

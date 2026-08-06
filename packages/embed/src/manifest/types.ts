@@ -251,6 +251,17 @@ export interface TextOption {
   normal: [number, number, number];
   /** Extra rotation about the normal, degrees. Default 0. */
   rotationDeg?: number;
+  /**
+   * Curve the run: the angle (degrees) the whole text subtends along a
+   * circular arc in the sketch plane. Positive arches up (the ends drop
+   * away — badge-top text), negative arches down (a smile); ±360 closes a
+   * full circle. Each glyph sits rigidly at its station on the arc, turned
+   * to the local tangent, so spacing is preserved along the curve and the
+   * engrave cut follows it exactly. 0/absent = straight. Ignored by
+   * one-piece-per-letter spawning (pieces have their own line/circle
+   * patterns).
+   */
+  bendDeg?: number;
   /** One of TEXT_FONTS. Default 'sans-bold' — bold survives extrusion best. */
   font?: TextFont;
   /** Glyph height, mm. */

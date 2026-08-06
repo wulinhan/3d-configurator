@@ -587,6 +587,14 @@ function TextSlotEditor(props: {
           label="Rotate" value={slot.rotationDeg ?? 0} suffix="°" step={5} testId={`text-spin-${slot.id}`}
           onCommit={(v) => patch({ rotationDeg: v })}
         />
+        {!slot.perChar && (
+          // The arc the whole run bends through: + arches up, − smiles.
+          // Hidden for per-letter spawning — pieces pattern themselves.
+          <NumberField
+            label="Bend" value={slot.bendDeg ?? 0} suffix="°" step={15} testId={`text-bend-${slot.id}`}
+            onCommit={(v) => patch({ bendDeg: v })}
+          />
+        )}
         <NumberField
           label="Max letters" value={slot.maxLength ?? 20} step={1} testId={`text-max-${slot.id}`}
           onCommit={(v) => patch({ maxLength: Math.round(v) })}

@@ -246,6 +246,17 @@ shares the carrier part's material, so it colours with the part; the payload
 carries the typed string on the order. Deleting or renaming the carrier part
 deletes or renames the slot with it.
 
+**Bend** curves the run along a circular arc: the number is the angle the
+whole text subtends — positive arches up (badge-top text), negative smiles,
+±360° closes a full circle. Each letter is laid at its own station on the
+arc, turned to the local tangent, advancing by its real font metrics, so
+spacing along the curve matches the straight run and follows the customer's
+text live. The bend happens inside the glyph-run geometry itself, so
+everything downstream gets it for free: embossing, the engrave cutter, and
+the pocket's walls and floor all follow the arc exactly. (Hidden while
+one-piece-per-letter is on — spawned pieces have their own line/circle
+patterns.)
+
 **One piece per letter** turns the carrier part — or, when it belongs to
 an assembly, the WHOLE assembly — into a TEMPLATE: every character the
 customer types spawns its own copy, copy k carrying character k. Line
@@ -434,14 +445,22 @@ test/structure.test.ts 36 — assemblies merge colours without double-painting,
                       deletes repair both structures, repeat patterns pitch
                       line copies at size+gap and turn ring copies rigidly
                       about the origin — assemblies orbit AND spin together
-test/text.test.ts     10 — text slots bind valid, tune through validation,
+test/text-bend (embed) 7 — curved text: bend stations lie on the arc with
+                      tangent-turned glyphs (arch up / smile down / full
+                      circle / spaces advance silently), the bent run's
+                      merged prism arches and stays centred at the same
+                      extrusion depth, and the engraved pocket's walls and
+                      floor follow the arc — asserted against a real
+                      bundled font, the same geometry the viewer renders
+test/text.test.ts     11 — text slots bind valid, tune through validation,
                       sanitise + clamp customer text, price flat + per
                       character, follow their carrier part (hidden = inert,
                       deleted = gone, renamed = renamed), per-letter
                       spawning toggles on/off through validation in both
                       line and circle modes, negative gaps overlap on
                       purpose, engraved style skips the emboss sink rule,
-                      and the slot's own colour pins and releases
+                      the slot's own colour pins and releases, and Bend
+                      validates ±360° with 0 clearing back to straight
 test/image.test.ts     8 — image zones bind valid with defaults, tune and
                       nudge through validation (the nudge slides in the
                       zone's own surface plane, both face orientations),
@@ -467,7 +486,8 @@ test/studio.smoke.mjs browser assertions — the full merchant journey
                       stamping and un-stamping copies, the compressed
                       download, New project resetting to the empty stage,
                       3D text end to end (face pick → slot → typeface
-                      dropdown reshaping the extrusion → one-piece-per-letter
+                      dropdown reshaping the extrusion → Bend arching the
+                      run and 0 straightening it → one-piece-per-letter
                       spawning a pitched row of template copies → customer
                       typing priced per character in the real embed → removal
                       clearing slot, extrusion and spawned pieces), and image

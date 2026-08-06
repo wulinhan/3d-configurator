@@ -1304,6 +1304,32 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   }, vertsBefore, { timeout: 20000 });
   check('…and the extrusion rebuilds in the new face', true, '');
 
+  // Bend curves the run along an arc. The glyph geometry lives in sketch
+  // space (posing is the mesh's quaternion), so its own y-span growing is
+  // the arch; typing 0 straightens and clears the field.
+  const flatBounds = await page.evaluate(() => {
+    const g = (window).__studioViewer.textMeshOf('base-text').geometry;
+    g.computeBoundingBox();
+    return g.boundingBox.max.y - g.boundingBox.min.y;
+  });
+  await page.fill('[data-testid="text-bend-base-text"]', '120');
+  await page.press('[data-testid="text-bend-base-text"]', 'Enter');
+  m = await manifest();
+  check('the Bend field writes bendDeg', m.options.find((o) => o.type === 'text')?.bendDeg === 120,
+    m.options.find((o) => o.type === 'text'));
+  await page.waitForFunction((flat) => {
+    const g = (window).__studioViewer.textMeshOf('base-text')?.geometry;
+    if (!g) return false;
+    g.computeBoundingBox();
+    return (g.boundingBox.max.y - g.boundingBox.min.y) > flat * 1.3;
+  }, flatBounds, { timeout: 20000 });
+  check('…and the run arches on the model', true, '');
+  await page.fill('[data-testid="text-bend-base-text"]', '0');
+  await page.press('[data-testid="text-bend-base-text"]', 'Enter');
+  m = await manifest();
+  check('Bend 0 straightens — the default, not a stored field',
+    m.options.find((o) => o.type === 'text')?.bendDeg === undefined, m.options.find((o) => o.type === 'text'));
+
   // The text takes its own colour, independent of the part it sits on.
   await pick('text-colour-base-text', '#C82020');
   m = await manifest();
