@@ -1330,6 +1330,34 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   check('Bend 0 straightens — the default, not a stored field',
     m.options.find((o) => o.type === 'text')?.bendDeg === undefined, m.options.find((o) => o.type === 'text'));
 
+  // Freeform baseline: arming drops three seeded anchor dots on the face;
+  // dragging the middle one bows the curve and the letters follow it;
+  // Escape ends shaping and Straighten clears the path.
+  await page.click('[data-testid="text-curve-base-text"]');
+  await page.waitForSelector('[data-testid="shape-overlay"]', { timeout: 10000 });
+  await page.waitForTimeout(400);
+  check('arming baseline shaping seeds three anchor dots',
+    await page.locator('.shape-anchor').count() === 3, '');
+  const midDot = await page.locator('[data-testid="shape-anchor-1"]').boundingBox();
+  await page.mouse.move(midDot.x + midDot.width / 2, midDot.y + midDot.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(midDot.x + midDot.width / 2, midDot.y + midDot.height / 2 - 60, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  m = await manifest();
+  const drawnPath = m.options.find((o) => o.type === 'text')?.path;
+  check('dragging the middle dot stores the drawn baseline (and keeps Bend clear)',
+    Array.isArray(drawnPath) && drawnPath.length === 3 && Math.abs(drawnPath[1][1]) > 1
+    && m.options.find((o) => o.type === 'text')?.bendDeg === undefined, drawnPath);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  check('Escape ends baseline shaping',
+    await page.locator('[data-testid="shape-overlay"]').count() === 0, '');
+  await page.click('[data-testid="text-curve-off-base-text"]');
+  m = await manifest();
+  check('Straighten clears the drawn baseline',
+    m.options.find((o) => o.type === 'text')?.path === undefined, m.options.find((o) => o.type === 'text'));
+
   // The text takes its own colour, independent of the part it sits on.
   await pick('text-colour-base-text', '#C82020');
   m = await manifest();

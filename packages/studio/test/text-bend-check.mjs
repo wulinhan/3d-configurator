@@ -148,6 +148,52 @@ const cleared = await page.evaluate(() => {
 check('Bend 0 straightens the run and clears the field',
   cleared.bendDeg === undefined && Math.abs(cleared.span - flat) < 0.01, { ...cleared, flat });
 
+// ── freeform baseline: draw a curve and watch the letters walk it ──────────
+await page.evaluate(() => window.__studioViewCube.go('Top'));
+settled = '';
+for (let i = 0; i < 30; i++) {
+  await page.waitForTimeout(120);
+  const now = JSON.stringify(await page.evaluate(() => window.__studioViewer.cameraView()));
+  if (now === settled) break;
+  settled = now;
+}
+await page.click('.part-name:has-text("Base")'); // reopen the slot editor
+await page.waitForTimeout(300);
+await page.click('[data-testid="text-curve-base-text"]');
+await page.waitForSelector('[data-testid="shape-overlay"]', { timeout: 10000 });
+await page.waitForTimeout(400);
+const dots = await page.locator('.shape-anchor').count();
+const seeded = await page.evaluate(() => (window).__studio.manifest.options.find((o) => o.type === 'text')?.path);
+check('arming seeds a straight 3-anchor baseline with draggable dots',
+  dots === 3 && Array.isArray(seeded) && seeded.length === 3 && seeded.every((p) => p[1] === 0),
+  { dots, seeded });
+
+// Drag the middle anchor: the letters must follow the curve live.
+const mid = await page.locator('[data-testid="shape-anchor-1"]').boundingBox();
+await page.mouse.move(mid.x + mid.width / 2, mid.y + mid.height / 2);
+await page.mouse.down();
+await page.mouse.move(mid.x + mid.width / 2, mid.y + mid.height / 2 - 80, { steps: 6 });
+await page.mouse.up();
+await page.waitForTimeout(500);
+const drawn = await page.evaluate(() => {
+  const z = (window).__studio.manifest.options.find((o) => o.type === 'text');
+  const g = (window).__studioViewer.textMeshOf('base-text').geometry;
+  g.computeBoundingBox();
+  return { path: z.path, bendDeg: z.bendDeg, span: g.boundingBox.max.y - g.boundingBox.min.y };
+});
+check('dragging the middle dot bows the baseline and the run follows',
+  Array.isArray(drawn.path) && Math.abs(drawn.path[1][1]) > 3
+  && drawn.bendDeg === undefined && drawn.span > flat * 1.4,
+  { ...drawn, flat });
+
+await page.keyboard.press('Escape'); // done shaping
+await page.waitForTimeout(300);
+const overlayGone = await page.locator('[data-testid="shape-overlay"]').count();
+check('Escape ends shaping and clears the dots', overlayGone === 0, overlayGone);
+await frameText();
+await page.waitForTimeout(400);
+await page.screenshot({ path: join(OUT, 'text-path.png') });
+
 const failed = checks.filter(([, pass]) => !pass).length;
 console.log(failed ? `\n${failed} of ${checks.length} failed` : `\nall ${checks.length} passed`);
 await browser.close();

@@ -1,15 +1,16 @@
-// Curved text: with `bendDeg` set the run's baseline follows a circular
-// arc — per-glyph stations, each glyph turned to the local tangent — and
-// the SAME merged prism feeds the emboss mesh, the engrave cutter and the
-// pocket lining/floor, so the arc carries through the whole text pipeline.
-// Asserted headless against a real bundled font: this is exactly the
-// geometry the viewer renders.
+// Curved text: the run's baseline follows either the `bendDeg` circular
+// arc or a drawn `path` (open Catmull-Rom through the merchant's anchors)
+// — per-glyph stations, each glyph turned to the local tangent — and the
+// SAME merged prism feeds the emboss mesh, the engrave cutter and the
+// pocket lining/floor, so the curve carries through the whole text
+// pipeline. Asserted headless against a real bundled font: this is
+// exactly the geometry the viewer renders.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
 import sansBold from '../src/fonts/sans-bold.ts';
-import { buildTextGeometry, bendStations, pocketFloor, pocketLining } from '../src/runtime/engrave.ts';
+import { buildTextGeometry, glyphStations, pocketFloor, pocketLining } from '../src/runtime/engrave.ts';
 import type { TextOption } from '../src/manifest/types.ts';
 
 const font = new FontLoader().parse(sansBold as never);
@@ -24,7 +25,7 @@ const span = (geo: { computeBoundingBox(): void; boundingBox: { min: Record<'x' 
 };
 
 test('stations: no bend is the straight run — even pitch on the baseline', () => {
-  const st = bendStations('HHH', font, spec());
+  const st = glyphStations('HHH', font, spec());
   assert.equal(st.length, 3);
   const a = st[0].advance;
   near(st[1].x - st[0].x, a);
@@ -34,7 +35,7 @@ test('stations: no bend is the straight run — even pitch on the baseline', () 
 });
 
 test('stations: +90° arches up — crest centred, ends drop and turn outward', () => {
-  const st = bendStations('HHH', font, spec({ bendDeg: 90 }));
+  const st = glyphStations('HHH', font, spec({ bendDeg: 90 }));
   const a = st[0].advance;
   const r = (3 * a) / (Math.PI / 2); // L / θ
   near(st[1].x, 0); near(st[1].y, 0); near(st[1].angleRad, 0);
@@ -48,8 +49,8 @@ test('stations: +90° arches up — crest centred, ends drop and turn outward', 
 });
 
 test('stations: negative bend smiles — ends rise, tangents flip', () => {
-  const up = bendStations('HHH', font, spec({ bendDeg: 90 }));
-  const down = bendStations('HHH', font, spec({ bendDeg: -90 }));
+  const up = glyphStations('HHH', font, spec({ bendDeg: 90 }));
+  const down = glyphStations('HHH', font, spec({ bendDeg: -90 }));
   near(down[2].x, up[2].x);
   near(down[2].y, -up[2].y);
   assert.ok(down[2].y > 0, 'negative bend: the ends rise');
@@ -57,14 +58,14 @@ test('stations: negative bend smiles — ends rise, tangents flip', () => {
 });
 
 test('stations: spaces advance the pen but never land a glyph', () => {
-  const st = bendStations('H H', font, spec({ bendDeg: 90 }));
+  const st = glyphStations('H H', font, spec({ bendDeg: 90 }));
   assert.equal(st.length, 2);
   near(st[0].x, -st[1].x); // still symmetric about the origin
   assert.ok(st[1].x - st[0].x > st[0].advance, 'the space holds the two apart');
 });
 
 test('stations: ±360° closes the circle at even angular pitch', () => {
-  const st = bendStations('HHHH', font, spec({ bendDeg: 360 }));
+  const st = glyphStations('HHHH', font, spec({ bendDeg: 360 }));
   const step = Math.PI / 2; // 360° over 4 glyphs
   for (let i = 1; i < st.length; i++) near(st[i].angleRad - st[i - 1].angleRad, -step);
   // ...and the seam between last and first is one step too, closing it.
@@ -93,4 +94,76 @@ test('engrave: the pocket walls and floor follow the arc', () => {
   // The floor is genuinely bent: taller than the straight slot's floor.
   assert.ok(span(floor, 'y') > span(pocketFloor('HI', font, spec({ style: 'deboss' })), 'y') * 1.1);
   assert.ok(pocketLining('HI', font, s).length >= 9, 'the bent pocket keeps its side walls');
+});
+
+// ── freeform baseline paths ─────────────────────────────────────────────────
+
+test('path: a straight horizontal path reproduces the straight run exactly', () => {
+  // The run centres on the curve's arc-length middle, so a path symmetric
+  // about the origin lands every glyph where the straight layout would.
+  const straight = glyphStations('HHH', font, spec());
+  const onPath = glyphStations('HHH', font, spec({ path: [[-40, 0], [40, 0]] }));
+  assert.equal(onPath.length, straight.length);
+  straight.forEach((s, i) => {
+    near(onPath[i].x, s.x, 1e-6);
+    near(onPath[i].y, s.y, 1e-6);
+    near(onPath[i].angleRad, 0, 1e-6);
+  });
+});
+
+test('path: a vertical path marches the letters upward, turned 90°', () => {
+  const st = glyphStations('HHH', font, spec({ path: [[0, -40], [0, 40]] }));
+  const a = st[0].advance;
+  st.forEach((s) => { near(s.x, 0, 1e-6); near(s.angleRad, Math.PI / 2, 1e-6); });
+  near(st[1].y, 0, 1e-6); // centred on the curve's middle
+  near(st[2].y - st[1].y, a, 1e-6);
+});
+
+test('path: the curve through a raised middle anchor arches the run', () => {
+  // Ends level, middle up: the outer glyphs sit lower than the middle one
+  // and their tangents lean opposite ways — a freeform arch.
+  const st = glyphStations('HHH', font, spec({ path: [[-30, 0], [0, 12], [30, 0]] }));
+  assert.ok(st[1].y > st[0].y && st[1].y > st[2].y, 'middle glyph rides the raised anchor');
+  assert.ok(st[0].angleRad > 0.05, 'left glyph climbs');
+  assert.ok(st[2].angleRad < -0.05, 'right glyph descends');
+  near(st[0].y, st[2].y, 0.1); // symmetric path, symmetric landing
+});
+
+test('path: a run longer than the curve overruns straight past the ends', () => {
+  const st = glyphStations('HHHHHHHH', font, spec({ path: [[-10, 0], [10, 0]] }));
+  assert.equal(st.length, 8);
+  assert.ok(st[0].x < -10 && st[st.length - 1].x > 10, 'outer glyphs pass the anchors');
+  st.forEach((s) => { near(s.y, 0, 1e-6); near(s.angleRad, 0, 1e-6); });
+  const a = st[0].advance;
+  for (let i = 1; i < st.length; i++) near(st[i].x - st[i - 1].x, a, 1e-6);
+});
+
+test('path: the drawn path wins when bendDeg is also set', () => {
+  const both = glyphStations('HHH', font, spec({ path: [[-40, 0], [40, 0]], bendDeg: 120 }));
+  const pathOnly = glyphStations('HHH', font, spec({ path: [[-40, 0], [40, 0]] }));
+  both.forEach((s, i) => { near(s.x, pathOnly[i].x); near(s.y, pathOnly[i].y); near(s.angleRad, pathOnly[i].angleRad); });
+});
+
+test('path geometry: the baseline sits ON the curve — no recentring', () => {
+  // A path lifted 15mm above the origin: the glyph's baseline must land at
+  // v=15, not be pulled back to centre on the origin like a Bend run.
+  const geo = buildTextGeometry('H', font, spec({ path: [[-20, 15], [20, 15]] }));
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox!;
+  near(bb.min.y, 15, 0.5); // 'H' has no descender: its baseline IS the bottom
+  // Advance-centred on the path middle — side bearings may skew the OUTLINE
+  // a couple of millimetres, which is correct typography, not drift.
+  near(bb.min.x + bb.max.x, 0, 3);
+});
+
+test('path engrave: the pocket follows the drawn curve', () => {
+  const s = spec({ path: [[-25, 0], [0, 10], [25, 0]], style: 'deboss' });
+  const floor = pocketFloor('HI', font, s);
+  const verts = floor.attributes.position;
+  assert.ok(verts.count >= 3, 'a path cut still has a floor');
+  for (let i = 0; i < verts.count; i++) near(verts.getZ(i), -s.depthMm, 1e-4);
+  // The raised middle drags the floor up with it.
+  floor.computeBoundingBox();
+  assert.ok(floor.boundingBox!.max.y > 9, 'the floor rides the curve');
+  assert.ok(pocketLining('HI', font, s).length >= 9, 'walls intact');
 });

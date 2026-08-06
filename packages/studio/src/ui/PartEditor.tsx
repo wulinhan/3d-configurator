@@ -13,7 +13,7 @@ import {
   ungroup, renameGroup, nudgeGroup, partToOrigin, groupToOrigin,
   matchPose, partCentreMm, setPartCentre,
   nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
-  setTextSlot, removeTextSlot, type TextSlotPatch,
+  setTextSlot, removeTextSlot, setTextPath, type TextSlotPatch,
   setImageZone, nudgeImageZone, removeImageZone, type ImageZonePatch,
   entrySizeMm, withEntrySizeMm,
   AXIS_NAMES, type Axis,
@@ -312,6 +312,10 @@ export function PartEditor(props: {
   onPlaceText: (partId: string) => void;
   /** Arm "click a face" image-zone placement for this part in the viewport. */
   onPlaceImage: (partId: string) => void;
+  /** Arm (id) or disarm (null) baseline-curve shaping in the viewport. */
+  onShapeText: (optionId: string | null) => void;
+  /** The slot whose baseline is being shaped right now, if any. */
+  shapingText: string | null;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -502,7 +506,10 @@ export function PartEditor(props: {
           size and depth — sink the plane to engrave instead of emboss.
         </p>
         {manifest.options.filter((o): o is TextOption => o.type === 'text' && o.part === part.id).map((slot) => (
-          <TextSlotEditor key={slot.id} slot={slot} manifest={manifest} onChange={props.onChange} act={act} />
+          <TextSlotEditor
+            key={slot.id} slot={slot} manifest={manifest} onChange={props.onChange} act={act}
+            onShapeText={props.onShapeText} shaping={props.shapingText === slot.id}
+          />
         ))}
         <div className="match-row">
           <button
@@ -543,6 +550,8 @@ function TextSlotEditor(props: {
   manifest: Manifest;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
   act: (fn: () => Manifest) => void;
+  onShapeText: (optionId: string | null) => void;
+  shaping: boolean;
 }) {
   const { slot, manifest, act } = props;
   const patch = (p: TextSlotPatch) => act(() => setTextSlot(manifest, slot.id, p));
@@ -590,6 +599,7 @@ function TextSlotEditor(props: {
         {!slot.perChar && (
           // The arc the whole run bends through: + arches up, − smiles.
           // Hidden for per-letter spawning — pieces pattern themselves.
+          // Turning the dial straightens away any drawn baseline curve.
           <NumberField
             label="Bend" value={slot.bendDeg ?? 0} suffix="°" step={15} testId={`text-bend-${slot.id}`}
             onCommit={(v) => patch({ bendDeg: v })}
@@ -600,6 +610,29 @@ function TextSlotEditor(props: {
           onCommit={(v) => patch({ maxLength: Math.round(v) })}
         />
       </div>
+      {!slot.perChar && (
+        // Freeform baseline: the letters walk a curve drawn on the surface.
+        <div className="match-row">
+          {props.shaping ? (
+            <button
+              className="mini is-active" data-testid={`text-curve-done-${slot.id}`}
+              onClick={() => props.onShapeText(null)}
+            >Done shaping</button>
+          ) : (
+            <button
+              className="mini" data-testid={`text-curve-${slot.id}`}
+              title="Drag anchor dots on the surface — the letters follow the curve through them"
+              onClick={() => props.onShapeText(slot.id)}
+            >{slot.path ? 'Edit baseline curve' : 'Curve the baseline'}</button>
+          )}
+          {slot.path && (
+            <button
+              className="mini" data-testid={`text-curve-off-${slot.id}`}
+              onClick={() => { props.onShapeText(null); act(() => setTextPath(manifest, slot.id, null)); }}
+            >Straighten</button>
+          )}
+        </div>
+      )}
       <label className="field wide">
         <span className="field-label">Text colour</span>
         <Select

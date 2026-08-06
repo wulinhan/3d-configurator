@@ -257,6 +257,19 @@ the pocket's walls and floor all follow the arc exactly. (Hidden while
 one-piece-per-letter is on — spawned pieces have their own line/circle
 patterns.)
 
+**Curve the baseline** goes freeform: draggable anchor dots appear pinned
+to the slot's face (seeded as a straight three-dot run), and the letters
+walk the open Catmull-Rom curve through them — drag a dot to bow the
+baseline live, click a segment's smaller midpoint dot to add an anchor,
+double-click an anchor to remove it (two minimum), Esc or *Done shaping*
+to finish. The run centres on the curve's arc-length middle; text longer
+than the drawn curve overruns straight past the ends, and the glyphs sit
+exactly ON the curve — what you drag is what renders, engraving included,
+because the path feeds the same per-glyph station engine as Bend. Bend and
+the drawn curve are alternative baselines: setting one clears the other
+(*Straighten* clears the curve explicitly). Anchors are stored in the
+slot's sketch plane, so the curve rides part moves, rotation and Slide.
+
 **One piece per letter** turns the carrier part — or, when it belongs to
 an assembly, the WHOLE assembly — into a TEMPLATE: every character the
 customer types spawns its own copy, copy k carrying character k. Line
@@ -445,22 +458,30 @@ test/structure.test.ts 36 — assemblies merge colours without double-painting,
                       deletes repair both structures, repeat patterns pitch
                       line copies at size+gap and turn ring copies rigidly
                       about the origin — assemblies orbit AND spin together
-test/text-bend (embed) 7 — curved text: bend stations lie on the arc with
+test/text-bend (embed) 14 — curved text: bend stations lie on the arc with
                       tangent-turned glyphs (arch up / smile down / full
                       circle / spaces advance silently), the bent run's
                       merged prism arches and stays centred at the same
                       extrusion depth, and the engraved pocket's walls and
-                      floor follow the arc — asserted against a real
-                      bundled font, the same geometry the viewer renders
-test/text.test.ts     11 — text slots bind valid, tune through validation,
+                      floor follow the arc; freeform paths reproduce the
+                      straight run on a straight curve, march letters up a
+                      vertical one, arch through a raised anchor, overrun
+                      straight past short curves, beat bendDeg when both
+                      are set, keep the baseline ON the drawn curve (no
+                      recentring), and carry the engrave pocket along —
+                      all against a real bundled font, the same geometry
+                      the viewer renders
+test/text.test.ts     12 — text slots bind valid, tune through validation,
                       sanitise + clamp customer text, price flat + per
                       character, follow their carrier part (hidden = inert,
                       deleted = gone, renamed = renamed), per-letter
                       spawning toggles on/off through validation in both
                       line and circle modes, negative gaps overlap on
                       purpose, engraved style skips the emboss sink rule,
-                      the slot's own colour pins and releases, and Bend
-                      validates ±360° with 0 clearing back to straight
+                      the slot's own colour pins and releases, Bend
+                      validates ±360° with 0 clearing back to straight,
+                      and the drawn baseline path rounds, validates, and
+                      displaces Bend (and vice versa)
 test/image.test.ts     8 — image zones bind valid with defaults, tune and
                       nudge through validation (the nudge slides in the
                       zone's own surface plane, both face orientations),
@@ -487,7 +508,9 @@ test/studio.smoke.mjs browser assertions — the full merchant journey
                       download, New project resetting to the empty stage,
                       3D text end to end (face pick → slot → typeface
                       dropdown reshaping the extrusion → Bend arching the
-                      run and 0 straightening it → one-piece-per-letter
+                      run and 0 straightening it → baseline shaping with
+                      seeded dots, a real drag bowing the curve, Esc and
+                      Straighten → one-piece-per-letter
                       spawning a pitched row of template copies → customer
                       typing priced per character in the real embed → removal
                       clearing slot, extrusion and spawned pieces), and image

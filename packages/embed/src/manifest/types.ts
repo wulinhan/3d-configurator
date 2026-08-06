@@ -262,6 +262,17 @@ export interface TextOption {
    * patterns).
    */
   bendDeg?: number;
+  /**
+   * Freeform baseline: 2–64 anchor points in the sketch plane (mm,
+   * relative to origin; +u runs with the text, +v is the glyph up). The
+   * baseline is the open Catmull-Rom curve through them — the letters walk
+   * it at their real advances, centred on its arc-length middle, and a run
+   * longer than the curve overruns STRAIGHT past the ends. The glyphs sit
+   * exactly ON the drawn curve (no recentring), so what the merchant drags
+   * is what renders. Takes precedence over bendDeg. Ignored by
+   * one-piece-per-letter spawning.
+   */
+  path?: Array<[number, number]>;
   /** One of TEXT_FONTS. Default 'sans-bold' — bold survives extrusion best. */
   font?: TextFont;
   /** Glyph height, mm. */

@@ -14,7 +14,9 @@ import * as THREE from 'three';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
-import { applyGizmoPose, setCameraView, snapFaces, nudgeGroup, nudgeVariant, type GizmoPose } from '../lib/manifest-edit.ts';
+import type { TextOption } from '../../../embed/src/manifest/types.ts';
+import { openCurveSegments, curvePoint, type Pt } from '../../../embed/src/runtime/text-path.ts';
+import { applyGizmoPose, setCameraView, setTextPath, snapFaces, nudgeGroup, nudgeVariant, type GizmoPose } from '../lib/manifest-edit.ts';
 import { Gizmo, type GizmoMode, type CommitPhase } from './gizmo.ts';
 import { ViewCube } from './view-cube.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -42,6 +44,10 @@ export function ViewerPane(props: {
     zone?: { centre: [number, number, number]; angleDeg: number; widthMm: number; heightMm: number };
   }) => void;
   onSurfaceCancel: () => void;
+  /** Non-null puts the viewport in baseline-shaping mode for that text
+   * slot: draggable anchor dots pinned to its sketch plane. */
+  shapeText: string | null;
+  onShapeTextDone: () => void;
   onSelectPart: (id: string | null) => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
 }) {
@@ -434,6 +440,186 @@ export function ViewerPane(props: {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.surfacePick]);
+
+  // Baseline shaping: the slot's path anchors render as draggable dots,
+  // projected from sketch (u,v) through the carrier's transform every frame
+  // (so orbiting keeps them pinned to the surface). Dragging raycasts the
+  // cursor back onto the sketch plane; smaller dots at each segment
+  // midpoint insert a new anchor, double-clicking removes one (two
+  // minimum). The glyph mesh re-renders on every commit, so the letters
+  // walk the curve live under the drag.
+  useEffect(() => {
+    const optionId = props.shapeText;
+    if (!optionId) return;
+    setSnapArm(null);
+    setMode('off');
+    const stage = stageRef.current!;
+    const canvas = canvasRef.current!;
+    const overlay = document.createElement('div');
+    overlay.className = 'shape-overlay';
+    overlay.setAttribute('data-testid', 'shape-overlay');
+    stage.append(overlay);
+
+    interface Basis {
+      option: TextOption; viewer: Viewer; carrier: THREE.Mesh;
+      origin: THREE.Vector3; x: THREE.Vector3; y: THREE.Vector3; n: THREE.Vector3;
+    }
+    const basisOf = (): Basis | null => {
+      const option = commitCtx.current.project.manifest.options.find(
+        (o): o is TextOption => o.id === optionId && o.type === 'text');
+      const viewer = viewerRef.current;
+      const carrier = option && (viewer?.meshOf(option.part) as THREE.Mesh | undefined);
+      if (!option || !viewer || !carrier) return null;
+      // The same sketch basis placeGlyph poses the run with — the dots sit
+      // exactly where the letters land.
+      const n = new THREE.Vector3(...option.normal).normalize();
+      const upRef = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, -1);
+      const x = new THREE.Vector3().crossVectors(upRef, n).normalize();
+      const y = new THREE.Vector3().crossVectors(n, x).normalize();
+      if (option.rotationDeg) {
+        const spin = new THREE.Quaternion().setFromAxisAngle(n, option.rotationDeg * Math.PI / 180);
+        x.applyQuaternion(spin);
+        y.applyQuaternion(spin);
+      }
+      return { option, viewer, carrier, origin: new THREE.Vector3(...option.origin), x, y, n };
+    };
+    const toWorld = (b: Basis, u: number, v: number) =>
+      b.carrier.localToWorld(b.origin.clone().addScaledVector(b.x, u).addScaledVector(b.y, v));
+    const toScreen = (b: Basis, world: THREE.Vector3) => {
+      const p = world.clone().project(b.viewer.camera);
+      const r = canvas.getBoundingClientRect();
+      const s = stage.getBoundingClientRect();
+      return { left: (p.x + 1) / 2 * r.width + (r.left - s.left), top: (1 - p.y) / 2 * r.height + (r.top - s.top) };
+    };
+    const raycaster = new THREE.Raycaster();
+    const toSketch = (b: Basis, clientX: number, clientY: number): Pt | null => {
+      const r = canvas.getBoundingClientRect();
+      raycaster.setFromCamera(new THREE.Vector2(
+        ((clientX - r.left) / r.width) * 2 - 1,
+        -((clientY - r.top) / r.height) * 2 + 1,
+      ), b.viewer.camera);
+      const worldN = b.n.clone().transformDirection(b.carrier.matrixWorld);
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(worldN, toWorld(b, 0, 0));
+      const hit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, hit)) return null;
+      const local = b.carrier.worldToLocal(hit).sub(b.origin);
+      return [local.dot(b.x), local.dot(b.y)];
+    };
+
+    const commit = (path: Pt[], transient: boolean) => {
+      const { project, onChange } = commitCtx.current;
+      try {
+        onChange(setTextPath(project.manifest, optionId, path as Array<[number, number]>), { transient });
+      } catch { /* a refused path never reaches the manifest */ }
+    };
+
+    let anchors: HTMLButtonElement[] = [];
+    let mids: HTMLButtonElement[] = [];
+    let dragging = -1;
+    let dragMoved = false;
+
+    const startDrag = (index: number) => (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = index;
+      dragMoved = false;
+      anchors[index]?.setPointerCapture?.(e.pointerId);
+    };
+    const onDragMove = (e: PointerEvent) => {
+      if (dragging < 0) return;
+      const b = basisOf();
+      if (!b) return;
+      const uv = toSketch(b, e.clientX, e.clientY);
+      if (!uv) return;
+      const clamp = (v: number) => Math.max(-1000, Math.min(1000, v));
+      const next = (b.option.path ?? []).map((p, i) => (i === dragging
+        ? [clamp(uv[0]), clamp(uv[1])] as Pt
+        : p as Pt));
+      // First move of a gesture records the undo step; the rest ride it.
+      commit(next, dragMoved);
+      dragMoved = true;
+    };
+    const endDrag = () => { dragging = -1; };
+
+    const removeAnchor = (index: number) => {
+      const b = basisOf();
+      if (!b || (b.option.path ?? []).length <= 2) return;
+      commit((b.option.path ?? []).filter((_, i) => i !== index) as Pt[], false);
+    };
+    const insertAnchor = (index: number) => (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const b = basisOf();
+      if (!b) return;
+      const path = (b.option.path ?? []) as Pt[];
+      const segs = openCurveSegments(path);
+      if (!segs[index]) return;
+      const mid = curvePoint(segs[index], 0.5);
+      commit([...path.slice(0, index + 1), mid, ...path.slice(index + 1)], false);
+    };
+
+    const ensureHandles = (anchorCount: number, midCount: number) => {
+      while (anchors.length < anchorCount) {
+        const i = anchors.length;
+        const dot = document.createElement('button');
+        dot.className = 'shape-anchor';
+        dot.setAttribute('data-testid', `shape-anchor-${i}`);
+        dot.title = 'Drag to reshape — double-click to remove';
+        dot.addEventListener('pointerdown', startDrag(i));
+        dot.addEventListener('dblclick', () => removeAnchor(i));
+        overlay.append(dot);
+        anchors.push(dot);
+      }
+      while (anchors.length > anchorCount) anchors.pop()!.remove();
+      while (mids.length < midCount) {
+        const i = mids.length;
+        const dot = document.createElement('button');
+        dot.className = 'shape-mid';
+        dot.setAttribute('data-testid', `shape-mid-${i}`);
+        dot.title = 'Add a point here';
+        dot.addEventListener('pointerdown', insertAnchor(i));
+        overlay.append(dot);
+        mids.push(dot);
+      }
+      while (mids.length > midCount) mids.pop()!.remove();
+    };
+
+    let raf = 0;
+    const layout = () => {
+      const b = basisOf();
+      if (!b || !b.option.path?.length) { props.onShapeTextDone(); return; }
+      const path = b.option.path as Pt[];
+      const segs = openCurveSegments(path); // open: one fewer than anchors
+      ensureHandles(path.length, segs.length);
+      path.forEach((p, i) => {
+        const s = toScreen(b, toWorld(b, p[0], p[1]));
+        anchors[i].style.left = `${s.left}px`;
+        anchors[i].style.top = `${s.top}px`;
+      });
+      segs.forEach((seg, i) => {
+        const [mu, mv] = curvePoint(seg, 0.5);
+        const s = toScreen(b, toWorld(b, mu, mv));
+        mids[i].style.left = `${s.left}px`;
+        mids[i].style.top = `${s.top}px`;
+      });
+      raf = requestAnimationFrame(layout);
+    };
+    raf = requestAnimationFrame(layout);
+
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onShapeTextDone(); };
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('keydown', onKey);
+      overlay.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.shapeText]);
 
   const saveView = () => {
     const viewer = viewerRef.current;

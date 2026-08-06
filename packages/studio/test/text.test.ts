@@ -10,7 +10,7 @@ import type { Manifest, TextOption } from '../../embed/src/manifest/types.ts';
 import { defaultSelections, applySelection, priceDeltas, sanitiseText, isOptionActive } from '../../embed/src/runtime/state.ts';
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
-  addTextSlot, setTextSlot, removeTextSlot, removePart, renamePart, EditError,
+  addTextSlot, setTextSlot, setTextPath, removeTextSlot, removePart, renamePart, EditError,
 } from '../src/lib/manifest-edit.ts';
 
 const tri = (positions: number[]) => ({
@@ -80,6 +80,25 @@ test('bendDeg curves the run through validation; 0 straightens it back off', () 
   assert.throws(() => setTextSlot(m, 'body-text', { bendDeg: NaN }), /bendDeg/);
   // Zero is "straight" — the default, not a stored field.
   assert.equal(slotOf(setTextSlot(m, 'body-text', { bendDeg: 0 })).bendDeg, undefined);
+});
+
+test('setTextPath draws the freeform baseline; Bend and path displace each other', () => {
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  m = setTextPath(m, 'body-text', [[-20.0004, 0], [0, 8], [20, 0]]);
+  valid(m);
+  assert.deepEqual(slotOf(m).path, [[-20, 0], [0, 8], [20, 0]], 'anchors round to microns');
+
+  // The two baselines are alternatives: each clears the other.
+  const bent = setTextSlot(m, 'body-text', { bendDeg: 90 });
+  assert.equal(slotOf(bent).path, undefined, 'turning Bend straightens the drawn curve');
+  const redrawn = setTextPath(bent, 'body-text', [[-10, 0], [10, 0]]);
+  assert.equal(slotOf(redrawn).bendDeg, undefined, 'drawing a path clears Bend');
+
+  // Bad paths never reach the manifest; null clears back to straight.
+  assert.throws(() => setTextPath(m, 'body-text', [[0, 0]]), /path/);
+  assert.throws(() => setTextPath(m, 'body-text', [[NaN, 0], [1, 1]]), /path/);
+  assert.throws(() => setTextPath(m, 'body-colour', [[-1, 0], [1, 0]]), /not a text slot/);
+  assert.equal(slotOf(setTextPath(m, 'body-text', null)).path, undefined);
 });
 
 test('removeTextSlot, removePart and renamePart keep the manifest whole', () => {

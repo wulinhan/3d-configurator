@@ -19,7 +19,7 @@ import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-mode
 import { writeGlb } from './lib/write-glb.ts';
 import { initManifest, boundsOf, boundsByPartId, mergeModel, type PartBounds } from './lib/manifest-init.ts';
 import {
-  duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, addImageZone, refitImageZone, type Axis,
+  duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, addImageZone, refitImageZone, setTextPath, type Axis,
 } from './lib/manifest-edit.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
@@ -95,6 +95,8 @@ export function App() {
   const [publishing, setPublishing] = useState(false);
   // Armed "click a face to place …" tool: what lands there and on which part.
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
+  // The text slot whose baseline curve is being shaped in the viewport.
+  const [shapingText, setShapingText] = useState<string | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
   // Which choice each pick-one option shows while authoring — the merchant's
@@ -123,6 +125,7 @@ export function App() {
     setPreviewing(false);
     setPublishing(false);
     setPlacing(null);
+    setShapingText(null);
     setTab('Parts');
   }, []);
 
@@ -310,6 +313,21 @@ export function App() {
     }
   }, [setManifest, placing]);
 
+  // Arm (or disarm, with null) baseline-curve shaping for a text slot. A
+  // slot with no drawn curve yet is seeded with a straight three-anchor
+  // baseline roughly the run's length, so there is something to grab the
+  // moment the dots appear — that seed is the undo step.
+  const shapeTextInApp = useCallback((optionId: string | null) => {
+    if (!optionId) { setShapingText(null); return; }
+    const old = projectRef.current;
+    const slot = old.manifest.options.find((o) => o.id === optionId);
+    if (slot && slot.type === 'text' && !slot.path?.length) {
+      const run = Math.max(24, (slot.placeholder ?? 'Text').length * slot.sizeMm * 0.62);
+      setManifest(setTextPath(old.manifest, optionId, [[-run / 2, 0], [0, 0], [run / 2, 0]]));
+    }
+    setShapingText(optionId);
+  }, [setManifest]);
+
   // Repeat = duplicate × N with placement maths; same viewer-remount dance.
   // Throws EditError (bad count, part at the origin for a circle) BEFORE any
   // state changes, so callers surface the message and nothing is half-done.
@@ -389,6 +407,8 @@ export function App() {
               key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} onRepeat={repeatEntryInApp}
               onPlaceText={(id) => setPlacing({ kind: 'text', partId: id })}
               onPlaceImage={(id) => setPlacing({ kind: 'image', partId: id })}
+              onShapeText={shapeTextInApp}
+              shapingText={shapingText}
             />
           : null)
     : null;
@@ -481,6 +501,8 @@ export function App() {
             surfacePick={placing}
             onSurfacePick={placeSurfaceInApp}
             onSurfaceCancel={() => setPlacing(null)}
+            shapeText={shapingText}
+            onShapeTextDone={() => setShapingText(null)}
             onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
             onChange={setManifest}
           />

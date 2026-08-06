@@ -1343,10 +1343,37 @@ export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlo
     else if (perChar !== undefined) o.perChar = perChar;
     if (colourHex === null) delete o.colourHex;
     else if (colourHex !== undefined) o.colourHex = colourHex;
+    // Bend and a drawn path are alternative baselines — turning the Bend
+    // dial straightens away any drawn curve.
+    if (patch.bendDeg !== undefined) delete o.path;
     // An emptied field falls back to its default rather than validating as 0.
     for (const key of ['sinkMm', 'rotationDeg', 'bendDeg', 'priceDelta', 'pricePerChar'] as const) {
       if (o[key] === 0) delete o[key];
     }
+  });
+}
+
+/**
+ * Draw (or clear, with null) a text slot's freeform baseline: 2–64 anchors
+ * in the slot's sketch plane, mm relative to origin. The letters walk the
+ * open curve through them. Setting a path clears bendDeg — the two are
+ * alternative baselines and the drawn one wins.
+ */
+export function setTextPath(
+  manifest: Manifest,
+  optionId: string,
+  path: Array<[number, number]> | null,
+): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
+  return edit(manifest, (draft) => {
+    const o = draft.options.find((x) => x.id === optionId) as TextOption;
+    if (path === null || path.length === 0) {
+      delete o.path;
+      return;
+    }
+    o.path = path.map(([u, v]) => [round3(u), round3(v)] as [number, number]);
+    delete o.bendDeg;
   });
 }
 

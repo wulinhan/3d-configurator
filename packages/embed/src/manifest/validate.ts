@@ -286,6 +286,16 @@ export function validateManifest(input: unknown): ValidationResult {
       if (o.bendDeg != null && (!Number.isFinite(o.bendDeg) || Math.abs(o.bendDeg) > 360)) {
         err(`${at}.bendDeg`, 'must be between -360 and 360 degrees — the arc the whole run bends through');
       }
+      if (o.path != null) {
+        if (!Array.isArray(o.path) || o.path.length < 2 || o.path.length > 64) {
+          err(`${at}.path`, 'must be 2 to 64 anchor points — the open baseline curve');
+        } else if (o.path.some((p) => !Array.isArray(p) || p.length !== 2
+          || p.some((v) => typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > 1000))) {
+          err(`${at}.path`, 'anchors must be [u, v] millimetres in the sketch plane, within ±1000');
+        } else if (o.bendDeg) {
+          warn(`${at}.path`, 'both path and bendDeg set — the drawn path wins, bendDeg is ignored');
+        }
+      }
       if (o.maxLength != null && (!Number.isInteger(o.maxLength) || o.maxLength < 1 || o.maxLength > 60)) {
         err(`${at}.maxLength`, 'must be a whole number between 1 and 60');
       }

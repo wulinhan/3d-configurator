@@ -8,15 +8,19 @@ import * as THREE from 'three';
 import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
 import type { Font } from 'three/examples/jsm/loaders/FontLoader.js';
 import type { TextOption } from '../manifest/types.ts';
+import { walkPath, type Pt } from './text-path.ts';
 
 type Csg = typeof import('three-bvh-csg');
 
+/** Does this slot curve its run — a drawn baseline path, or a Bend arc? */
+const curved = (spec: TextOption): boolean => (spec.path?.length ?? 0) >= 2 || !!spec.bendDeg;
+
 /** One extruded glyph run, centred on the sketch origin. With `bendDeg`
- * set, the run curves along a circular arc — built per glyph and merged,
- * so every consumer (emboss mesh, engrave cutter, pocket lining and
- * floor) gets the bend for free. */
+ * or a drawn `path`, the run curves along that baseline — built per glyph
+ * and merged, so every consumer (emboss mesh, engrave cutter, pocket
+ * lining and floor) gets the curve for free. */
 export function buildTextGeometry(text: string, font: Font, spec: TextOption): THREE.BufferGeometry {
-  if (spec.bendDeg) {
+  if (curved(spec)) {
     const bent = bentTextGeometry(text, font, spec);
     if (bent) return bent;
   }
@@ -40,16 +44,19 @@ export function buildTextGeometry(text: string, font: Font, spec: TextOption): T
 type FontMetrics = { resolution?: number; glyphs: Record<string, { ha?: number } | undefined> };
 
 /**
- * Per-glyph stations of a bent run, in the sketch plane. The BASELINE
- * follows a circular arc subtending `bendDeg` over the whole run's length:
+ * Per-glyph stations of a curved run, in the sketch plane. The BASELINE is
+ * either the drawn `path` (an open Catmull-Rom through the merchant's
+ * anchors — it wins when both are set) or the `bendDeg` circular arc:
  * positive bends arch up (the middle is the crest, the ends drop away),
  * negative bends smile. Each printable glyph lands with its advance
  * midpoint at (x, y), turned by `angleRad` to the local tangent — spacing
- * along the arc equals the straight run's spacing, so kerning survives the
- * bend. Spaces advance the pen but land nothing. Pure layout maths,
- * unit-tested headless; geometry assembly happens in bentTextGeometry.
+ * along the baseline equals the straight run's spacing, so kerning
+ * survives the curve. On a path the run centres on the curve's arc-length
+ * middle and overruns extend straight past the ends. Spaces advance the
+ * pen but land nothing. Pure layout maths, unit-tested headless; geometry
+ * assembly happens in bentTextGeometry.
  */
-export function bendStations(
+export function glyphStations(
   text: string,
   font: Font,
   spec: TextOption,
@@ -59,14 +66,21 @@ export function bendStations(
   const advance = (ch: string) => ((data.glyphs[ch] ?? data.glyphs['?'])?.ha ?? 0) * scale;
   const chars = [...text];
   const total = chars.reduce((sum, ch) => sum + advance(ch), 0);
+  const walk = (spec.path?.length ?? 0) >= 2 ? walkPath(spec.path as Pt[]) : null;
   const theta = ((spec.bendDeg ?? 0) * Math.PI) / 180;
   const out: Array<{ ch: string; x: number; y: number; angleRad: number; advance: number }> = [];
-  let pen = -total / 2; // the run is centred on the origin, like the straight path
+  let pen = -total / 2; // the run is centred, like the straight path
   for (const ch of chars) {
     const a = advance(ch);
     const mid = pen + a / 2;
     pen += a;
     if (!ch.trim() || !(a > 0)) continue;
+    if (walk) {
+      // Centred on the curve's middle: mid 0 lands at arc length L/2.
+      const st = walk.at(walk.length / 2 + mid);
+      out.push({ ch, x: st.point[0], y: st.point[1], angleRad: st.angleRad, advance: a });
+      continue;
+    }
     if (!theta || !(total > 0)) {
       out.push({ ch, x: mid, y: 0, angleRad: 0, advance: a });
       continue;
@@ -89,7 +103,7 @@ export function bendStations(
  * no extra code. Null when nothing printable survives (the straight path
  * then yields the canonical empty geometry). */
 function bentTextGeometry(text: string, font: Font, spec: TextOption): THREE.BufferGeometry | null {
-  const stations = bendStations(text, font, spec);
+  const stations = glyphStations(text, font, spec);
   if (!stations.length) return null;
   const lids: number[] = [];
   const walls: number[] = [];
@@ -124,10 +138,14 @@ function bentTextGeometry(text: string, font: Font, spec: TextOption): THREE.Buf
   geo.addGroup(0, lids.length / 3, 0);
   geo.addGroup(lids.length / 3, walls.length / 3, 1);
   geo.computeVertexNormals(); // triangle soup → flat shading, same as ExtrudeGeometry
-  geo.computeBoundingBox();
-  const bb = geo.boundingBox!;
-  // Same convention as the straight run: centred on the sketch origin.
-  geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
+  // A Bend arc keeps the straight run's convention — centred on the sketch
+  // origin. A drawn path does NOT recentre: the glyph baseline sits exactly
+  // ON the curve the merchant dragged, wherever they put it.
+  if ((spec.path?.length ?? 0) < 2) {
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox!;
+    geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, 0);
+  }
   return geo;
 }
 
