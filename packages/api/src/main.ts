@@ -102,6 +102,15 @@ try {
       + ' with no label, quotes or line break.');
   }
 } catch {
+  // The trap the real deploy fell into: Neon's console has a field labelled
+  // "Pooler host", and a host alone is not a connection string. Name that
+  // case specifically, with the host they gave folded into the template —
+  // a generic "not a URL" sent three deploys in a row to the same failure.
+  if (/^[\w-]+(\.[\w-]+)+/.test(databaseUrl) && !databaseUrl.includes('://')) {
+    console.error(`[api] DATABASE_URL is just a HOSTNAME. It must be the whole connection string:`
+      + ` postgresql://USER:PASSWORD@${databaseUrl.split('/')[0]}/DBNAME?sslmode=require`
+      + ' — copy the "Connection string" from Neon, not the host field.');
+  }
   console.error('[api] DATABASE_URL is not a URL at all — paste the connection string alone,'
     + ' with no "DATABASE_URL=" prefix and no surrounding quotes.');
 }

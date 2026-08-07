@@ -110,7 +110,7 @@ These never go in `fly.toml`, which is committed:
 
 | Name | Value |
 | --- | --- |
-| `DATABASE_URL` | the **pooler** host — see §1 |
+| `DATABASE_URL` | the **whole** `postgresql://…` connection string, with the pooled (`-pooler`) host in it — NOT just the host field. See §1. |
 | `APP_BASE` | `https://studio.allin-studio.com` |
 | `PUBLIC_BASE` | `https://api.allin-studio.com` |
 | `STUDIO_ORIGINS` | `https://studio.allin-studio.com` |
