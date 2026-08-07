@@ -1520,7 +1520,7 @@ export function removeTextSlot(manifest: Manifest, optionId: string): Manifest {
 
 // ── image zones ─────────────────────────────────────────────────────────────
 
-const IMAGE_DEFAULTS = { widthMm: 30, heightMm: 20 } as const;
+const IMAGE_DEFAULTS = { widthMm: 30, heightMm: 20, placeholder: 'Image here' } as const;
 
 /**
  * Bind an image zone to a picked surface of a part. Like text slots, `origin`
@@ -1557,6 +1557,9 @@ export function addImageZone(
       normal: place.normal.map(round3) as [number, number, number],
       widthMm: clampMm(place.widthMm, IMAGE_DEFAULTS.widthMm),
       heightMm: clampMm(place.heightMm, IMAGE_DEFAULTS.heightMm),
+      // Seeded rather than left implicit, so the field the merchant opens
+      // holds the words the empty zone is actually showing.
+      placeholder: IMAGE_DEFAULTS.placeholder,
       ...(spin ? { rotationDeg: spin } : {}),
     });
   });
@@ -1564,7 +1567,7 @@ export function addImageZone(
 
 /** The fields a merchant tunes after placing an image zone. */
 export type ImageZonePatch = Partial<Pick<UploadOption,
-  'widthMm' | 'heightMm' | 'rotationDeg' | 'priceDelta' | 'maxBytes' | 'label'>>;
+  'widthMm' | 'heightMm' | 'rotationDeg' | 'priceDelta' | 'maxBytes' | 'label' | 'placeholder'>>;
 
 export function setImageZone(manifest: Manifest, optionId: string, patch: ImageZonePatch): Manifest {
   const option = manifest.options.find((o) => o.id === optionId);

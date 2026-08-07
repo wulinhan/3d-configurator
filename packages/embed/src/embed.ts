@@ -10,6 +10,7 @@ import { Viewer } from './runtime/viewer.ts';
 import {
   defaultSelections, resolveValue, resolveColour, coloursInUse, buildPayload,
   visibleParts, isOptionActive, applySelection, parseUploadState, textColourKey, textColourChoices,
+  zonePlaceholder,
   type Selections,
 } from './runtime/state.ts';
 
@@ -346,6 +347,11 @@ export async function mount(opts: MountOptions) {
     pick.type = 'button';
     pick.addEventListener('click', () => input.click());
     wrap.append(pick, input);
+
+    // The merchant's own words for the empty zone, shown where the customer
+    // is deciding what to upload — the same string the veil carries.
+    const hint = state ? '' : zonePlaceholder(option);
+    if (hint) wrap.append(el('p', 'cfg-note', hint));
 
     if (option.templateUrl) {
       const a = document.createElement('a');

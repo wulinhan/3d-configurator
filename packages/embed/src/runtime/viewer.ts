@@ -12,7 +12,10 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 
 import type { Manifest, Part, TextOption, UploadOption } from '../manifest/types.ts';
 import { resolveLayout, modelBounds, type Box } from './layout.ts';
-import { partColours, visibleParts, parseUploadState, textColour, type UploadState, type Selections } from './state.ts';
+import {
+  partColours, visibleParts, parseUploadState, textColour, zonePlaceholder,
+  type UploadState, type Selections,
+} from './state.ts';
 import { repeatInstances } from './repeat.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
 import type { Font } from 'three/examples/jsm/loaders/FontLoader.js';
@@ -1171,7 +1174,7 @@ export class Viewer {
    * The image is DRAWN into a canvas texture at its offset/size, so
    * repositioning and resizing repaint a canvas instead of rebuilding
    * geometry. While no image is uploaded the same canvas shows the
-   * translucent "Image here" veil, shaped by the region like everything
+   * translucent veil in the merchant's own wording, shaped by the region like everything
    * else. The overlay is the carrier's CHILD, so every move, rotation and
    * resize of the part carries it for free; it rebuilds only when the
    * zone or the carrier's own geometry (a deboss cut) changes.
@@ -1214,9 +1217,10 @@ export class Viewer {
       }
       if (!entry.mesh) continue;
 
-      // Paint key: image, offset and size only repaint the canvas.
+      // Paint key: image, offset, size and the merchant's empty-zone wording
+      // only repaint the canvas.
       const paint = JSON.stringify([
-        option.widthMm, option.heightMm,
+        option.widthMm, option.heightMm, zonePlaceholder(option),
         state ? [state.img.length, state.img.slice(-48), state.u, state.v, state.s] : null,
       ]);
       if (entry.paint === paint) continue;
@@ -1321,8 +1325,9 @@ export class Viewer {
   }
 
   /** Draw the zone's current face: the customer's image at its offset and
-   * size — or the translucent "Image here" veil when there is no image
-   * yet. The region geometry shapes whatever is painted here. */
+   * size — or the translucent veil, labelled in the merchant's own words,
+   * when there is no image yet. The region geometry shapes whatever is
+   * painted here. */
   private paintZone(
     option: UploadOption,
     entry: { canvas?: HTMLCanvasElement; texture?: THREE.CanvasTexture; imgEl?: HTMLImageElement; hasImage?: boolean },
@@ -1365,12 +1370,24 @@ export class Viewer {
       ctx.fillRect(0, 0, cw, ch);
       ctx.fillStyle = 'rgba(60, 60, 60, 0.08)';
       ctx.fillRect(0, 0, cw, ch);
-      const labelPx = Math.max(13, Math.round(Math.min(cw, ch) * 0.09));
-      ctx.font = `500 ${labelPx}px system-ui, -apple-system, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-      ctx.fillText('Image here', cw / 2, ch / 2);
+      const label = zonePlaceholder(option);
+      if (label) {
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        // The merchant writes the wording, so the label shrinks to stay
+        // inside the zone rather than running off its own veil.
+        const face = (px: number) => `500 ${px}px system-ui, -apple-system, sans-serif`;
+        let labelPx = Math.max(13, Math.round(Math.min(cw, ch) * 0.09));
+        ctx.font = face(labelPx);
+        const room = cw * 0.86;
+        const width = ctx.measureText(label).width;
+        if (width > room) {
+          labelPx = Math.max(8, Math.floor(labelPx * (room / width)));
+          ctx.font = face(labelPx);
+        }
+        ctx.fillText(label, cw / 2, ch / 2);
+      }
       entry.hasImage = false;
     }
     texture.needsUpdate = true;

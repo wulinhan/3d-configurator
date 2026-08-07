@@ -247,6 +247,13 @@ export interface UploadOption {
    * triangles, so the face's own rim does the masking. */
   widthMm: number;
   heightMm: number;
+  /**
+   * What the empty zone says before the customer uploads anything: the
+   * label on the translucent veil, and the hint under the panel's upload
+   * button. Absent falls back to "Image here"; an EMPTY string is a
+   * deliberate silence, for merchants who want the bare shape.
+   */
+  placeholder?: string;
   accept?: string[];        // default ['image/png', 'image/jpeg']
   /** Cap on the stored image, after client-side downscaling. Default ~1.5MB. */
   maxBytes?: number;

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { validateManifest } from '../../embed/src/manifest/validate.ts';
 import type { Manifest, UploadOption } from '../../embed/src/manifest/types.ts';
 import {
-  defaultSelections, applySelection, parseUploadState, priceDeltas,
+  defaultSelections, applySelection, parseUploadState, priceDeltas, zonePlaceholder,
 } from '../../embed/src/runtime/state.ts';
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
@@ -152,6 +152,43 @@ test('customer selections clamp to the zone and price when used', () => {
   assert.equal(s['body-image'], '');
   applySelection(m, s, 'body-image', JSON.stringify({ img: 'javascript:alert(1)', u: 0, v: 0, s: 100 }));
   assert.equal(s['body-image'], '');
+});
+
+test('the empty zone says what the merchant wrote — or nothing at all', () => {
+  let m = addImageZone(fresh(), 'body', PLACE);
+  // A new zone opens holding the words it is actually showing, so the field
+  // the merchant sees and the veil the customer sees start out agreeing.
+  assert.equal(zoneOf(m).placeholder, 'Image here');
+  assert.equal(zonePlaceholder(zoneOf(m)), 'Image here');
+
+  m = setImageZone(m, 'body-image', { placeholder: 'Your logo here' });
+  valid(m);
+  assert.equal(zonePlaceholder(zoneOf(m)), 'Your logo here');
+
+  // Blank is a real answer, not a missing one: a bare zone with no words.
+  const silent = setImageZone(m, 'body-image', { placeholder: '   ' });
+  valid(silent);
+  assert.equal(zonePlaceholder(zoneOf(silent)), '');
+
+  // A manifest written before the field existed still reads "Image here".
+  const legacy = structuredClone(m);
+  delete zoneOf(legacy).placeholder;
+  valid(legacy);
+  assert.equal(zonePlaceholder(zoneOf(legacy)), 'Image here');
+});
+
+test('a long placeholder warns rather than blocks; a non-string is an error', () => {
+  const m = setImageZone(addImageZone(fresh(), 'body', PLACE), 'body-image', {
+    placeholder: 'Upload the artwork you would like printed on this face',
+  });
+  // 40+ characters still publish — the veil shrinks them — but the merchant
+  // is told they will read small on the part.
+  assert.deepEqual(validateManifest(m).errors, []);
+  assert.ok(validateManifest(m).warnings.some((w) => w.path.endsWith('.placeholder')));
+
+  const broken = structuredClone(m);
+  (zoneOf(broken) as { placeholder: unknown }).placeholder = 42;
+  assert.ok(validateManifest(broken).errors.some((e) => e.path.endsWith('.placeholder')));
 });
 
 test('validator rejects broken zones', () => {

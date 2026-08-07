@@ -365,8 +365,14 @@ face — centred on it, rotated to run with the face's own edges (whatever
 the part's or the geometry's orientation), and opened to the face's
 measured extents. Width/height/rotation stay editable afterwards as a
 framing rectangle, and **Slide** nudges the zone across its surface plane.
-The customiser shows the zone as a translucent “Image here” veil until an
-image arrives.
+The customiser shows the zone as a translucent veil until an image arrives,
+labelled in the merchant's own words: **Empty-zone wording** seeds as
+“Image here” and is theirs to rewrite — “Your logo here”, “Upload your
+photo”, whatever the product calls for. The same string labels the veil on
+the part and hints under the panel's upload button, so the two can never
+disagree, and a long line shrinks to stay inside the zone rather than
+running off its own veil. Clearing the field is a real answer, not a
+missing one: the zone shows bare, with no words on it.
 
 The zone IS the picked surface. At render time the viewer re-welds the
 face region at the zone's origin/normal — the exact same weld the blue
@@ -597,12 +603,17 @@ test/text.test.ts     15 — text slots bind valid, tune through validation,
                       curved face arrives wrapped while a flat pick does
                       not, and wrapping otherwise sets, tunes and clears
                       like any other slot field
-test/image.test.ts     8 — image zones bind valid with defaults, tune and
+test/image.test.ts    10 — image zones bind valid with defaults, tune and
                       nudge through validation (the nudge slides in the
                       zone's own surface plane, both face orientations),
                       follow their carrier part (deleted = gone, renamed =
                       renamed), clamp customer offsets to the zone, price
-                      when used, and reject garbage/non-image selections
+                      when used, and reject garbage/non-image selections;
+                      the empty-zone wording opens seeded, takes the
+                      merchant's own words, reads blank as deliberate
+                      silence, still says "Image here" for a manifest
+                      written before the field existed, and warns (rather
+                      than blocks) past 40 characters
 test/engrave (embed)   3 — the boolean cut comes back CLOSED: surface,
                       walls and floor — even on an open-shell mesh where
                       raw CSG loses its bearings (the see-through-pocket

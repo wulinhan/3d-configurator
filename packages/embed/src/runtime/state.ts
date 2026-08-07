@@ -7,7 +7,7 @@
 // production.
 
 import type {
-  Manifest, Option, ColourOption, ChoiceOption, SelectionPayload, Hex,
+  Manifest, Option, ColourOption, ChoiceOption, UploadOption, SelectionPayload, Hex,
 } from '../manifest/types.ts';
 
 export type Selections = Record<string, string>;
@@ -167,6 +167,16 @@ export interface UploadState {
   /** Uniform size percent, 10-500. 100 = largest fit inside the zone;
    * beyond 100 the image outgrows the zone and crops to it. */
   s: number;
+}
+
+/**
+ * What an empty image zone says — one answer for the veil in the viewport
+ * and the hint under the panel's button, so the two can never disagree.
+ * Absent falls back to "Image here"; an empty (or blank) string is the
+ * merchant asking for silence.
+ */
+export function zonePlaceholder(option: UploadOption): string {
+  return option.placeholder === undefined ? 'Image here' : option.placeholder.trim();
 }
 
 /** Parse an upload selection value; empty/garbage decodes to null. */

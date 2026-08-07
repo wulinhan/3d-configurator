@@ -928,6 +928,17 @@ function ImageZoneEditor(props: {
       <p className="hint">
         Slide moves the zone across its surface.
       </p>
+      <label className="field wide">
+        <span className="field-label">Empty-zone wording (customers see it on the part)</span>
+        <input
+          className="structure-name" data-testid={`image-placeholder-${zone.id}`}
+          value={zone.placeholder ?? 'Image here'}
+          onChange={(e) => patch({ placeholder: e.target.value })}
+        />
+      </label>
+      <p className="hint">
+        Leave it blank for a bare zone with no words on it.
+      </p>
       <div className="field-row">
         <NumberField
           label="Extra when used" value={zone.priceDelta ?? 0} suffix={manifest.pricing.currency} step={1}

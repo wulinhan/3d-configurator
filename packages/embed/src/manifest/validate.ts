@@ -282,6 +282,12 @@ export function validateManifest(input: unknown): ValidationResult {
       if (!(o.widthMm > 0) || o.widthMm > 500) err(`${at}.widthMm`, 'must be between 0 and 500 millimetres');
       if (!(o.heightMm > 0) || o.heightMm > 500) err(`${at}.heightMm`, 'must be between 0 and 500 millimetres');
       if (o.rotationDeg != null && !Number.isFinite(o.rotationDeg)) err(`${at}.rotationDeg`, 'must be a number');
+      if (o.placeholder != null) {
+        if (typeof o.placeholder !== 'string') err(`${at}.placeholder`, 'must be text');
+        else if (o.placeholder.length > 40) {
+          warn(`${at}.placeholder`, 'over 40 characters — the veil shrinks it to fit, so it reads small on the part');
+        }
+      }
     } else if (o && isText(o)) {
       if (!partIds.has(o.part)) err(`${at}.part`, `unknown part "${o.part}"`);
       const vec3 = (key: 'origin' | 'normal') => {
