@@ -107,7 +107,8 @@ export function studioRoutes(deps: Deps): Route[] {
         await createSession(sql, user.id, token, clock.now(), config.sessionTtlMs);
         addHeaders(ctx, {
           'set-cookie': cookieHeader(SESSION_COOKIE, token, {
-            secure: config.cookieSecure, maxAgeSeconds: Math.floor(config.sessionTtlMs / 1000),
+            secure: config.cookieSecure, sameSite: config.cookieSameSite,
+            maxAgeSeconds: Math.floor(config.sessionTtlMs / 1000),
           }),
         });
         return { user, ...(await me(user.id)) };
@@ -120,7 +121,9 @@ export function studioRoutes(deps: Deps): Route[] {
         const token = cookies(ctx.req)[SESSION_COOKIE];
         if (token) await deleteSession(sql, token);
         addHeaders(ctx, {
-          'set-cookie': cookieHeader(SESSION_COOKIE, '', { secure: config.cookieSecure, maxAgeSeconds: 0 }),
+          'set-cookie': cookieHeader(SESSION_COOKIE, '', {
+            secure: config.cookieSecure, sameSite: config.cookieSameSite, maxAgeSeconds: 0,
+          }),
         });
         return NO_CONTENT;
       },

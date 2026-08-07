@@ -181,3 +181,25 @@ export function mergeModel(
 
   return { parts: [...current.parts, ...renamed], manifest };
 }
+
+/**
+ * The placeholder box an empty project is sized against. No model is ever
+ * fetched for it — it only gives the ground grid something to be as big as
+ * until the first file arrives.
+ */
+export const EMPTY_BOUNDS: PartBounds = { min: [-60, 0, -60], max: [60, 80, 60] };
+
+/**
+ * A new, empty product.
+ *
+ * Shared by the standalone Studio's "New project" and by creating one on the
+ * service, so a saved empty project is byte-for-byte what an unsaved one is.
+ * The service will happily store `{}` — an autosave must never be refused —
+ * but `{}` is not something the editor can open, and this is the one place
+ * that decides what "empty" means.
+ */
+export function emptyManifest(name = 'New Product'): Manifest {
+  const manifest = initManifest([], { name, bounds: EMPTY_BOUNDS });
+  manifest.models = [];
+  return manifest;
+}

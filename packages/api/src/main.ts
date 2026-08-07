@@ -29,6 +29,7 @@ const config: Config = {
   maxModelBytes: Number(env('MAX_MODEL_BYTES', String(64 * 1024 * 1024))),
   maxImageBytes: Number(env('MAX_IMAGE_BYTES', String(8 * 1024 * 1024))),
   cookieSecure: env('COOKIE_SECURE', 'true') !== 'false',
+  cookieSameSite: env('COOKIE_SAMESITE', 'lax') === 'none' ? 'none' : 'lax',
   trustProxy: env('TRUST_PROXY', 'false') === 'true',
   revisionsKept: Number(env('REVISIONS_KEPT', '50')),
 };

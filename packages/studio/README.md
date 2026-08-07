@@ -603,6 +603,18 @@ test/text.test.ts     15 — text slots bind valid, tune through validation,
                       curved face arrives wrapped while a flat pick does
                       not, and wrapping otherwise sets, tunes and clears
                       like any other slot field
+test/cloud.test.ts    10 — the Studio's side of the service: with no
+                      service configured every URL is the editor (which is
+                      what keeps the offline Studio, and every browser check
+                      that opens /, working unchanged), a URL names the
+                      product and a sign-in token rides the fragment, the
+                      pasted snippet is the LIVE address rather than a
+                      version, and — most of the file — autosave: a burst of
+                      edits becomes one write carrying the newest copy, a
+                      second edit mid-write waits instead of racing, a failed
+                      write keeps what it was carrying, a conflict stops the
+                      loop dead rather than overwriting the other tab, and
+                      flush writes now for Publish and for a closing tab
 test/image.test.ts    10 — image zones bind valid with defaults, tune and
                       nudge through validation (the nudge slides in the
                       zone's own surface plane, both face orientations),

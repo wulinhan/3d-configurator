@@ -550,3 +550,161 @@ input, select { font: inherit; }
   padding: 20px; max-width: 1100px; width: 100%; margin: 0 auto;
 }
 .preview-btn { border-color: var(--accent); font-weight: 600; }
+
+/* ── the screens outside the editor ──────────────────────────────────────
+ * Sign-in and the product dashboard. Same warm neutrals, same 1.5px borders
+ * and 8px radii as the editor and the embed, so signing in and building do
+ * not feel like two products bolted together. */
+
+.auth-page {
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px;
+  background:
+    radial-gradient(1100px 620px at 50% -10%, #fffdf8 0%, rgba(255, 253, 248, 0) 62%),
+    var(--surface);
+  padding: 28px 20px;
+}
+.auth-card {
+  width: min(420px, 100%);
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 30px 30px 28px; text-align: center;
+  background: #fff; border: 1.5px solid var(--line); border-radius: 16px;
+  box-shadow: 0 14px 40px rgba(29, 29, 31, .07);
+  animation: dialog-in .18s cubic-bezier(.3, 1.2, .5, 1);
+}
+.auth-card h1 { margin: 0; font-size: 21px; letter-spacing: -.01em; }
+.auth-sub { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink2); }
+.auth-sub strong { color: var(--ink); font-weight: 600; }
+.auth-mark, .auth-sent {
+  display: grid; place-items: center; width: 46px; height: 46px; margin: 0 auto 2px;
+  border-radius: 13px; background: var(--surface); border: 1.5px solid var(--line);
+  color: var(--ink);
+}
+.auth-sent { background: #eef6ee; border-color: #cfe3cf; color: #2f6b3a; }
+.auth-field { display: flex; flex-direction: column; gap: 6px; text-align: left; margin-top: 4px; }
+.auth-field input {
+  border: 1.5px solid var(--line); border-radius: 9px; padding: 10px 12px; font-size: 14px;
+  background: #fff; color: var(--ink);
+}
+.auth-field input:focus { outline: none; border-color: var(--ink); }
+.auth-wide { width: 100%; margin-top: 10px; padding: 11px 18px; }
+.auth-error { text-align: left; margin: 2px 0 0; }
+.auth-escape {
+  background: none; border: none; font-size: 12.5px; color: var(--ink2);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.auth-escape:hover { color: var(--ink); }
+
+/* ── dashboard ── */
+.dash { min-height: 100vh; display: flex; flex-direction: column; background: #fff; }
+.dash-top {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 20px; border-bottom: 1px solid var(--line);
+}
+.dash-org-name, .dash-org {
+  font-size: 13px; color: var(--ink2);
+  padding: 5px 8px; border-radius: 8px; border: 1.5px solid transparent; background: none;
+}
+.dash-org { border-color: var(--line); color: var(--ink); }
+.dash-who {
+  font-size: 12.5px; color: var(--ink2);
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dash-body { flex: 1; width: 100%; max-width: 1060px; margin: 0 auto; padding: 34px 20px 60px; }
+.dash-head { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
+.dash-head h1 { margin: 0; font-size: 24px; letter-spacing: -.015em; flex: 1; }
+.dash-head .cta, .dash-empty .cta { display: inline-flex; align-items: center; gap: 7px; }
+.dash-note { color: var(--ink2); font-size: 13px; }
+
+.dash-grid {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(252px, 1fr));
+}
+/* The card is one grid so the name can wrap without pushing the pill or the
+ * arrow out of alignment with its neighbours. */
+.dash-card {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center;
+  padding: 15px 16px; text-decoration: none; color: inherit;
+  border: 1.5px solid var(--line); border-radius: 13px; background: #fff;
+  transition: border-color .12s, box-shadow .12s, transform .12s;
+}
+.dash-card:hover {
+  border-color: #cbc7bf; box-shadow: 0 8px 22px rgba(29, 29, 31, .07); transform: translateY(-1px);
+}
+.dash-card-icon { grid-row: 1; color: var(--ink2); display: grid; place-items: center; }
+.dash-card-name { grid-row: 1; font-weight: 600; font-size: 14.5px; overflow-wrap: anywhere; }
+.dash-card-meta { grid-row: 2; grid-column: 2; font-size: 12px; color: var(--ink2); }
+.dash-card-go { grid-row: 1 / span 2; grid-column: 3; color: var(--ink2); display: grid; place-items: center; }
+.dash-card:hover .dash-card-go { color: var(--ink); }
+.dash-pill {
+  grid-row: 2; grid-column: 1;
+  justify-self: start; font-size: 10.5px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; padding: 3px 7px; border-radius: 999px;
+  background: var(--surface); color: var(--ink2); border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.dash-pill.is-live { background: #eef6ee; color: #2f6b3a; border-color: #cfe3cf; }
+
+.dash-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 56px 24px; text-align: center;
+  border: 1.5px dashed var(--line); border-radius: 16px; background: var(--surface);
+}
+.dash-empty span[aria-hidden] { color: var(--ink2); }
+.dash-empty h2 { margin: 0; font-size: 17px; }
+.dash-empty p { margin: 0; max-width: 42ch; font-size: 13.5px; line-height: 1.55; color: var(--ink2); }
+
+/* ── people ── */
+.people-list { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.people-list li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 10px;
+}
+.people-list .dash-pill { grid-row: auto; grid-column: auto; }
+.people-email { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.people-invite { display: flex; flex-direction: column; gap: 8px; }
+.people-invite input, .people-invite select {
+  border: 1.5px solid var(--line); border-radius: 9px; padding: 9px 11px; font-size: 13px; background: #fff;
+}
+
+/* ── save state ── */
+.save-state {
+  font-size: 12px; color: var(--ink2); min-width: 96px;
+  transition: color .15s;
+}
+.save-state.is-saved { color: #2f6b3a; }
+.save-state.is-conflict, .save-state.is-error { color: var(--danger); font-weight: 600; }
+.brand-back {
+  background: none; border: none; padding: 0; color: var(--ink);
+  font-weight: 700; font-size: 14px; letter-spacing: .04em;
+}
+.brand-back:hover { color: var(--ink2); }
+
+/* ── publish, hosted ── */
+.copy-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+.copy-value {
+  flex: 1; min-width: 0; font-size: 12px; padding: 9px 11px;
+  background: var(--surface); border: 1.5px solid var(--line); border-radius: 9px;
+  overflow-wrap: anywhere;
+}
+.copy-row .snippet {
+  flex: 1; min-width: 0; margin: 0;
+  /* The snippet carries long absolute URLs. Wrapping keeps the whole thing
+   * readable in a 600px modal — a horizontal scrollbar hides the very part
+   * the merchant is being asked to check. */
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.copy-row .ghost { white-space: nowrap; }
+.origins {
+  width: 100%; font: inherit; font-size: 13px; padding: 9px 11px; resize: vertical;
+  border: 1.5px solid var(--line); border-radius: 9px; background: #fff; color: var(--ink);
+}
+.version-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.version-list li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 10px;
+}
+.version-list li.is-live { border-color: #cfe3cf; background: #fbfdfb; }
+.version-n { font-weight: 700; font-size: 13px; min-width: 34px; }
+.version-when { flex: 1; font-size: 12.5px; color: var(--ink2); }

@@ -34,6 +34,9 @@ export interface Config {
   maxImageBytes: number;
   /** Set false only for plain-HTTP local development. */
   cookieSecure: boolean;
+  /** See CookieOptions.sameSite — 'none' only when the Studio and this
+   * service are on different registrable domains. */
+  cookieSameSite: 'lax' | 'none';
   /** Read X-Forwarded-For. True behind a load balancer, false otherwise —
    * see clientIp for why this is not the default. */
   trustProxy: boolean;

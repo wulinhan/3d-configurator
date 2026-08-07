@@ -17,7 +17,9 @@ import type { Manifest, ChoiceOption } from '../../embed/src/manifest/types.ts';
 import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
 import { writeGlb } from './lib/write-glb.ts';
-import { initManifest, boundsOf, boundsByPartId, mergeModel, type PartBounds } from './lib/manifest-init.ts';
+import {
+  boundsOf, boundsByPartId, mergeModel, emptyManifest, EMPTY_BOUNDS, type PartBounds,
+} from './lib/manifest-init.ts';
 import {
   duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, addImageZone, refitImageZone, setTextPath, type Axis,
 } from './lib/manifest-edit.ts';
@@ -27,7 +29,13 @@ import { PartEditor, GroupEditor, VariantEditor } from './ui/PartEditor.tsx';
 import { PalettePanel } from './ui/PalettePanel.tsx';
 import { FinishPanel } from './ui/FinishPanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
+import { CloudPublish } from './ui/CloudPublish.tsx';
 import { PreviewOverlay } from './ui/PreviewOverlay.tsx';
+import { SignIn } from './ui/SignIn.tsx';
+import { Projects } from './ui/Projects.tsx';
+import { api, apiBase, go, routeOf, type Me, type Route } from './lib/api.ts';
+import { Autosave, saveLabel, type SaveState } from './lib/autosave.ts';
+import { reopenModel } from './lib/import-model.ts';
 
 export interface Project {
   model: OrientedModel;
@@ -57,16 +65,10 @@ const isVariantOption = (m: Manifest, optionId: string): boolean => {
 
 // The Studio opens straight into the 3D viewport with nothing in it — the
 // first imported file brings the geometry, the product name, and the camera.
-// The placeholder bounds only size the empty grid; no model is ever fetched
-// (models stays [] until a file arrives).
-const EMPTY_BOUNDS: PartBounds = { min: [-60, 0, -60], max: [60, 80, 60] };
-
 function emptyProject(): Project {
   const model: OrientedModel = { parts: [], bounds: EMPTY_BOUNDS, format: 'none', unitToMm: 1 };
-  const manifest = initManifest([], { name: 'New Product', bounds: EMPTY_BOUNDS });
-  manifest.models = [];
   const modelUrl = URL.createObjectURL(new Blob([writeGlb([])], { type: 'model/gltf-binary' }));
-  return { model, manifest, raw: new Map(), modelUrl };
+  return { model, manifest: emptyManifest(), raw: new Map(), modelUrl };
 }
 
 const UNDO_ICON = (
@@ -82,7 +84,61 @@ const REDO_ICON = (
   </svg>
 );
 
+/**
+ * Which screen we are on.
+ *
+ * With no service configured there is exactly one — the editor — so the
+ * standalone Studio is not a routed app pretending to be one. That also
+ * means every existing browser check still opens `/` and gets the editor,
+ * which is the honest test that offline mode did not become second-class.
+ */
+function useRoute(cloud: boolean): Route {
+  const [route, setRoute] = useState<Route>(() => routeOf(location.pathname, location.hash, cloud));
+  useEffect(() => {
+    if (!cloud) return;
+    const read = () => setRoute(routeOf(location.pathname, location.hash, cloud));
+    addEventListener('popstate', read);
+    return () => removeEventListener('popstate', read);
+  }, [cloud]);
+  return route;
+}
+
 export function App() {
+  const cloud = !!apiBase();
+  const route = useRoute(cloud);
+  const [me, setMe] = useState<Me | null>(null);
+  const [session, setSession] = useState<'unknown' | 'ready'>(cloud ? 'unknown' : 'ready');
+
+  // One call decides the whole shape of the app: signed in or not.
+  useEffect(() => {
+    if (!cloud) return;
+    let live = true;
+    void api.me().then((who) => { if (live) { setMe(who); setSession('ready'); } })
+      .catch(() => { if (live) setSession('ready'); });
+    return () => { live = false; };
+  }, [cloud]);
+
+  if (cloud && session === 'unknown') return <div className="auth-page" />;
+  if (cloud && route.name === 'signin') {
+    return <SignIn token={route.token} onSignedIn={(who) => { setMe(who); go('/'); }} />;
+  }
+  if (cloud && !me) {
+    return <SignIn token={null} onSignedIn={(who) => { setMe(who); go('/'); }} />;
+  }
+  if (cloud && route.name === 'projects' && me) {
+    return <Projects me={me} onSignedOut={() => { setMe(null); go('/signin'); }} />;
+  }
+  return (
+    <Editor
+      key={route.name === 'editor' ? route.projectId ?? 'local' : 'local'}
+      cloudProjectId={route.name === 'editor' ? route.projectId : null}
+      signedIn={!!me}
+    />
+  );
+}
+
+function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
+  const { cloudProjectId } = props;
   const [project, setProject] = useState<Project>(emptyProject);
   const [tab, setTab] = useState<Tab>('Parts');
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
@@ -110,6 +166,96 @@ export function App() {
   projectRef.current = project;
   const pastRef = useRef<Manifest[]>([]);
   const futureRef = useRef<Manifest[]>([]);
+
+  // ── the saved copy ──────────────────────────────────────────────────────
+  //
+  // Only when a project id is in the URL. Everything below is inert in the
+  // standalone Studio, which is why it can stay in this file rather than
+  // forking the editor in two.
+  const [loading, setLoading] = useState(!!cloudProjectId);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>('clean');
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const saverRef = useRef<Autosave<Manifest> | null>(null);
+  /** The manifest as the service last knew it. Guards the first render from
+   * writing back exactly what it just read. */
+  const syncedRef = useRef<Manifest | null>(null);
+  /** The parts array whose GLB the service already has. Compared by
+   * IDENTITY: the model is rebuilt as a new array whenever it really
+   * changes, and hashing megabytes on every keystroke would not be free. */
+  const syncedPartsRef = useRef<unknown>(null);
+
+  useEffect(() => {
+    if (!cloudProjectId) return;
+    let live = true;
+    void (async () => {
+      try {
+        const detail = await api.getProject(cloudProjectId);
+        const model = detail.hasModel
+          ? reopenModel(await api.getModel(cloudProjectId))
+          : { parts: [], bounds: EMPTY_BOUNDS, format: 'none', unitToMm: 1 };
+        if (!live) return;
+        // A manifest the editor cannot open is an empty project, not a
+        // crash: the service stores whatever autosave sends it, and a
+        // project created by anything other than this Studio may not have
+        // the shape the viewer walks.
+        const stored = detail.manifest as Manifest | null;
+        const manifest = Array.isArray(stored?.parts) && Array.isArray(stored?.options)
+          ? stored : emptyManifest(detail.name);
+        const raw = boundsByPartId(manifest, boundsOf(model.parts));
+        const modelUrl = URL.createObjectURL(new Blob([writeGlb(model.parts)], { type: 'model/gltf-binary' }));
+        syncedRef.current = manifest;
+        syncedPartsRef.current = model.parts;
+        saverRef.current = new Autosave<Manifest>({
+          revision: detail.revision,
+          save: async (m, baseRevision) => api.saveProject(cloudProjectId, { manifest: m, baseRevision, name: m.name }),
+          onState: (state, extra) => { setSaveState(state); setSaveNote(extra?.message ?? null); },
+        });
+        setProject({ model, manifest, raw, modelUrl });
+        setSelectedPart(manifest.parts[0]?.id ?? null);
+        setLoading(false);
+      } catch (err) {
+        if (live) { setLoadError(err instanceof Error ? err.message : String(err)); setLoading(false); }
+      }
+    })();
+    return () => { live = false; saverRef.current?.dispose(); };
+  }, [cloudProjectId]);
+
+  // Every edit is a save. The FIRST manifest after a load is not — it is
+  // what we just read, and writing it back would burn a revision and make
+  // every other tab's next save a conflict for no reason.
+  useEffect(() => {
+    const saver = saverRef.current;
+    if (!saver || loading) return;
+    if (syncedRef.current === project.manifest) return;
+    syncedRef.current = project.manifest;
+    saver.push(project.manifest);
+  }, [project.manifest, loading]);
+
+  // The geometry is saved separately, and only when it actually changes: a
+  // model is megabytes and a rename is not a reason to re-send it.
+  useEffect(() => {
+    if (!cloudProjectId || loading || !saverRef.current) return;
+    if (syncedPartsRef.current === project.model.parts) return;
+    syncedPartsRef.current = project.model.parts;
+    if (!project.model.parts.length) return;
+    void api.putModel(cloudProjectId, writeGlb(project.model.parts)).catch(() => {
+      // The manifest still saves; the merchant is told at publish, which is
+      // the moment the model actually has to be there.
+      setSaveNote('The 3D model could not be saved yet — it will retry on your next edit.');
+      syncedPartsRef.current = null;
+    });
+  }, [project.model.parts, cloudProjectId, loading]);
+
+  const flushSave = useCallback(async () => { await saverRef.current?.flush(); }, []);
+
+  // A closing tab gets one last chance to write.
+  useEffect(() => {
+    if (!cloudProjectId) return;
+    const onLeave = () => { void saverRef.current?.flush(); };
+    addEventListener('beforeunload', onLeave);
+    return () => removeEventListener('beforeunload', onLeave);
+  }, [cloudProjectId]);
 
   const newProject = useCallback(() => {
     URL.revokeObjectURL(projectRef.current.modelUrl);
@@ -418,10 +564,31 @@ export function App() {
   const lastFloatRef = useRef<ReactNode>(null);
   if (floatContent) lastFloatRef.current = floatContent;
 
+  if (loading) {
+    return <div className="auth-page"><p className="dash-note">Opening…</p></div>;
+  }
+  if (loadError) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>That product would not open</h1>
+          <p className="auth-sub" data-testid="open-error">{loadError}</p>
+          <button className="cta auth-wide" onClick={() => go('/')}>Back to products</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="studio">
       <header className="topbar">
-        <span className="brand">Studio</span>
+        {cloudProjectId
+          ? (
+            <button className="brand brand-back" data-testid="back-to-products" onClick={() => go('/')}>
+              ‹ Studio
+            </button>
+          )
+          : <span className="brand">Studio</span>}
         <input
           className="product-name" value={project.manifest.name} aria-label="Product name"
           onChange={(e) => {
@@ -431,7 +598,18 @@ export function App() {
             setManifest(draft);
           }}
         />
+        {cloudProjectId && (
+          <span
+            className={`save-state is-${saveState}`} data-testid="save-state"
+            role="status" title={saveNote ?? undefined}
+          >{saveLabel(saveState)}</span>
+        )}
         <span className="spacer" />
+        {saveState === 'conflict' && (
+          <button className="ghost danger" data-testid="save-reload" onClick={() => location.reload()}>
+            Reload
+          </button>
+        )}
         <button
           className="ghost icon-btn" data-testid="undo" title="Undo (Ctrl+Z)" aria-label="Undo"
           disabled={pastRef.current.length === 0} onClick={undo}
@@ -440,9 +618,11 @@ export function App() {
           className="ghost icon-btn" data-testid="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"
           disabled={futureRef.current.length === 0} onClick={redo}
         >{REDO_ICON}</button>
-        <button className="ghost" data-testid="new-project" onClick={newProject}>
-          New project
-        </button>
+        {!cloudProjectId && (
+          <button className="ghost" data-testid="new-project" onClick={newProject}>
+            New project
+          </button>
+        )}
         <button className="ghost preview-btn" data-testid="preview-open" onClick={() => setPreviewing(true)}>
           Preview
         </button>
@@ -522,7 +702,14 @@ export function App() {
               <h3>Publish</h3>
               <button className="ghost" data-testid="publish-close" onClick={() => setPublishing(false)}>Close</button>
             </div>
-            <PublishPanel project={project} onChange={setManifest} />
+            {cloudProjectId
+              ? (
+                <CloudPublish
+                  project={project} projectId={cloudProjectId} flush={flushSave}
+                  onChange={setManifest} embedBase={apiBase()}
+                />
+              )
+              : <PublishPanel project={project} onChange={setManifest} />}
           </div>
         </div>
       )}

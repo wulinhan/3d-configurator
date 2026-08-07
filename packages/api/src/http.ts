@@ -106,12 +106,26 @@ export function cookies(req: IncomingMessage): Record<string, string> {
 export interface CookieOptions {
   maxAgeSeconds?: number;
   secure: boolean;
+  /**
+   * `lax` is right whenever the Studio and this service share a registrable
+   * domain — studio.example.com and api.example.com are the SAME SITE, and
+   * so are two ports on localhost, because a port is not part of a site.
+   * Put them on genuinely different domains and the browser will drop the
+   * session cookie silently; `none` is the escape hatch, and it REQUIRES
+   * Secure, which is enforced below rather than left as a footnote.
+   */
+  sameSite?: 'lax' | 'none';
   path?: string;
 }
 
 export function cookieHeader(name: string, value: string, o: CookieOptions): string {
-  const bits = [`${name}=${encodeURIComponent(value)}`, `Path=${o.path ?? '/'}`, 'HttpOnly', 'SameSite=Lax'];
-  if (o.secure) bits.push('Secure');
+  const sameSite = o.sameSite ?? 'lax';
+  const secure = o.secure || sameSite === 'none';
+  const bits = [
+    `${name}=${encodeURIComponent(value)}`, `Path=${o.path ?? '/'}`, 'HttpOnly',
+    `SameSite=${sameSite === 'none' ? 'None' : 'Lax'}`,
+  ];
+  if (secure) bits.push('Secure');
   if (o.maxAgeSeconds != null) bits.push(`Max-Age=${o.maxAgeSeconds}`);
   return bits.join('; ');
 }

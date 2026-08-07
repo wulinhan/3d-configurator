@@ -13,3 +13,4 @@ apps/demo/standalone.html
 .DS_Store
 .vscode/
 .idea/
+packages/studio/dist-cloud/

@@ -25,6 +25,7 @@ const CONFIG: Config = {
   maxModelBytes: 4 * 1024 * 1024,
   maxImageBytes: 1024 * 1024,
   cookieSecure: false,
+  cookieSameSite: 'lax',
   trustProxy: false,
   revisionsKept: 10,
 };

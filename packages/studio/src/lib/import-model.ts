@@ -74,3 +74,36 @@ export function importModel(bytes: Uint8Array, opts: { axes?: string; unitToMm?:
   const oriented = orientParts(normalizeParts(model.parts), { axes: opts.axes ?? 'x,y,z', scaleToMm: unitToMm });
   return { parts: oriented.parts, bounds: oriented.bounds, format: model.format, unitToMm };
 }
+
+/**
+ * Reopen a workspace model the Studio itself saved.
+ *
+ * Deliberately NOT `importModel`: these parts were oriented when they were
+ * first imported, and orienting them again would re-centre and re-ground
+ * geometry the merchant has since positioned by hand — every part would jump
+ * the first time they reopened the project. Names are normalised (idempotent)
+ * because the manifest's `mesh: "model#<name>"` references depend on them,
+ * and bounds are measured where the parts actually are.
+ */
+export function reopenModel(bytes: Uint8Array): OrientedModel {
+  const model = parseModel(bytes);
+  const parts = normalizeParts(model.parts);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const part of parts) {
+    for (let i = 0; i < part.positions.length; i += 3) {
+      for (let a = 0; a < 3; a++) {
+        const v = part.positions[i + a];
+        if (v < min[a]) min[a] = v;
+        if (v > max[a]) max[a] = v;
+      }
+    }
+  }
+  const empty = !Number.isFinite(min[0]);
+  return {
+    parts,
+    bounds: empty ? { min: [-60, 0, -60], max: [60, 80, 60] } : { min, max },
+    format: model.format,
+    unitToMm: 1,
+  };
+}

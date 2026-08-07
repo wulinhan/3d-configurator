@@ -47,6 +47,7 @@ allowed over plain HTTP. For a real deployment:
 | `CDN_BASE` | A CDN in front of the bucket. Set it and published models never pass through this process. |
 | `RESEND_API_KEY`, `MAIL_FROM` | Email. Without them, links print to the log. |
 | `COOKIE_SECURE` | `false` only for plain-HTTP local development. |
+| `COOKIE_SAMESITE` | `lax` (default) when the Studio shares a domain with this service; `none` otherwise — see below. |
 | `TRUST_PROXY` | `true` behind a load balancer. Read `clientIp` before setting it. |
 
 The schema applies itself on boot — every statement is `if not exists`,
@@ -146,3 +147,27 @@ test/api.test.ts    15 — the service through its own front door, on a real
                     against the very product it claims to belong to, and a
                     zone that allows 400 kB does not allow a megabyte
 ```
+
+## Deploying it next to the Studio
+
+The session is a cookie, so **the Studio and this service must share a
+registrable domain** — `studio.example.com` and `api.example.com` are the
+same site and a `SameSite=Lax` cookie crosses between them freely. Put them
+on genuinely different domains and the browser drops the session silently,
+which is a miserable thing to debug; `COOKIE_SAMESITE=none` is the escape
+hatch and forces `Secure` with it.
+
+The Studio is built against the service with one variable:
+
+```
+VITE_API_BASE=https://api.example.com npm run build -w @allin/studio
+```
+
+Leave it unset and the Studio is exactly what it was before this service
+existed — import, author, download two files, no account. That is not a
+fallback mode; it is a supported way to run, and the browser checks cover it.
+
+Serving the Studio needs an **SPA rewrite**: `/p/<id>` and `/signin` are
+client routes, so anything without a file extension must return
+`index.html`. On Vercel/Netlify that is one line; behind nginx it is
+`try_files $uri /index.html`.
