@@ -526,6 +526,15 @@ input, select { font: inherit; }
   background: #fff; border-radius: 16px;
   box-shadow: 0 18px 50px rgba(0, 0, 0, .22);
   animation: dialog-in .16s cubic-bezier(.3, 1.2, .5, 1);
+  /* The bar was a grey column pinned against the rounded corner. Thin and
+   * quiet, and inset from the edge, it reads as part of the dialog. */
+  scrollbar-width: thin;
+  scrollbar-color: #d8d5cf transparent;
+}
+.publish-modal::-webkit-scrollbar { width: 8px; }
+.publish-modal::-webkit-scrollbar-track { background: transparent; margin: 16px 0; }
+.publish-modal::-webkit-scrollbar-thumb {
+  background: #d8d5cf; border-radius: 999px; border: 2px solid #fff;
 }
 .publish-modal-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -708,3 +717,61 @@ input, select { font: inherit; }
 .version-list li.is-live { border-color: #cfe3cf; background: #fbfdfb; }
 .version-n { font-weight: 700; font-size: 13px; min-width: 34px; }
 .version-when { flex: 1; font-size: 12.5px; color: var(--ink2); }
+
+
+/* ── slot cards (text slots + image zones) ─────────────────────────────── */
+.slot-card { padding: 0; overflow: hidden; }
+.slot-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 8px; background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.slot-card:has(> .slot-head:last-child) .slot-head { border-bottom: none; }
+.slot-chevron {
+  display: grid; place-items: center; width: 24px; height: 24px;
+  border: none; background: none; color: var(--ink2); border-radius: 6px;
+}
+.slot-chevron:hover { background: #edeae4; color: var(--ink); }
+.slot-name {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
+  border: 1.5px solid transparent; border-radius: 7px; padding: 4px 7px;
+  background: none; color: var(--ink);
+}
+.slot-name:hover, .slot-name:focus { border-color: var(--line); background: #fff; outline: none; }
+.slot-move {
+  width: 24px; height: 24px; display: grid; place-items: center;
+  border: none; background: none; color: var(--ink2);
+  border-radius: 6px; font-size: 9px;
+}
+.slot-move:hover:not(:disabled) { background: #edeae4; color: var(--ink); }
+.slot-move:disabled { opacity: .3; cursor: default; }
+.slot-body { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+
+/* ── dashboard thumbnails ──────────────────────────────────────────────── */
+/* The card becomes picture-first: a rounded-square snapshot of the product
+ * (captured in the editor, whole object framed), name and meta beneath, the
+ * status as a TAG pinned to the picture's corner. */
+.dash-card.has-thumb { grid-template-columns: 1fr auto; }
+.dash-thumb {
+  grid-column: 1 / -1; position: relative;
+  aspect-ratio: 1; border-radius: 10px; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+.dash-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dash-thumb .dash-tag { position: absolute; top: 8px; left: 8px; }
+.dash-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  padding: 3px 8px 3px 7px; border-radius: 4px 999px 999px 4px;
+  background: rgba(255, 255, 255, .92); color: var(--ink2);
+  border: 1px solid var(--line); backdrop-filter: blur(3px);
+}
+.dash-tag::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .5; }
+.dash-tag.is-live { color: #2f6b3a; border-color: #cfe3cf; background: rgba(238, 246, 238, .95); }
+/* A card with no snapshot yet keeps the icon layout; the tag sits where the
+ * old pill did. */
+.dash-card > .dash-tag { grid-row: 2; grid-column: 1; justify-self: start; white-space: nowrap; }
+.dash-card.has-thumb .dash-card-name { grid-column: 1; grid-row: 2; }
+.dash-card.has-thumb .dash-card-meta { grid-column: 1; grid-row: 3; }
+.dash-card.has-thumb .dash-card-go { grid-column: 2; grid-row: 2 / span 2; }

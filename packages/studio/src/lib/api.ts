@@ -21,6 +21,7 @@ export interface ProjectSummary {
   valid: boolean;
   updatedAt: string;
   hasModel: boolean;
+  hasThumb: boolean;
   live: string | null;
 }
 
@@ -138,6 +139,14 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, 'error', 'could not load the saved model');
     return new Uint8Array(await res.arrayBuffer());
   },
+
+  putThumb: (id: string, png: Uint8Array) =>
+    request<{ assetId: string }>(`/v1/projects/${id}/thumbnail`, {
+      method: 'POST', headers: { 'content-type': 'image/png' }, body: png as BodyInit,
+    }),
+  // The <img src> for a card. The session cookie rides along because the
+  // Studio and the service are same-site — no token in the URL.
+  thumbUrl: (id: string) => `${apiBase()}/v1/projects/${id}/thumbnail`,
 
   publish: (id: string, glb: Uint8Array) =>
     request<{

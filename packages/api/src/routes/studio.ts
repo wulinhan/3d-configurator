@@ -14,7 +14,7 @@ import {
   type Role, roleAtLeast, findUserByEmail, createUser, createOrg, addMember, removeMember,
   membershipsOf, membersOf, roleIn, createLoginToken, consumeLoginToken, createSession,
   deleteSession, putAsset, getAsset, createProject, projectFor, listProjects, saveProject,
-  pruneRevisions, setProjectModel, renameProject, archiveProject, createPublication,
+  pruneRevisions, setProjectModel, setProjectThumb, renameProject, archiveProject, createPublication,
   listPublications, setLivePublication, listOrigins, setOrigins, normaliseEmail,
 } from '../store.ts';
 import { validateManifest } from '../../../embed/src/manifest/validate.ts';
@@ -195,7 +195,8 @@ export function studioRoutes(deps: Deps): Route[] {
         return {
           projects: rows.map((p) => ({
             id: p.id, name: p.name, revision: p.revision, valid: p.valid,
-            updatedAt: p.updated_at, hasModel: !!p.model_asset_id, live: p.live_publication_id,
+            updatedAt: p.updated_at, hasModel: !!p.model_asset_id,
+            hasThumb: !!p.thumb_asset_id, live: p.live_publication_id,
           })),
         };
       },
@@ -289,6 +290,41 @@ export function studioRoutes(deps: Deps): Route[] {
         const asset = await getAsset(sql, p.model_asset_id);
         const object = asset && await deps.store.get(asset.storage_key);
         if (!object) throw notFound('model');
+        return new Raw(object.bytes, object.contentType, { 'cache-control': 'private, max-age=60' });
+      },
+    },
+
+    // ── the dashboard thumbnail ───────────────────────────────────────────
+    //
+    // A small square render the Studio captures after saves. Best-effort by
+    // design: a missing thumbnail is a placeholder icon, never an error, and
+    // a stale one is corrected by the next save.
+    {
+      method: 'POST',
+      pattern: '/v1/projects/:id/thumbnail',
+      async handler(ctx) {
+        const { project: p } = await project(ctx, 'editor');
+        const bytes = await readBody(ctx.req, config.maxImageBytes);
+        if (!bytes.length) throw badRequest('empty image');
+        const digest = sha256(bytes);
+        const key = assetKey(p.org_id, digest);
+        await deps.store.put(key, bytes, 'image/png');
+        const asset = await putAsset(sql, p.org_id,
+          { sha256: digest, kind: 'image', contentType: 'image/png', bytes: bytes.length, storageKey: key },
+          clock.now());
+        await setProjectThumb(sql, p.id, asset.id);
+        return { assetId: asset.id };
+      },
+    },
+    {
+      method: 'GET',
+      pattern: '/v1/projects/:id/thumbnail',
+      async handler(ctx) {
+        const { project: p } = await project(ctx, 'viewer');
+        if (!p.thumb_asset_id) throw notFound('this project has no thumbnail yet');
+        const asset = await getAsset(sql, p.thumb_asset_id);
+        const object = asset && await deps.store.get(asset.storage_key);
+        if (!object) throw notFound('thumbnail');
         return new Raw(object.bytes, object.contentType, { 'cache-control': 'private, max-age=60' });
       },
     },

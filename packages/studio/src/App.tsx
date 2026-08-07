@@ -249,6 +249,27 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
 
   const flushSave = useCallback(async () => { await saverRef.current?.flush(); }, []);
 
+  // The dashboard card's picture: a square snapshot of the whole product,
+  // captured once the work is safely written. Throttled hard and allowed to
+  // fail silently — a thumbnail is a courtesy, never a reason an edit hurts.
+  const lastThumbAtRef = useRef(0);
+  useEffect(() => {
+    if (!cloudProjectId || saveState !== 'saved' || !project.model.parts.length) return;
+    const since = Date.now() - lastThumbAtRef.current;
+    const timer = setTimeout(() => {
+      const viewer = (window as { __studioViewer?: { snapshot?: (px?: number) => string } }).__studioViewer;
+      if (!viewer?.snapshot) return;
+      try {
+        const dataUrl = viewer.snapshot(512);
+        const bytes = Uint8Array.from(atob(dataUrl.split(',')[1] ?? ''), (c) => c.charCodeAt(0));
+        if (!bytes.length) return;
+        lastThumbAtRef.current = Date.now();
+        void api.putThumb(cloudProjectId, bytes).catch(() => {});
+      } catch { /* WebGL context lost, viewer mid-teardown — skip this one */ }
+    }, Math.max(1500, 30_000 - since));
+    return () => clearTimeout(timer);
+  }, [saveState, cloudProjectId, project.model.parts]);
+
   // A closing tab gets one last chance to write.
   useEffect(() => {
     if (!cloudProjectId) return;

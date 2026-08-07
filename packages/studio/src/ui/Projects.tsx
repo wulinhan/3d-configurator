@@ -121,14 +121,26 @@ export function Projects(props: { me: Me; onSignedOut: () => void }) {
             {projects.map((p) => (
               <li key={p.id}>
                 <a
-                  className="dash-card" href={`/p/${p.id}`} data-testid={`project-${p.id}`}
+                  className={`dash-card${p.hasThumb ? ' has-thumb' : ''}`}
+                  href={`/p/${p.id}`} data-testid={`project-${p.id}`}
                   onClick={(e) => { e.preventDefault(); go(`/p/${p.id}`); }}
                 >
-                  <span className="dash-card-icon" aria-hidden="true">{CUBE}</span>
+                  {p.hasThumb ? (
+                    <span className="dash-thumb" data-testid={`thumb-${p.id}`}>
+                      <img src={api.thumbUrl(p.id)} alt="" loading="lazy" />
+                      <span className={`dash-tag${p.live ? ' is-live' : ''}`}>
+                        {p.live ? 'Published' : 'Draft'}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="dash-card-icon" aria-hidden="true">{CUBE}</span>
+                  )}
                   <span className="dash-card-name">{p.name}</span>
-                  <span className={`dash-pill${p.live ? ' is-live' : ''}`}>
-                    {p.live ? 'Published' : 'Draft'}
-                  </span>
+                  {!p.hasThumb && (
+                    <span className={`dash-tag${p.live ? ' is-live' : ''}`}>
+                      {p.live ? 'Published' : 'Draft'}
+                    </span>
+                  )}
                   <span className="dash-card-meta">
                     Edited {relativeTime(p.updatedAt, now)}
                     {!p.hasModel && ' · no model yet'}

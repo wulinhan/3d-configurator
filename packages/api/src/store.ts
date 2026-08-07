@@ -189,6 +189,7 @@ export async function getAsset(sql: Sql, id: string): Promise<Asset | null> {
 export interface ProjectRow {
   id: string; org_id: string; name: string; manifest: unknown;
   model_asset_id: string | null; live_publication_id: string | null;
+  thumb_asset_id: string | null;
   revision: number; valid: boolean;
   created_at: Date; updated_at: Date; archived_at: Date | null;
 }
@@ -264,6 +265,13 @@ export async function pruneRevisions(sql: Sql, projectId: string, keep: number):
 export async function setProjectModel(sql: Sql, projectId: string, assetId: string, now: Date): Promise<void> {
   await sql.query('update projects set model_asset_id = $2, updated_at = $3 where id = $1',
     [projectId, assetId, now]);
+}
+
+/** The dashboard thumbnail. Deliberately NOT `updated_at`-touching: a
+ * screenshot arriving after a save must not make "edited 2 minutes ago"
+ * read "edited just now". */
+export async function setProjectThumb(sql: Sql, projectId: string, assetId: string): Promise<void> {
+  await sql.query('update projects set thumb_asset_id = $2 where id = $1', [projectId, assetId]);
 }
 
 export async function renameProject(sql: Sql, projectId: string, name: string, now: Date): Promise<void> {

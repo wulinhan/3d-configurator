@@ -87,7 +87,9 @@ a hidden field inside the add-to-cart form, then on the server read it in
 `woocommerce_before_calculate_totals`. The selections become order item meta
 your production team sees on every order.
 
-**Shopify.** Two mechanisms:
+**Shopify.** A complete copy-paste walkthrough lives in
+[`docs/shopify.md`](./shopify.md) — start there. The mechanics, for
+reference:
 - *Configuration → order*: add the payload as **line item properties** on the
   AJAX `/cart/add.js` call (`properties: { Configuration: JSON.stringify(payload.selections), … }`).
   They show on the order for fulfilment. This part is easy and app-free.

@@ -304,6 +304,45 @@ test('the workspace model round-trips, and the same bytes cost one asset', async
   await r.stop();
 });
 
+test('the dashboard thumbnail round-trips; strangers see nothing, viewers cannot write', async () => {
+  const r = await rig();
+  const ada = await signedIn(r, 'ada@example.com');
+  const org = await orgOf(ada);
+  const project = await newProject(ada, org.id);
+  const projects = () => ada.json<{ projects: Array<{ hasThumb: boolean }> }>(`/v1/orgs/${org.id}/projects`);
+
+  // Before a capture: the list says so, and the GET is an honest 404.
+  assert.equal((await projects()).projects[0].hasThumb, false);
+  assert.equal((await ada.fetch(`/v1/projects/${project.id}/thumbnail`)).status, 404);
+
+  await ada.json(`/v1/projects/${project.id}/thumbnail`, { method: 'POST', body: PNG });
+  assert.equal((await projects()).projects[0].hasThumb, true);
+  const back = await ada.fetch(`/v1/projects/${project.id}/thumbnail`);
+  assert.equal(back.status, 200);
+  assert.equal(back.headers.get('content-type'), 'image/png');
+  assert.deepEqual(new Uint8Array(await back.arrayBuffer()), new Uint8Array(PNG));
+
+  // A newer capture replaces the old picture on the very next read.
+  const png2 = Buffer.concat([PNG, Buffer.from('v2')]);
+  await ada.json(`/v1/projects/${project.id}/thumbnail`, { method: 'POST', body: png2 });
+  const fresh = await ada.fetch(`/v1/projects/${project.id}/thumbnail`);
+  assert.deepEqual(new Uint8Array(await fresh.arrayBuffer()), new Uint8Array(png2));
+
+  // A viewer may look at the card like anyone else on the team, but a
+  // thumbnail is still a write. A stranger learns nothing either way.
+  const bo = await signedIn(r, 'bo@example.com');
+  await ada.fetch(`/v1/orgs/${org.id}/members`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'bo@example.com', role: 'viewer' }),
+  });
+  assert.equal((await bo.fetch(`/v1/projects/${project.id}/thumbnail`)).status, 200);
+  assert.equal((await bo.fetch(`/v1/projects/${project.id}/thumbnail`, { method: 'POST', body: PNG })).status, 403);
+  const eve = await signedIn(r, 'eve@example.com');
+  assert.equal((await eve.fetch(`/v1/projects/${project.id}/thumbnail`)).status, 404);
+  assert.equal((await eve.fetch(`/v1/projects/${project.id}/thumbnail`, { method: 'POST', body: PNG })).status, 404);
+  await r.stop();
+});
+
 // ── publishing ────────────────────────────────────────────────────────────
 
 test('publishing freezes the product; editing the draft afterwards does not reach it', async () => {

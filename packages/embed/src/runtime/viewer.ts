@@ -756,6 +756,55 @@ export class Viewer {
     this.controls.update();
   }
 
+  /**
+   * A square, whole-product still — the dashboard thumbnail.
+   *
+   * Renders once from the same 45° opening shot the customiser uses, framed
+   * off the bounding sphere so the ENTIRE object is in frame whatever its
+   * proportions. Everything that is not the product or a light is hidden
+   * for the shot (the Studio's grid, axes and gizmos live in the scene but
+   * are not the product), then the camera, canvas size and visibility are
+   * restored and a normal frame is rendered so the merchant never sees the
+   * detour.
+   */
+  snapshot(sizePx = 512): string {
+    const cam = this.camera;
+    const ctl = this.controls;
+    const keep = {
+      pos: cam.position.clone(), near: cam.near, far: cam.far, aspect: cam.aspect,
+      target: ctl.target.clone(), min: ctl.minDistance, max: ctl.maxDistance,
+    };
+    const size = new THREE.Vector2();
+    this.renderer.getSize(size);
+    const hidden: THREE.Object3D[] = [];
+    for (const child of this.scene.children) {
+      if (child === this.group || (child as THREE.Light).isLight || !child.visible) continue;
+      child.visible = false;
+      hidden.push(child);
+    }
+    try {
+      this.renderer.setSize(sizePx, sizePx, false);
+      cam.aspect = 1;
+      cam.updateProjectionMatrix();
+      this.frameFromDefaultAngle();
+      this.renderer.render(this.scene, cam);
+      return this.renderer.domElement.toDataURL('image/png');
+    } finally {
+      for (const child of hidden) child.visible = true;
+      this.renderer.setSize(size.x, size.y, false);
+      cam.aspect = keep.aspect;
+      cam.near = keep.near;
+      cam.far = keep.far;
+      cam.position.copy(keep.pos);
+      ctl.target.copy(keep.target);
+      ctl.minDistance = keep.min;
+      ctl.maxDistance = keep.max;
+      cam.updateProjectionMatrix();
+      ctl.update();
+      this.renderer.render(this.scene, cam);
+    }
+  }
+
   /** The current camera pose — what "save this view" persists. */
   cameraView(): { position: [number, number, number]; target: [number, number, number]; fov: number } {
     const p = this.camera.position, t = this.controls.target;

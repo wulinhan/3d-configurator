@@ -159,3 +159,8 @@ create table if not exists uploads (
 );
 
 create index if not exists uploads_unclaimed_idx on uploads (claimed_at, created_at);
+
+-- The dashboard thumbnail: a small square render the Studio captures after
+-- saves. A column added after release, so it arrives as its own idempotent
+-- statement rather than a rewrite of the projects table.
+alter table projects add column if not exists thumb_asset_id text references assets(id) on delete set null;

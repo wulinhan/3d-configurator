@@ -517,10 +517,11 @@ export function PartEditor(props: {
           Place the sketch plane by clicking a face, then set the typeface,
           size and depth — sink the plane to engrave instead of emboss.
         </p>
-        {manifest.options.filter((o): o is TextOption => o.type === 'text' && o.part === part.id).map((slot) => (
+        {manifest.options.filter((o): o is TextOption => o.type === 'text' && o.part === part.id).map((slot, i, all) => (
           <TextSlotEditor
             key={slot.id} slot={slot} manifest={manifest} onChange={props.onChange} act={act}
             onShapeText={props.onShapeText} shaping={props.shapingText === slot.id}
+            first={i === 0} last={i === all.length - 1}
           />
         ))}
         <div className="match-row">
@@ -537,8 +538,11 @@ export function PartEditor(props: {
           zone — flat or curved, the surface takes it. Click a face to place
           the zone, then set its size in millimetres.
         </p>
-        {manifest.options.filter((o): o is UploadOption => o.type === 'upload' && o.part === part.id).map((zone) => (
-          <ImageZoneEditor key={zone.id} zone={zone} manifest={manifest} act={act} />
+        {manifest.options.filter((o): o is UploadOption => o.type === 'upload' && o.part === part.id).map((zone, i, all) => (
+          <ImageZoneEditor
+            key={zone.id} zone={zone} manifest={manifest} act={act}
+            first={i === 0} last={i === all.length - 1}
+          />
         ))}
         <div className="match-row">
           <button
@@ -636,6 +640,59 @@ function PartRepeatSection(props: {
   );
 }
 
+
+// The frame every text slot and image zone sits in: a collapsible card with
+// the option's NAME in the header — the same string the customiser shows as
+// the tab label, which is why it is editable here and not buried below —
+// and up/down arrows that reorder it among its siblings (customiser tab
+// order follows).
+function SlotCard(props: {
+  id: string;
+  testId: string;
+  label: string;
+  namePlaceholder: string;
+  first: boolean;
+  last: boolean;
+  onRename: (name: string) => void;
+  onMove: (direction: -1 | 1) => void;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="text-slot slot-card" data-testid={props.testId}>
+      <div className="slot-head">
+        <button
+          className="slot-chevron" data-testid={`slot-toggle-${props.id}`}
+          aria-expanded={open} aria-label={open ? 'Collapse' : 'Expand'}
+          onClick={() => setOpen(!open)}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+            style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>
+            <path d="m9 6 6 6-6 6" />
+          </svg>
+        </button>
+        <input
+          className="slot-name" data-testid={`slot-name-${props.id}`}
+          value={props.label} placeholder={props.namePlaceholder}
+          aria-label="Name — customers see it"
+          title="Customers see this name in the customiser"
+          onChange={(e) => props.onRename(e.target.value)}
+        />
+        <button
+          className="slot-move" data-testid={`slot-up-${props.id}`} aria-label="Move up"
+          disabled={props.first} onClick={() => props.onMove(-1)}
+        >▲</button>
+        <button
+          className="slot-move" data-testid={`slot-down-${props.id}`} aria-label="Move down"
+          disabled={props.last} onClick={() => props.onMove(1)}
+        >▼</button>
+      </div>
+      {open && <div className="slot-body">{props.children}</div>}
+    </div>
+  );
+}
+
 // One text slot's controls. Every commit routes through setTextSlot, so an
 // out-of-range value surfaces the edit layer's message instead of saving.
 function TextSlotEditor(props: {
@@ -645,12 +702,20 @@ function TextSlotEditor(props: {
   act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
   onShapeText: (optionId: string | null) => void;
   shaping: boolean;
+  first: boolean;
+  last: boolean;
 }) {
   const { slot, manifest, act } = props;
   const patch = (p: TextSlotPatch, o?: SetManifestOptions) => act(() => setTextSlot(manifest, slot.id, p), o);
   const swatches = manifest.palettes?.flatMap((p) => p.swatches) ?? [];
   return (
-    <div className="text-slot" data-testid={`text-slot-${slot.id}`}>
+    <SlotCard
+      id={slot.id} testId={`text-slot-${slot.id}`}
+      label={slot.label} namePlaceholder="Name — customers see it"
+      first={props.first} last={props.last}
+      onRename={(name) => patch({ label: name })}
+      onMove={(direction) => act(() => moveOption(manifest, slot.id, direction))}
+    >
       <label className="field wide">
         <span className="field-label">Typeface</span>
         <Select
@@ -873,13 +938,30 @@ function TextSlotEditor(props: {
           )}
         </div>
       )}
+      {/* The sketch plane's origin, typed instead of picked — the same
+        * Z-up axis naming every other position field uses. The plane's
+        * facing stays as picked; these slide the text along the part. */}
+      <div className="field-row">
+        {UI_AXES.map(({ label, axis }) => (
+          <NumberField
+            key={label} label={axisTint(label)} value={slot.origin[axis]} suffix="mm"
+            testId={`text-origin-${label.toLowerCase()}-${slot.id}`}
+            onCommit={(v, o) => {
+              const origin = [...slot.origin] as [number, number, number];
+              origin[axis] = v;
+              patch({ origin }, o);
+            }}
+          />
+        ))}
+      </div>
+      <p className="hint">Position on the part, in its own millimetres.</p>
       <div className="match-row">
         <button
           className="mini danger" data-testid={`text-remove-${slot.id}`}
           onClick={() => act(() => removeTextSlot(manifest, slot.id))}
         >Remove text</button>
       </div>
-    </div>
+    </SlotCard>
   );
 }
 
@@ -889,6 +971,8 @@ function ImageZoneEditor(props: {
   zone: UploadOption;
   manifest: Manifest;
   act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
+  first: boolean;
+  last: boolean;
 }) {
   const { zone, manifest, act } = props;
   // The slide fields are delta inputs: commit moves the zone, then the field
@@ -900,7 +984,13 @@ function ImageZoneEditor(props: {
     setTick((t) => t + 1);
   };
   return (
-    <div className="text-slot" data-testid={`image-zone-${zone.id}`}>
+    <SlotCard
+      id={zone.id} testId={`image-zone-${zone.id}`}
+      label={zone.label} namePlaceholder="Name — customers see it"
+      first={props.first} last={props.last}
+      onRename={(name) => patch({ label: name })}
+      onMove={(direction) => act(() => moveOption(manifest, zone.id, direction))}
+    >
       <div className="field-row">
         <NumberField
           label="Width" value={zone.widthMm} suffix="mm" testId={`image-width-${zone.id}`}
@@ -952,7 +1042,7 @@ function ImageZoneEditor(props: {
           onClick={() => act(() => removeImageZone(manifest, zone.id))}
         >Remove image zone</button>
       </div>
-    </div>
+    </SlotCard>
   );
 }
 

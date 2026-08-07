@@ -13,7 +13,8 @@ import {
 } from '../../embed/src/runtime/state.ts';
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
-  addTextSlot, setTextSlot, setTextPath, removeTextSlot, removePart, renamePart, EditError,
+  addTextSlot, setTextSlot, setTextPath, removeTextSlot, removePart, renamePart,
+  addImageZone, moveOption, EditError,
 } from '../src/lib/manifest-edit.ts';
 
 const tri = (positions: number[]) => ({
@@ -116,6 +117,60 @@ test('removeTextSlot, removePart and renamePart keep the manifest whole', () => 
   // Renaming the carrier renames the slot the customers see.
   m = renamePart(m, 'body', 'Shell');
   assert.equal(slotOf(m).label, 'Shell text');
+});
+
+test('renamePart leaves a slot name the merchant typed alone', () => {
+  // Still wearing the default → follows the part.
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  assert.equal(slotOf(renamePart(m, 'body', 'Shell')).label, 'Shell text');
+
+  // Named by hand → the rename must not overwrite what customers read.
+  m = setTextSlot(m, 'body-text', { label: 'Engraving' });
+  assert.equal(slotOf(renamePart(m, 'body', 'Shell')).label, 'Engraving');
+
+  // Same rule for image zones.
+  let z = addImageZone(fresh(), 'body', PLACE);
+  z = renamePart(z, 'body', 'Shell');
+  assert.equal((z.options.find((o) => o.id === 'body-image') as { label: string }).label, 'Shell image');
+});
+
+test('setTextSlot moves the slot with origin, in part-local millimetres', () => {
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  m = setTextSlot(m, 'body-text', { origin: [1.23456, -4, 9.8765] });
+  valid(m);
+  assert.deepEqual(slotOf(m).origin, [1.235, -4, 9.877], 'rounded to microns nobody prints');
+  assert.deepEqual(slotOf(m).normal, [0, 0, 1], 'moving does not re-aim');
+
+  for (const bad of [[0, 0], [1, 2, NaN], 'up', null]) {
+    assert.throws(() => setTextSlot(m, 'body-text', { origin: bad as never }), /position/);
+  }
+});
+
+test('moveOption reorders siblings; the customiser tab order follows', () => {
+  // Two slots on the same part, then one on another part between them in
+  // spirit — only same-part, same-type siblings may trade places.
+  let m = addTextSlot(fresh(), 'body', PLACE);
+  m = addTextSlot(m, 'body', PLACE);
+  m = addTextSlot(m, 'badge', PLACE);
+  const textIds = (x: Manifest) => x.options.filter((o) => o.type === 'text').map((o) => o.id);
+  assert.deepEqual(textIds(m), ['body-text', 'body-text-2', 'badge-text']);
+
+  const up = moveOption(m, 'body-text-2', -1);
+  valid(up);
+  assert.deepEqual(textIds(up), ['body-text-2', 'body-text', 'badge-text'],
+    'options order IS the customiser order');
+
+  // Ends are quiet no-ops — the same manifest back, not a new revision.
+  assert.equal(moveOption(m, 'body-text', -1), m);
+  assert.equal(moveOption(m, 'badge-text', 1), m, 'another part\'s slots are not its siblings');
+
+  // A text slot and an image zone on one part live in separate rows.
+  let mixed = addTextSlot(fresh(), 'body', PLACE);
+  mixed = addImageZone(mixed, 'body', PLACE);
+  assert.equal(moveOption(mixed, 'body-text', 1), mixed);
+
+  assert.throws(() => moveOption(m, 'body-colour', 1), /not a text slot or image zone/);
+  assert.throws(() => moveOption(m, 'ghost', 1), EditError);
 });
 
 test('selections: text sanitises to printable ASCII and clamps to maxLength', () => {

@@ -462,6 +462,7 @@ export function applyGizmoPose(
 /** Rename a part's label everywhere it shows. Ids and mesh bindings stay. */
 export function renamePart(manifest: Manifest, partId: string, label: string): Manifest {
   if (!label.trim()) throw new EditError('a part needs a name');
+  const wasLabel = partOf(manifest, partId).label;
   return edit(manifest, (draft) => {
     partOf(draft, partId).label = label.trim();
     // Options that exist purely for this part read better renamed with it —
@@ -479,10 +480,13 @@ export function renamePart(manifest: Manifest, partId: string, label: string): M
         const choice = option.choices.find((c) => c.id === partId);
         if (choice) choice.label = label.trim();
       }
-      if (option.type === 'text' && option.part === partId) {
+      // Slots ride the part's rename only while they still wear the DEFAULT
+      // name — a name the merchant typed themselves is theirs, and renaming
+      // the part must not overwrite what customers already read as "Engraving".
+      if (option.type === 'text' && option.part === partId && option.label === `${wasLabel} text`) {
         option.label = `${label.trim()} text`;
       }
-      if (option.type === 'upload' && option.part === partId) {
+      if (option.type === 'upload' && option.part === partId && option.label === `${wasLabel} image`) {
         option.label = `${label.trim()} image`;
       }
     }
@@ -1440,7 +1444,7 @@ export function addTextSlot(
 /** The fields a merchant tunes after placing a slot. `perChar: null` turns
  * one-piece-per-letter back off; `colourHex: null` re-matches the part. */
 export type TextSlotPatch = Partial<Pick<TextOption,
-  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'bendDeg' | 'liftMm' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label' | 'style'>>
+  'font' | 'sizeMm' | 'depthMm' | 'sinkMm' | 'rotationDeg' | 'bendDeg' | 'liftMm' | 'maxLength' | 'placeholder' | 'priceDelta' | 'pricePerChar' | 'label' | 'style' | 'origin'>>
   & { perChar?: { mode?: 'line' | 'circle'; axis?: Axis; gapMm?: number; stepDeg?: number } | null }
   & { colourHex?: Hex | null }
   & { customerColour?: boolean | null }
@@ -1452,8 +1456,17 @@ export function setTextSlot(manifest: Manifest, optionId: string, patch: TextSlo
   if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
   return edit(manifest, (draft) => {
     const o = draft.options.find((x) => x.id === optionId) as TextOption;
-    const { perChar, colourHex, customerColour, colourChoices, wrapSurface, ...rest } = patch;
+    const { perChar, colourHex, customerColour, colourChoices, wrapSurface, origin, ...rest } = patch;
     Object.assign(o, rest);
+    // The sketch plane's origin, typed rather than picked. Part-local mm,
+    // same space the face pick writes — the plane's ORIENTATION (the normal)
+    // stays as picked, so this slides the text without re-aiming it.
+    if (origin !== undefined) {
+      if (!Array.isArray(origin) || origin.length !== 3 || origin.some((n) => !Number.isFinite(n))) {
+        throw new EditError('position must be three finite numbers, millimetres in the part\'s space');
+      }
+      o.origin = origin.map(round3) as [number, number, number];
+    }
     if (perChar === null) delete o.perChar;
     else if (perChar !== undefined) o.perChar = perChar;
     // The merchant's colour stands on its own — it is what the text renders
@@ -1515,6 +1528,32 @@ export function removeTextSlot(manifest: Manifest, optionId: string): Manifest {
   if (!option || option.type !== 'text') throw new EditError(`"${optionId}" is not a text slot`);
   return edit(manifest, (draft) => {
     draft.options = draft.options.filter((o) => o.id !== optionId);
+  });
+}
+
+/**
+ * Reorder a text slot or image zone among its SIBLINGS — the options of the
+ * same kind on the same part. The customiser renders tabs in `options`
+ * order, so this is what "move up" means to a customer: the two siblings
+ * swap places in the global array and every other option keeps its position.
+ * Asking to move past either end is a no-op, not an error — the buttons stay
+ * clickable at the edges and simply do nothing, like every reorder control.
+ */
+export function moveOption(manifest: Manifest, optionId: string, direction: -1 | 1): Manifest {
+  const option = manifest.options.find((o) => o.id === optionId);
+  if (!option || (option.type !== 'text' && option.type !== 'upload')) {
+    throw new EditError(`"${optionId}" is not a text slot or image zone`);
+  }
+  const siblings = manifest.options
+    .map((o, index) => ({ o, index }))
+    .filter(({ o }) => o.type === option.type && (o as TextOption | UploadOption).part === (option as TextOption | UploadOption).part);
+  const at = siblings.findIndex(({ o }) => o.id === optionId);
+  const to = at + direction;
+  if (to < 0 || to >= siblings.length) return manifest;
+  return edit(manifest, (draft) => {
+    const a = siblings[at].index;
+    const b = siblings[to].index;
+    [draft.options[a], draft.options[b]] = [draft.options[b], draft.options[a]];
   });
 }
 

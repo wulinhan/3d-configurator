@@ -169,7 +169,7 @@ export function CloudPublish(props: {
             value={originDraft} onChange={(e) => setOriginDraft(e.target.value)}
           />
           <div className="publish-actions">
-            <button className="ghost" data-testid="origins-save" disabled={busy === 'origins'} onClick={saveOrigins}>
+            <button className="cta" data-testid="origins-save" disabled={busy === 'origins'} onClick={saveOrigins}>
               {busy === 'origins' ? 'Saving…' : 'Save addresses'}
             </button>
             <span className="hint">

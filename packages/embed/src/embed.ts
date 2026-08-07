@@ -478,7 +478,21 @@ export async function mount(opts: MountOptions) {
     body.append(wrap);
   }
 
+  // render() must not run inside itself. Tearing the panel down blurs
+  // whatever field the customer was in, and a dirty number input fires its
+  // native `change` ON that blur — whose handler calls change() → render()
+  // while the outer replaceChildren is still mid-removal, which throws
+  // NotFoundError on a node the inner pass already took. Defer the inner
+  // call: the outer pass finishes cleanly, then one more render applies the
+  // final state.
+  let rendering = false;
   function render() {
+    if (rendering) { queueMicrotask(render); return; }
+    rendering = true;
+    try { renderNow(); } finally { rendering = false; }
+  }
+
+  function renderNow() {
     tabs.replaceChildren();
     body.replaceChildren();
     summary.replaceChildren();
