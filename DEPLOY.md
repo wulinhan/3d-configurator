@@ -94,53 +94,60 @@ Then, in order:
    Leave `CDN_BASE` unset entirely and the service streams models itself:
    correct, just slower and billed for egress.
 
-## 3. Fly
+## 3. Fly — from the browser
 
-```bash
-curl -L https://fly.io/install.sh | sh
-flyctl auth login
+No local `flyctl`. Three screens and a button.
 
-cd packages/api
-flyctl launch --no-deploy --copy-config --name allin-configurator-api --region sin
-```
+**a. Create the app.** fly.io → sign up → add a payment method (Billing).
+Then *Launch an app* → **Create app manually** (not the GitHub importer —
+`fly.toml` is already in the repo and the importer would write its own).
 
-`fly.toml` is already written — health checks on `/health`, TLS forced,
-`min_machines_running = 1` (never scale to zero: a cold start mid-upload is
-a lost sale, and the hourly janitor needs a machine to run on).
+Name it exactly **`allin-configurator-api`**, org `personal`. The name has to
+match `app =` in `packages/api/fly.toml`, or the deploy targets nothing.
 
-Set the secrets. Nothing here belongs in `fly.toml`:
+**b. Set the secrets.** App → **Secrets** → *New secret*, one at a time.
+These never go in `fly.toml`, which is committed:
 
-```bash
-flyctl secrets set \
-  DATABASE_URL="postgres://…-pooler…?sslmode=require" \
-  APP_BASE="https://studio.allin-studio.com" \
-  PUBLIC_BASE="https://api.allin-studio.com" \
-  STUDIO_ORIGINS="https://studio.allin-studio.com" \
-  S3_BUCKET="configurator" \
-  S3_REGION="auto" \
-  S3_ENDPOINT="https://<account-id>.r2.cloudflarestorage.com" \
-  S3_ACCESS_KEY_ID="…" \
-  S3_SECRET_ACCESS_KEY="…" \
-  CDN_BASE="https://models.allin-studio.com" \
-  RESEND_API_KEY="…" \
-  MAIL_FROM="Studio <studio@allin-studio.com>"
-```
+| Name | Value |
+| --- | --- |
+| `DATABASE_URL` | the **pooler** host — see §1 |
+| `APP_BASE` | `https://studio.allin-studio.com` |
+| `PUBLIC_BASE` | `https://api.allin-studio.com` |
+| `STUDIO_ORIGINS` | `https://studio.allin-studio.com` |
+| `S3_BUCKET` | `configurator` |
+| `S3_REGION` | `auto` |
+| `S3_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
+| `S3_ACCESS_KEY_ID` | from the R2 token |
+| `S3_SECRET_ACCESS_KEY` | from the R2 token |
+| `CDN_BASE` | the `pub-….r2.dev` URL |
 
-Deploy from the **repository root** — the image needs the workspace
-lockfile and `packages/embed`, because the service imports the embed's
-validator rather than keeping a second opinion about what a valid product is:
+Fly will say the app has no machines yet. That is expected — secrets are
+stored against the app and applied when the first one starts.
 
-```bash
-cd ../..                       # repo root
-./scripts/deploy-api.sh        # checks, then flyctl deploy
-```
+**c. Give GitHub a deploy token.** Fly → **Tokens** (account level, or
+App → Tokens for one scoped to this app — prefer the scoped one). Create a
+deploy token, copy it.
 
-Then point `api.allin-studio.com` at it:
+In GitHub: repo → Settings → Secrets and variables → Actions → *New
+repository secret* → name `FLY_API_TOKEN`, paste.
 
-```bash
-flyctl certs add api.allin-studio.com
-# add the CNAME/A records it prints, at your DNS provider
-```
+**d. Deploy.** Repo → **Actions** → *Deploy API to Fly* → **Run workflow**.
+
+It installs, runs all three unit suites, builds on Fly's remote builder (so
+nothing needs Docker), deploys, and then polls `/health` from outside until
+the machine answers. Roughly four minutes. After this, every push to `main`
+that touches `packages/api` deploys itself.
+
+**e. The hostname.** App → **Certificates** → *Add certificate* →
+`api.allin-studio.com`. Fly shows the DNS records to add at whatever
+provider hosts `allin-studio.com` — a CNAME plus an ACME validation record.
+The certificate issues a few minutes after they propagate.
+
+Until then the app is already reachable at
+`https://allin-configurator-api.fly.dev`, which is enough to test with.
+
+> If you would rather use the CLI, `scripts/deploy-api.sh` does the same
+> thing locally: checks, secret presence, deploy, health.
 
 ## 4. Email
 

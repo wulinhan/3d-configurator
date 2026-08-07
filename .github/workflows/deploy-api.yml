@@ -1,0 +1,77 @@
+# Deploy the service to Fly, from a button in the browser.
+#
+# GitHub's "Run workflow" is the whole interface: no local flyctl, no Docker
+# on your machine, and the build happens on Fly's remote builder rather than
+# here. The unit suites run FIRST — a deploy that fails its own tests should
+# never reach a machine merchants are using, and finding that out from the
+# logs afterwards costs a rollback.
+
+name: Deploy API to Fly
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    # Only when something the image actually contains has changed. The
+    # Studio and the demo app deploy elsewhere.
+    paths:
+      - 'packages/api/**'
+      - 'packages/embed/src/manifest/**'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-api.yml'
+
+# Two deploys racing each other would fight over the same machines. The
+# second waits; a third replaces the second while it is still queued.
+concurrency:
+  group: fly-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test, then deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Real Postgres via PGlite, so the schema and its constraints are
+      # exercised here exactly as they are locally.
+      - name: Unit suites
+        run: npm run test:unit
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        # From the repository root: the image needs the workspace lockfile
+        # and packages/embed, because the service imports the embed's
+        # validator rather than keeping a second opinion about what a valid
+        # product is. --remote-only builds on Fly's builder, so this runner
+        # needs no Docker.
+        run: >
+          flyctl deploy
+          --config packages/api/fly.toml
+          --dockerfile packages/api/Dockerfile
+          --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Health
+        # The deploy is not done when flyctl returns — it is done when the
+        # machine answers. Fly's own health check gates the rollout, but this
+        # proves it from outside, which is what a merchant experiences.
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS https://allin-configurator-api.fly.dev/health; then
+              echo; echo "healthy"; exit 0
+            fi
+            echo "not ready yet ($i/12)"; sleep 10
+          done
+          echo "never became healthy — check: flyctl logs"; exit 1
