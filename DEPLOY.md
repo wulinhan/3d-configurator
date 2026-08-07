@@ -159,10 +159,28 @@ Until then the app is already reachable at
 
 ## 4. Email
 
-Resend → add `allin-studio.com` → publish the SPF/DKIM records it gives you.
-Until the domain verifies, sign-in links go nowhere and merchants cannot get
-in. Without `RESEND_API_KEY` at all, links print to `flyctl logs` — usable
-for your own first sign-in, not for anyone else.
+`MAIL_FROM` may be any address on any domain **already verified in your
+Resend account** — it does not have to match the Studio's domain, and the
+sign-in link inside the email points at `APP_BASE` regardless. The ERP and
+marketing site already send through Resend as
+`notifications@allincreatives.com`, so the zero-setup path is to reuse that
+domain: create a SEPARATE API key for this service (rotating one app's key
+must not break the other), then set `RESEND_API_KEY` and
+`MAIL_FROM=Allin Studio <notifications@allincreatives.com>` as Fly secrets.
+No DNS, no verification wait.
+
+Order matters if you ever DO verify a new domain: verify first, secrets
+after. The moment `RESEND_API_KEY` is set, links stop printing to the log —
+and an unverified from-domain means Resend rejects every send and nobody
+can sign in at all.
+
+Resend's free tier is one domain and 3,000 emails/month (100/day), shared
+across everything the account sends. Real marketing volume is the moment to
+go paid, add a second domain, and split marketing from transactional so a
+spam-flagged campaign cannot drag order and sign-in mail down with it.
+
+Without `RESEND_API_KEY` at all, links print to `flyctl logs` — usable for
+your own first sign-in, not for anyone else.
 
 ## 5. The Studio
 
