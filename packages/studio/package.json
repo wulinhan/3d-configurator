@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Merchant-facing authoring app — import a model, position parts in mm, set palettes and pricing, publish a manifest",
+  "description": "Merchant-facing authoring app \u2014 import a model, position parts in mm, set palettes and pricing, publish a manifest",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -19,7 +19,9 @@
     "@gltf-transform/core": "^4.4.2",
     "@gltf-transform/extensions": "^4.4.2",
     "@gltf-transform/functions": "^4.4.2",
-    "meshoptimizer": "^1.2.0"
+    "meshoptimizer": "^1.2.0",
+    "three-bvh-csg": "^0.0.18",
+    "three-mesh-bvh": "^0.9.14"
   },
   "devDependencies": {
     "@types/react": "^19.2.13",
