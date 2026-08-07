@@ -9,11 +9,12 @@
   ],
   "scripts": {
     "build": "npm run build -w @allin/embed && npm run build -w @allin/studio",
-    "test": "npm test -w @allin/embed && npm run build -w @allin/studio && npm test -w @allin/studio",
-    "test:unit": "npm run test:unit -w @allin/embed && npm run test:unit -w @allin/studio",
+    "test": "npm test -w @allin/embed && npm run build -w @allin/studio && npm test -w @allin/studio && npm test -w @allin/api",
+    "test:unit": "npm run test:unit -w @allin/embed && npm run test:unit -w @allin/studio && npm run test:unit -w @allin/api",
     "test:browser": "npm run test:browser -w @allin/embed && npm run test:browser -w @allin/studio",
     "check:manifest": "node packages/embed/tools/check-manifest.ts apps/demo/tap-bar-3.manifest.json",
     "serve": "node -e \"const h=require('node:http'),f=require('node:fs'),p=require('node:path');const R='apps/demo';const T={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.glb':'model/gltf-binary'};h.createServer((q,s)=>{const u=decodeURIComponent(q.url.split('?')[0]);const x=p.join(R,u==='/'?'index.html':u);if(!x.startsWith(R)||!f.existsSync(x)){s.writeHead(404);return s.end()}s.writeHead(200,{'content-type':T[p.extname(x)]||'application/octet-stream'});s.end(f.readFileSync(x))}).listen(4321,()=>console.log('http://localhost:4321'))\"",
-    "dev:studio": "npm run dev -w @allin/studio"
+    "dev:studio": "npm run dev -w @allin/studio",
+    "dev:api": "npm start -w @allin/api"
   }
 }

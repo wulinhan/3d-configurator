@@ -159,8 +159,15 @@ export function isOptionActive(
 
 /** A customer's image-zone state, decoded from its selections JSON. */
 export interface UploadState {
-  /** data: URL of the (client-side downscaled) image. */
+  /**
+   * What the viewer draws: an inline data: URL when the configurator runs
+   * with no server behind it, or an https: URL on the upload service when
+   * there is one. The renderer does not care which.
+   */
   img: string;
+  /** The upload's id on the service, when the picture lives there — this is
+   * what the cart carries and what the workshop later resolves. */
+  up?: string;
   /** Offset within the zone, mm. */
   u: number;
   v: number;
@@ -179,14 +186,38 @@ export function zonePlaceholder(option: UploadOption): string {
   return option.placeholder === undefined ? 'Image here' : option.placeholder.trim();
 }
 
-/** Parse an upload selection value; empty/garbage decodes to null. */
-export function parseUploadState(value: string | undefined): UploadState | null {
+/** The host this product's artwork is allowed to come from, or '' when the
+ * manifest names no upload service and only inline images are legal. */
+export function uploadHost(manifest: Manifest): string {
+  if (!manifest.uploads?.url) return '';
+  try { return new URL(manifest.uploads.url).host; } catch { return ''; }
+}
+
+/**
+ * Parse an upload selection value; empty/garbage decodes to null.
+ *
+ * Two shapes are legal, because one runtime serves both deployments: a
+ * merchant hosting two files themselves (the image inline, as a data: URL)
+ * and a merchant on the service (an https: URL and an id). Nothing else
+ * passes — an http: or javascript: value in a selection is not a picture,
+ * it is an attempt.
+ *
+ * `host` narrows the https case to the product's OWN upload service. Callers
+ * that have the manifest pass it; the renderer, reading a value that already
+ * came through `applySelection`, does not need to.
+ */
+export function parseUploadState(value: string | undefined, host?: string): UploadState | null {
   if (!value) return null;
   try {
     const raw = JSON.parse(value) as Partial<UploadState>;
-    if (typeof raw.img !== 'string' || !raw.img.startsWith('data:image/')) return null;
+    if (typeof raw.img !== 'string') return null;
+    if (!raw.img.startsWith('data:image/')) {
+      if (!raw.img.startsWith('https://')) return null;
+      if (host !== undefined && (!host || new URL(raw.img).host !== host)) return null;
+    }
     return {
       img: raw.img,
+      ...(typeof raw.up === 'string' && raw.up ? { up: raw.up } : {}),
       u: Number.isFinite(raw.u) ? (raw.u as number) : 0,
       v: Number.isFinite(raw.v) ? (raw.v as number) : 0,
       s: Math.min(500, Math.max(10, Number.isFinite(raw.s) ? (raw.s as number) : 100)),
@@ -252,13 +283,18 @@ export function applySelection(manifest: Manifest, selections: Selections, optio
     return;
   }
   if (option?.type === 'upload') {
-    const state = parseUploadState(value);
+    // A remote image may only come from THIS product's own upload service.
+    // Without that, any https URL in a selection would be drawn onto the
+    // part and carried into the order, and the picture the workshop prints
+    // would be one the merchant never received.
+    const state = parseUploadState(value, uploadHost(manifest));
     if (!state) { selections[optionId] = ''; return; }
     // The zone is the law: the image's centre may roam but never abandon
     // it (an oversized image pans within its overflow — the renderer
     // clamps exactly; this is the payload's sanity bound).
     selections[optionId] = JSON.stringify({
       img: state.img,
+      ...(state.up ? { up: state.up } : {}),
       u: Math.min(option.widthMm * 2, Math.max(-option.widthMm * 2, state.u)),
       v: Math.min(option.heightMm * 2, Math.max(-option.heightMm * 2, state.v)),
       s: state.s,
@@ -361,9 +397,16 @@ export function buildPayload(manifest: Manifest, selections: Selections): Select
   const deltas = priceDeltas(manifest, selections);
   const colourNames: Record<string, string> = {};
   const resolved: Selections = {};
+  const uploads: Record<string, { id: string; url: string }> = {};
 
   for (const o of manifest.options) {
     resolved[o.id] = resolveValue(manifest, selections, o.id);
+    // Artwork that lives on the service is surfaced on its own, so a cart
+    // integration never has to parse a selection value to find the picture.
+    if (o.type === 'upload') {
+      const state = parseUploadState(resolved[o.id]);
+      if (state?.up) uploads[o.id] = { id: state.up, url: state.img };
+    }
     if (isColour(o)) {
       const colour = resolveColour(manifest, selections, o);
       if (colour) colourNames[o.id] = colour.name;
@@ -389,5 +432,6 @@ export function buildPayload(manifest: Manifest, selections: Selections): Select
     priceDeltas: deltas,
     deltaTotal: Math.round(deltas.reduce((s, d) => s + d.amount, 0) * 100) / 100,
     currency: manifest.pricing.currency,
+    ...(Object.keys(uploads).length ? { uploads } : {}),
   };
 }

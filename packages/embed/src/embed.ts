@@ -15,9 +15,13 @@ import {
 } from './runtime/state.ts';
 
 /**
- * Read a customer's file into a data: URL small enough to live in the
- * selection payload: downscaled to ≤1024px, PNG kept for transparency,
- * anything over budget re-encoded as JPEG at falling quality.
+ * Shrink a customer's file to something a product page can carry: downscaled
+ * to ≤1024 px, PNG kept for transparency, anything over budget re-encoded as
+ * JPEG at falling quality.
+ *
+ * Returns a data: URL because that is what the no-backend deployment stores.
+ * When the manifest names an upload service, `sendUploadImage` posts these
+ * bytes instead and the selection carries an id — see below.
  */
 async function encodeUploadImage(file: File, maxBytes: number): Promise<string> {
   const url = URL.createObjectURL(file);
@@ -42,6 +46,39 @@ async function encodeUploadImage(file: File, maxBytes: number): Promise<string> 
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** A data: URL back to the bytes it encodes, so the same downscaling serves
+ * both deployments. */
+function bytesOfDataUrl(dataUrl: string): { bytes: Uint8Array; type: string } {
+  const comma = dataUrl.indexOf(',');
+  const type = dataUrl.slice(5, dataUrl.indexOf(';'));
+  const binary = atob(dataUrl.slice(comma + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return { bytes, type };
+}
+
+/**
+ * Hand the artwork to the service and keep only its id.
+ *
+ * This is the difference between a cart line item of a few dozen characters
+ * and one of a megabyte: a data: URL cannot survive a checkout — most carts
+ * cap a line-item property at 255 characters — so wherever an upload service
+ * is configured, the image goes there and the order carries a pointer.
+ */
+async function sendUploadImage(
+  service: { url: string; publication: string }, optionId: string, dataUrl: string,
+): Promise<{ id: string; url: string }> {
+  const { bytes, type } = bytesOfDataUrl(dataUrl);
+  const endpoint = `${service.url}?publication=${encodeURIComponent(service.publication)}`
+    + `&option=${encodeURIComponent(optionId)}`;
+  const res = await fetch(endpoint, { method: 'POST', headers: { 'content-type': type }, body: bytes });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error((detail as { message?: string }).message ?? 'upload failed');
+  }
+  return await res.json() as { id: string; url: string };
 }
 
 const isColour = (o: Option): o is ColourOption => o.type === 'colour';
@@ -73,6 +110,10 @@ export async function mount(opts: MountOptions) {
   const manifest = opts.manifest;
   const selections: Selections = defaultSelections(manifest);
   const brand = manifest.brand ?? {};
+  // Present when the manifest came from the hosted service, absent when the
+  // merchant is serving the two files themselves. It is what decides whether
+  // artwork travels as an id or as a data: URL — see sendUploadImage.
+  const uploads = manifest.uploads;
 
   opts.root.classList.add('cfg');
   opts.root.style.setProperty('--cfg-accent', brand.accent ?? '#1A1A1A');
@@ -332,21 +373,36 @@ export async function mount(opts: MountOptions) {
     input.className = 'cfg-upload-input';
     input.hidden = true;
     input.setAttribute('aria-label', option.label);
+    const failure = el('p', 'cfg-error');
+    failure.hidden = true;
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
       if (!file) return;
+      failure.hidden = true;
+      pick.disabled = true;
       try {
-        const img = await encodeUploadImage(file, option.maxBytes ?? 1_500_000);
-        change(option.id, JSON.stringify({ img, u: 0, v: 0, s: 100 }));
-      } catch {
-        /* unreadable file — leave the current state alone */
+        const encoded = await encodeUploadImage(file, option.maxBytes ?? 1_500_000);
+        if (uploads) {
+          // The service holds the picture; the order carries its id.
+          const stored = await sendUploadImage(uploads, option.id, encoded);
+          change(option.id, JSON.stringify({ img: stored.url, up: stored.id, u: 0, v: 0, s: 100 }));
+        } else {
+          change(option.id, JSON.stringify({ img: encoded, u: 0, v: 0, s: 100 }));
+        }
+      } catch (err) {
+        // A rejected upload has to say so: silence here reads as a broken
+        // button, and the customer tries the same file again.
+        failure.textContent = err instanceof Error ? err.message : 'that image could not be uploaded';
+        failure.hidden = false;
+      } finally {
+        pick.disabled = false;
       }
     });
 
     const pick = el('button', 'cfg-upload-btn', state ? 'Replace image' : 'Upload image');
     pick.type = 'button';
     pick.addEventListener('click', () => input.click());
-    wrap.append(pick, input);
+    wrap.append(pick, input, failure);
 
     // The merchant's own words for the empty zone, shown where the customer
     // is deciding what to upload — the same string the veil carries.

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { validateManifest } from '../../embed/src/manifest/validate.ts';
 import type { Manifest, UploadOption } from '../../embed/src/manifest/types.ts';
 import {
-  defaultSelections, applySelection, parseUploadState, priceDeltas, zonePlaceholder,
+  defaultSelections, applySelection, parseUploadState, priceDeltas, zonePlaceholder, buildPayload,
 } from '../../embed/src/runtime/state.ts';
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
@@ -152,6 +152,47 @@ test('customer selections clamp to the zone and price when used', () => {
   assert.equal(s['body-image'], '');
   applySelection(m, s, 'body-image', JSON.stringify({ img: 'javascript:alert(1)', u: 0, v: 0, s: 100 }));
   assert.equal(s['body-image'], '');
+});
+
+test('artwork travels as an id when there is a service, inline when there is not', () => {
+  let m = addImageZone(fresh(), 'body', PLACE);
+  const s = defaultSelections(m);
+
+  // No service: the picture is the selection, exactly as before. This is the
+  // deployment where a merchant hosts two files and runs no server at all.
+  applySelection(m, s, 'body-image', JSON.stringify({ img: IMG, u: 0, v: 0, s: 100 }));
+  assert.equal(parseUploadState(s['body-image'])!.up, undefined);
+  assert.equal(buildPayload(m, s).uploads, undefined);
+
+  const hosted = 'https://api.example.com/u/upl_abc123';
+  // A remote image is refused while the manifest names no service: without
+  // that block there is nothing to trust the URL against.
+  applySelection(m, s, 'body-image', JSON.stringify({ img: hosted, up: 'upl_abc123', u: 0, v: 0, s: 100 }));
+  assert.equal(s['body-image'], '');
+
+  // Once the service is named — which the API injects as it serves the
+  // published manifest — the selection becomes a pointer of a few dozen
+  // characters, which is what a cart line-item property can actually hold.
+  m = { ...m, uploads: { url: 'https://api.example.com/v1/uploads', publication: 'pub_1' } };
+  assert.deepEqual(validateManifest(m).errors, []);
+  applySelection(m, s, 'body-image', JSON.stringify({ img: hosted, up: 'upl_abc123', u: 3, v: -2, s: 120 }));
+  const state = parseUploadState(s['body-image'])!;
+  assert.equal(state.img, hosted);
+  assert.equal(state.up, 'upl_abc123');
+  assert.ok(s['body-image'].length < 120, 'small enough to survive a checkout');
+
+  // And the payload surfaces it, so a cart never has to parse a selection
+  // value to find the picture.
+  assert.deepEqual(buildPayload(m, s).uploads, { 'body-image': { id: 'upl_abc123', url: hosted } });
+
+  // Somebody else's https URL is not this product's artwork, however
+  // well-formed it is.
+  applySelection(m, s, 'body-image', JSON.stringify({ img: 'https://evil.example/u/x', up: 'x', u: 0, v: 0, s: 100 }));
+  assert.equal(s['body-image'], '');
+  applySelection(m, s, 'body-image', JSON.stringify({ img: 'http://api.example.com/u/x', up: 'x', u: 0, v: 0, s: 100 }));
+  assert.equal(s['body-image'], '');
+  assert.ok(validateManifest({ ...m, uploads: { url: 'http://api.example.com/v1/uploads', publication: 'p' } })
+    .errors.some((e) => e.path === 'uploads.url'));
 });
 
 test('the empty zone says what the merchant wrote — or nothing at all', () => {

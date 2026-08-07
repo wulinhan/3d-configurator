@@ -450,6 +450,18 @@ export interface Manifest {
   options: Option[];
   camera?: CameraSetup;
   pricing: Pricing;
+  /**
+   * Where customer artwork goes, INJECTED by the hosting service as it
+   * serves a published manifest — never authored in the Studio, which is
+   * why it is not part of what a merchant edits.
+   *
+   * Present: the embed posts each uploaded image to `url` and the selection
+   * carries the returned id, so a cart line item is a pointer rather than a
+   * megabyte of base64. Absent (a self-hosted manifest.json): the image
+   * stays a data: URL, exactly as before, and everything still works with
+   * no server at all.
+   */
+  uploads?: { url: string; publication: string };
 }
 
 /** What the embed posts to the host page on every change. */
@@ -466,4 +478,10 @@ export interface SelectionPayload {
   /** Sum of `priceDeltas` — a convenience, not a price. */
   deltaTotal: number;
   currency: string;
+  /**
+   * Artwork the customer uploaded, surfaced separately so a cart
+   * integration never has to parse a selection value to find the picture.
+   * Only present for zones whose image went to an upload service.
+   */
+  uploads?: Record<string, { id: string; url: string }>;
 }

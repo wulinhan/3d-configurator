@@ -14,14 +14,23 @@ packages/embed/   the runtime — manifest schema, layout, pricing, renderer —
 packages/studio/  the merchant-facing authoring app — import 3MF/STL/GLB files,
                   position parts in real millimetres, set palettes, custom-colour
                   rules and price deltas, publish a manifest the embed renders.
+packages/api/     the service behind the Studio — accounts and saved projects,
+                  published versions at immutable URLs, and the endpoint that
+                  takes customer artwork so a cart carries an id rather than a
+                  megabyte of base64. See its README.
 apps/demo/        a mock merchant storefront hosting the embed: the reference
                   for what an integration looks like, and the browser-test target.
 ```
 
-The manifest is the contract between all three: the Studio writes it, the embed
+The manifest is the contract between them: the Studio writes it, the embed
 renders it, and the host page's cart prices from the deltas the embed reports.
 The configurator never states a price — the merchant's store stays the
 authority on money.
+
+The embed runs with or without the service. Host `manifest.json` and
+`model.glb` yourself and everything works with no server at all; put the
+Studio on the service and the same runtime gains saved projects, versioned
+publishing and hosted artwork uploads.
 
 ## Quick start
 
@@ -30,6 +39,7 @@ npm install
 npm run build       # embed bundle into apps/demo/ + Studio production build
 npm run serve       # the demo storefront — http://localhost:4321
 npm run dev:studio  # the Studio — http://localhost:5173
+npm run dev:api     # the service — http://localhost:4400 (needs DATABASE_URL)
 ```
 
 ## Checks

@@ -265,12 +265,21 @@ test('a link cycle resolves to empty instead of recursing forever', () => {
   assert.doesNotThrow(() => buildPayload(m, s));
 });
 
-test('parseUploadState decodes only image data URLs, clamping size', () => {
+test('parseUploadState decodes only real artwork, clamping size', () => {
   assert.equal(parseUploadState(''), null);
   assert.equal(parseUploadState(undefined), null);
   assert.equal(parseUploadState('not json'), null);
-  assert.equal(parseUploadState(JSON.stringify({ img: 'https://evil.example/x.png' })), null);
   assert.equal(parseUploadState(JSON.stringify({ img: 'javascript:alert(1)' })), null);
+  assert.equal(parseUploadState(JSON.stringify({ img: 'http://api.example.com/u/x' })), null,
+    'http would be a picture fetched in the clear');
+
+  // A remote image is legal only from the product's OWN upload service, so
+  // callers holding the manifest pass its host: a stranger's URL is refused,
+  // and with no service configured no remote image is legal at all.
+  const hosted = JSON.stringify({ img: 'https://api.example.com/u/upl_1', up: 'upl_1' });
+  assert.equal(parseUploadState(hosted, 'api.example.com')!.up, 'upl_1');
+  assert.equal(parseUploadState(hosted, 'evil.example'), null);
+  assert.equal(parseUploadState(hosted, ''), null);
 
   const state = parseUploadState(JSON.stringify({ img: 'data:image/png;base64,AAAA', u: 2, v: -3, s: 400 }))!;
   assert.equal(state.u, 2);

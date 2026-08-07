@@ -1237,6 +1237,11 @@ export class Viewer {
         // New image: show the frame while it decodes, then paint.
         this.paintZone(option, entry, null);
         const img = new Image();
+        // Artwork served from the upload service is cross-origin, and a
+        // canvas that draws a cross-origin image without this is TAINTED —
+        // WebGL then refuses it as a texture and the zone renders blank.
+        // Harmless on a data: URL, so it is set unconditionally.
+        img.crossOrigin = 'anonymous';
         entry.imgSrc = state.img;
         img.onload = () => {
           const now = this.imageZones.get(option.id);

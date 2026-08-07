@@ -75,6 +75,18 @@ export function validateManifest(input: unknown): ValidationResult {
   if (!m.parts?.length) warn('parts', 'no parts yet — add parts before publishing');
   if (!m.pricing?.currency) err('pricing.currency', 'required — the host cart needs to know what the deltas are denominated in');
 
+  // Injected by the hosting service, never authored — but a half-written
+  // block would send customer artwork nowhere, silently, so it is checked
+  // like anything else. https only: an upload endpoint reached over http is
+  // a picture posted in the clear.
+  if (m.uploads != null) {
+    if (typeof m.uploads !== 'object') err('uploads', 'must be an object');
+    else {
+      if (!/^https:\/\//.test(m.uploads.url ?? '')) err('uploads.url', 'must be an https URL');
+      if (!m.uploads.publication) err('uploads.publication', 'required — the service needs to know which version this is');
+    }
+  }
+
   (m.models ?? []).forEach((s, i) => {
     if (!s?.url) err(`models[${i}].url`, 'required');
   });
