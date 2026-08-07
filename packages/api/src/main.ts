@@ -77,7 +77,21 @@ const mail = process.env.RESEND_API_KEY
   ? resendMailer(env('RESEND_API_KEY'), env('MAIL_FROM'))
   : consoleMailer();
 
+// Boot narrates itself. When a platform reports nothing but "health checks
+// never passed", the app's own log is the only place the real reason lives,
+// and a silent startup makes "cannot reach the database" and "crashed on a
+// bad config" look identical.
+console.log(`[api] starting — port ${env('PORT', '4400')}, public base ${config.publicBase}`);
+try {
+  const probe = await sql.query<{ now: Date }>('select now() as now');
+  console.log(`[api] database reachable (${probe.rows[0]?.now?.toISOString?.() ?? 'ok'})`);
+} catch (err) {
+  console.error('[api] CANNOT REACH THE DATABASE — check DATABASE_URL (pooled host, sslmode=require)');
+  throw err;
+}
 await migrate(sql);
+console.log('[api] schema applied');
+
 const app = createApp({ sql, store, clock: systemClock, mail, config });
 
 // Housekeeping, in-process. Sessions that have expired and artwork nobody

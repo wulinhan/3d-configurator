@@ -22,7 +22,10 @@ primary_region = "sin"          # Singapore: nearest to the merchants and the
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "suspend"
+  # Off, not "suspend": min_machines_running = 1 says one machine stays
+  # up, and the two settings arguing produces a machine that is both
+  # required and asleep.
+  auto_stop_machines = "off"
   # Never scale to zero. A cold start in the middle of a customer's upload is
   # a lost sale, and the hourly janitor needs a machine to run on.
   min_machines_running = 1
@@ -36,7 +39,10 @@ primary_region = "sin"          # Singapore: nearest to the merchants and the
     hard_limit = 80
 
   [[http_service.checks]]
-    grace_period = "10s"
+    # Boot is: connect to Neon across the Pacific, then apply ~15 DDL
+    # statements. Ten seconds was tight enough that a cold database looked
+    # like a crash.
+    grace_period = "30s"
     interval = "15s"
     method = "GET"
     timeout = "5s"

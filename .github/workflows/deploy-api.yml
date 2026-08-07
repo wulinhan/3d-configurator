@@ -63,6 +63,19 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
+      - name: Why it failed
+        # "timeout reached waiting for health checks" is the symptom, never
+        # the cause — the cause is in the app's own log, and without this you
+        # have to go and find it in another tab five minutes later.
+        if: failure()
+        run: |
+          echo "── recent app output ──"
+          flyctl logs --config packages/api/fly.toml --no-tail || true
+          echo "── machines ──"
+          flyctl status --config packages/api/fly.toml || true
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
       - name: Health
         # The deploy is not done when flyctl returns — it is done when the
         # machine answers. Fly's own health check gates the rollout, but this

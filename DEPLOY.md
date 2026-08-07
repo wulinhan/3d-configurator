@@ -139,9 +139,17 @@ the machine answers. Roughly four minutes. After this, every push to `main`
 that touches `packages/api` deploys itself.
 
 **e. The hostname.** App → **Certificates** → *Add certificate* →
-`api.allin-studio.com`. Fly shows the DNS records to add at whatever
-provider hosts `allin-studio.com` — a CNAME plus an ACME validation record.
-The certificate issues a few minutes after they propagate.
+`api.allin-studio.com`. Add the **CNAME only** — `api` pointing at the
+`<something>.<app>.fly.dev` value Fly shows. That is the whole requirement.
+
+The ACME DNS challenge on the same page is labelled optional and means it:
+it exists so you can have the certificate issued *before* pointing traffic
+at Fly. Add the CNAME and Fly validates over HTTP by itself, usually within
+a minute or two of the record propagating.
+
+Ignore "your app does not have any IPv6 records allocated" if you see it
+before the first successful deploy — deploying allocates the IPs, and the
+warning is just stale.
 
 Until then the app is already reachable at
 `https://allin-configurator-api.fly.dev`, which is enough to test with.
