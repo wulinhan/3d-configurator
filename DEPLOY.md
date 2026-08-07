@@ -12,9 +12,11 @@ environment.
 
 ## 0. Decide the two hostnames first
 
-`PUBLIC_BASE` is **baked into every published manifest**. Change it later and
-every product already on a storefront points at a hostname that no longer
-answers. So pick now, and pick under one registrable domain:
+`PUBLIC_BASE` is the hostname merchants **paste into their own storefronts**.
+Nothing is stored — every URL the service hands out is built at serve time —
+but the snippet lives in someone else's HTML, and you cannot edit that. So if
+it ever has to change, the old hostname must keep answering (a redirect is
+enough). Easier to pick once:
 
 | | Example | Why |
 | --- | --- | --- |
@@ -27,6 +29,21 @@ cookie, and `studio.x.com` → `api.x.com` is same-site so it crosses freely.
 Split them across two domains and the browser drops the cookie **in
 silence** — you would see a sign-in that appears to work and then 401s.
 (`COOKIE_SAMESITE=none` is the escape hatch; it forces `Secure`.)
+
+## 0b. Does the domain have to move to Cloudflare?
+
+Only for an R2 **custom domain**. Cloudflare will only attach one to a zone
+it hosts, and `allin-studio.com` currently is not one — so that step means
+changing the registrar's nameservers, which moves DNS for the live marketing
+site too. Cloudflare imports the existing records first and you check them
+before flipping, but it is still a change to something that is working.
+
+You do not have to decide now. Use the r2.dev URL, ship, and move the zone
+later if the rate limit ever matters: `CDN_BASE` is a Fly secret, not a
+stored value, so switching is one `flyctl secrets set` and a restart.
+
+`api.` and `studio.` need no such thing — those are ordinary CNAMEs at
+whatever DNS provider you already use.
 
 ---
 
@@ -64,9 +81,18 @@ Then, in order:
    `packages/api/r2-cors.json`. Without this the embed cannot fetch
    `model.glb` from the CDN and every configurator on every storefront shows
    an empty viewport.
-3. **Custom domain**: bucket → Settings → Public access → Connect a domain →
-   `models.allin-studio.com`. That hostname is `CDN_BASE`. Skip it and the
-   service streams models itself — correct, just slower and billed.
+3. **Public access**, one of two ways. `CDN_BASE` is read on every request
+   and never stored, so this one is genuinely reversible — start with
+   whichever is quicker:
+   - **r2.dev subdomain** (bucket → Settings → Public access → Allow):
+     zero setup, no DNS, rate-limited and not meant for production traffic.
+     Fine for the first weeks.
+   - **Custom domain** → `models.allin-studio.com`. Needs the DNS zone to be
+     on Cloudflare, which for `allin-studio.com` means moving nameservers —
+     see §0b.
+
+   Leave `CDN_BASE` unset entirely and the service streams models itself:
+   correct, just slower and billed for egress.
 
 ## 3. Fly
 
@@ -174,10 +200,25 @@ configuration, not code.
 | --- | --- |
 | Sign-in seems to work, then everything 401s | Studio and API on different registrable domains — the cookie was dropped. `COOKIE_SAMESITE=none`, or move them together. |
 | Configurator loads, model never appears | R2 CORS not applied. |
-| `/health` 503 | `DATABASE_URL` wrong, or Neon asleep on the free tier. |
+| `/health` 503 | `DATABASE_URL` wrong, or the pooled host was not used. |
 | Sign-in emails never arrive | Resend domain unverified. |
 | Published products 404 after a hostname change | `PUBLIC_BASE` was changed after publishing. See §0. |
 | Rate limits behaving oddly | `TRUST_PROXY` false behind Fly, so every caller shares one bucket. |
+
+## One interaction to know about
+
+Fly checks `/health` every 15 seconds, and `/health` runs `select 1` — which
+is the point of it, since a machine that cannot reach Postgres must leave the
+load balancer. But it also means **the database never goes idle**, so Neon's
+scale-to-zero never kicks in and the compute runs continuously.
+
+That is what you want for a service merchants are using: a cold Postgres on
+the first real request is worse than a warm one costing a few dollars. It
+does mean the free tier's compute allowance is not a realistic plan — budget
+for Neon Launch. If you would rather stay free while nobody is using it, say
+so and I will make the database probe optional; the check then only proves
+the process is alive, which is a real downgrade and should be a choice
+rather than a default.
 
 ## Cost, roughly
 
