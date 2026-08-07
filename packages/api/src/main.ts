@@ -82,6 +82,24 @@ const mail = process.env.RESEND_API_KEY
 // and a silent startup makes "cannot reach the database" and "crashed on a
 // bad config" look identical.
 console.log(`[api] starting — port ${env('PORT', '4400')}, public base ${config.publicBase}`);
+
+// Say WHICH host and database, parsed out of the URL. A malformed
+// DATABASE_URL fails as `getaddrinfo ENOTFOUND <whatever pg made of it>`,
+// which is a puzzle; "database host: base" is not. The password is never
+// printed — only the parts that identify the wrong value.
+try {
+  const parsed = new URL(databaseUrl);
+  console.log(`[api] database host ${parsed.hostname}, db ${parsed.pathname.replace('/', '') || '(none)'}`);
+  if (!parsed.hostname.includes('.')) {
+    console.error(`[api] "${parsed.hostname}" is not a hostname — DATABASE_URL looks like it has`
+      + ' stray text in it. It must be the connection string ALONE, on one line,'
+      + ' with no label, quotes or line break.');
+  }
+} catch {
+  console.error('[api] DATABASE_URL is not a URL at all — paste the connection string alone,'
+    + ' with no "DATABASE_URL=" prefix and no surrounding quotes.');
+}
+
 try {
   const probe = await sql.query<{ now: Date }>('select now() as now');
   console.log(`[api] database reachable (${probe.rows[0]?.now?.toISOString?.() ?? 'ok'})`);
