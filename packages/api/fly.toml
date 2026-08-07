@@ -1,0 +1,47 @@
+# Fly.io. One app, one region, one small machine — this service is I/O bound
+# (Postgres and an object store), not CPU bound.
+
+app = "allin-configurator-api"
+primary_region = "sin"          # Singapore: nearest to the merchants and the
+                                # workshop. Put Neon in the same region.
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  NODE_ENV = "production"
+  # Fly terminates TLS at the edge and forwards over the private network, so
+  # the client's real address only exists in this header. clientIp() ignores
+  # it unless told to trust it — otherwise any caller could pick their own
+  # rate-limit bucket.
+  TRUST_PROXY = "true"
+  COOKIE_SECURE = "true"
+  COOKIE_SAMESITE = "lax"       # Studio and API share a registrable domain
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  # Never scale to zero. A cold start in the middle of a customer's upload is
+  # a lost sale, and the hourly janitor needs a machine to run on.
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    # Publishing streams multi-megabyte GLBs; better to queue at the edge
+    # than to have one machine holding fifty of them in memory.
+    soft_limit = 40
+    hard_limit = 80
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

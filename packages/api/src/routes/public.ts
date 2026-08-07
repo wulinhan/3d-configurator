@@ -9,7 +9,7 @@
 import type { Route, Ctx } from '../http.ts';
 import { readBody, Raw, Redirect, allowedOrigin, rateLimiter, clientIp } from '../http.ts';
 import { type Deps, addHeaders } from '../app.ts';
-import { badRequest, notFound, forbidden, tooLarge, tooMany, unprocessable } from '../errors.ts';
+import { ApiError, badRequest, notFound, forbidden, tooLarge, tooMany, unprocessable } from '../errors.ts';
 import { sha256 } from '../ids.ts';
 import { assetKey } from '../storage.ts';
 import {
@@ -101,6 +101,28 @@ export function publicRoutes(deps: Deps): Route[] {
   }
 
   return [
+    // ── is this instance actually serving? ────────────────────────────────
+    //
+    // The platform's health check, so it has to answer the question the
+    // platform is really asking: can this machine do its job. A process that
+    // is up but cannot reach Postgres serves 500s to every merchant, and a
+    // health check that only proves the event loop is running would keep it
+    // in the load balancer while it did.
+    {
+      method: 'GET',
+      pattern: '/health',
+      async handler(ctx) {
+        addHeaders(ctx, { 'cache-control': 'no-store' });
+        try {
+          await sql.query('select 1');
+        } catch (err) {
+          throw new ApiError(503, 'unhealthy', 'the database is not reachable',
+            err instanceof Error ? err.message : undefined);
+        }
+        return { ok: true, at: clock.now().toISOString() };
+      },
+    },
+
     // ── a frozen version: the URL an order pins ───────────────────────────
     {
       method: 'GET',

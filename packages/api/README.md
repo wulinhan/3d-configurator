@@ -110,7 +110,9 @@ Once set it governs reads AND uploads.
 npm run test:unit -w @allin/api
 ```
 
-28 tests, against **real Postgres** — PGlite is Postgres compiled to WASM, so
+See `DEPLOY.md` at the repository root for Neon + Fly + R2.
+
+29 tests, against **real Postgres** — PGlite is Postgres compiled to WASM, so
 the cascades, unique indexes, `returning` and transactions under test are the
 ones that ship. A hand-written fake store would have passed every one of them
 while proving nothing about `001_init.sql`, which is where the guarantees
@@ -132,7 +134,7 @@ test/store.test.ts  13 — the data layer: an email is one account however it
                     version, abandoned artwork is swept while ordered
                     artwork is kept, and deleting an org really deletes
                     everything it owns
-test/api.test.ts    15 — the service through its own front door, on a real
+test/api.test.ts    16 — the service through its own front door, on a real
                     socket with fetch: a magic link signs you in once and
                     gives you a workshop, an unknown address is answered
                     exactly like a known one, a cookie is not enough for a

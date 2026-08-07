@@ -138,6 +138,25 @@ async function newProject(client: Client, orgId: string, manifest: unknown = MAN
   return { id: made.project.id, revision: saved.revision };
 }
 
+test('the health check answers what the platform is really asking', async () => {
+  const r = await rig();
+  const ok = await r.client().fetch('/health', { origin: null });
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json() as { ok: boolean }).ok, true);
+  // Never cached: a stale 200 would keep a dead machine in the load balancer.
+  assert.equal(ok.headers.get('cache-control'), 'no-store');
+
+  // A process that is up but cannot reach Postgres serves 500s to every
+  // merchant. It has to fail the check, or the platform keeps sending it
+  // traffic.
+  const broken = await rig();
+  broken.sql.query = async () => { throw new Error('connection refused'); };
+  const sick = await broken.client().fetch('/health', { origin: null });
+  assert.equal(sick.status, 503);
+  await r.stop();
+  await broken.stop();
+});
+
 // ── signing in ────────────────────────────────────────────────────────────
 
 test('a magic link signs you in, once, and gives you somewhere to work', async () => {

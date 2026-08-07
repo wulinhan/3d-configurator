@@ -34,7 +34,27 @@ const config: Config = {
   revisionsKept: Number(env('REVISIONS_KEPT', '50')),
 };
 
-const pool = new pg.Pool({ connectionString: env('DATABASE_URL') });
+const databaseUrl = env('DATABASE_URL');
+const pool = new pg.Pool({
+  connectionString: databaseUrl,
+  // Managed Postgres (Neon, Supabase, RDS) is reached across the internet,
+  // so TLS is verified rather than merely used. The `rejectUnauthorized:
+  // false` that most guides copy turns the encryption into decoration —
+  // it accepts any certificate, including an attacker's.
+  ssl: /sslmode=(require|verify-ca|verify-full)/.test(databaseUrl)
+    ? { rejectUnauthorized: true }
+    : undefined,
+  // Neon's pooled endpoint multiplexes for us; this cap is about not letting
+  // one instance monopolise it.
+  max: Number(env('DB_POOL_MAX', '10')),
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
+});
+// An idle client that dies — a database restart, a network blip — emits on
+// the POOL, and an unhandled 'error' event takes the process down. Logging
+// it lets the pool discard the client and carry on, which is what it is for.
+pool.on('error', (err) => console.error('[api] idle client error', err));
+
 const sql: Sql = {
   async query(text, params) {
     const out = await pool.query(text, params as unknown[]);
@@ -77,7 +97,25 @@ setInterval(() => {
 }, HOUR).unref();
 
 const port = Number(env('PORT', '4400'));
-createServer((req, res) => { void app.handle(req, res); }).listen(port, () => {
+const server = createServer((req, res) => { void app.handle(req, res); });
+server.listen(port, () => {
   console.log(`[api] listening on ${port}; public base ${config.publicBase}`);
   if (!process.env.RESEND_API_KEY) console.log('[api] no mail provider — sign-in links print here');
+  if (!process.env.S3_BUCKET) console.log('[api] no object store — bytes go to local disk');
 });
+
+// A deploy replaces machines, and a merchant mid-publish is streaming a
+// multi-megabyte model. Stop accepting new connections, let the ones in
+// flight finish, then close the pool — rather than dropping a publish on
+// the floor and leaving a half-written asset behind.
+let closing = false;
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    if (closing) return;
+    closing = true;
+    console.log(`[api] ${signal} — draining`);
+    server.close(() => { void pool.end().then(() => process.exit(0)); });
+    // A client holding a connection open must not hold the deploy open too.
+    setTimeout(() => process.exit(0), 15_000).unref();
+  });
+}
