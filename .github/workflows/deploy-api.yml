@@ -63,10 +63,33 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
+      - name: Health
+        # The deploy is not done when flyctl returns — it is done when the
+        # machine answers. Fly's own health check gates the rollout, but this
+        # proves it from outside, which is what a merchant experiences.
+        #
+        # --max-time matters: without it, curl waits on Fly's proxy for the
+        # better part of a minute per attempt, and a two-minute wait becomes
+        # a fourteen-minute one.
+        run: |
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /tmp/health.txt -w '%{http_code}' \
+              --connect-timeout 5 --max-time 10 \
+              https://allin-configurator-api.fly.dev/health || echo 000)
+            if [ "$code" = "200" ]; then
+              cat /tmp/health.txt; echo; echo "healthy"; exit 0
+            fi
+            # 502/503 is Fly's edge saying it has no healthy machine to send
+            # this to; 000 is no answer at all.
+            echo "attempt $i/12: HTTP $code $(head -c 200 /tmp/health.txt 2>/dev/null)"
+            sleep 10
+          done
+          echo "never became healthy"; exit 1
+
       - name: Why it failed
-        # "timeout reached waiting for health checks" is the symptom, never
-        # the cause — the cause is in the app's own log, and without this you
-        # have to go and find it in another tab five minutes later.
+        # AFTER the health check, not before — `if: failure()` was false while
+        # the deploy was still green, so the one run that needed this skipped
+        # it. The cause lives in the app's own log either way.
         if: failure()
         run: |
           echo "── recent app output ──"
@@ -75,16 +98,3 @@ jobs:
           flyctl status --config packages/api/fly.toml || true
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-
-      - name: Health
-        # The deploy is not done when flyctl returns — it is done when the
-        # machine answers. Fly's own health check gates the rollout, but this
-        # proves it from outside, which is what a merchant experiences.
-        run: |
-          for i in $(seq 1 12); do
-            if curl -fsS https://allin-configurator-api.fly.dev/health; then
-              echo; echo "healthy"; exit 0
-            fi
-            echo "not ready yet ($i/12)"; sleep 10
-          done
-          echo "never became healthy — check: flyctl logs"; exit 1
