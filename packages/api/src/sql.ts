@@ -23,6 +23,25 @@ export interface Sql {
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**
+ * Recover the connection string from whatever was actually pasted.
+ *
+ * The real first deploy failed three times on this secret: once with stray
+ * label text, then with an `.env`-style `DATABASE_URL=` prefix, each time
+ * surfacing as pg's baffling `getaddrinfo ENOTFOUND base` (its URL parser
+ * falls back to a placeholder host literally named "base"). A postgres URL
+ * cannot contain whitespace or quotes, so anything around it — a prefix,
+ * console label text, surrounding quotes, a trailing newline — is paste
+ * debris, and finding the URL inside the noise is unambiguous. The caller
+ * logs when cleaning changed anything: a mangled secret should be fixed,
+ * not merely survived.
+ */
+export function cleanConnectionString(raw: string): { url: string; cleaned: boolean } {
+  const match = raw.match(/postgres(?:ql)?:\/\/[^\s'"]+/);
+  const url = match ? match[0] : raw.trim();
+  return { url, cleaned: url !== raw };
+}
+
+/**
  * Split a SQL file into statements.
  *
  * Not a plain `split(';')`: the schema is heavily commented and a prose

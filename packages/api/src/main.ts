@@ -6,7 +6,7 @@
 import { createServer } from 'node:http';
 import pg from 'pg';
 import { createApp, type Config } from './app.ts';
-import { migrate, type Sql } from './sql.ts';
+import { migrate, cleanConnectionString, type Sql } from './sql.ts';
 import { systemClock } from './ids.ts';
 import { consoleMailer, resendMailer } from './mail.ts';
 import { fsStore, s3Store, type ObjectStore } from './storage.ts';
@@ -34,7 +34,13 @@ const config: Config = {
   revisionsKept: Number(env('REVISIONS_KEPT', '50')),
 };
 
-const databaseUrl = env('DATABASE_URL');
+// A pasted secret often arrives wearing its `.env` prefix, its console
+// label, or the quotes from a psql snippet — see cleanConnectionString.
+const { url: databaseUrl, cleaned } = cleanConnectionString(env('DATABASE_URL'));
+if (cleaned) {
+  console.warn('[api] DATABASE_URL had extra text around the connection string — '
+    + 'using the URL found inside it; tidy the secret when convenient');
+}
 const pool = new pg.Pool({
   connectionString: databaseUrl,
   // Managed Postgres (Neon, Supabase, RDS) is reached across the internet,

@@ -4,6 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { cleanConnectionString } from '../src/sql.ts';
 import { harness } from './harness.ts';
 import { newToken, hashToken } from '../src/ids.ts';
 import { ApiError } from '../src/errors.ts';
@@ -28,6 +29,29 @@ async function merchant(h: Awaited<ReturnType<typeof harness>>, email = 'ada@exa
   await addMember(h.sql, org.id, user.id, 'owner', now);
   return { user, org };
 }
+
+test('the connection string is recovered from whatever was pasted', () => {
+  const URL_ = 'postgresql://user:pw@ep-x-pooler.ap-southeast-1.aws.neon.tech/db?sslmode=require';
+  // A clean paste passes through untouched and unflagged.
+  assert.deepEqual(cleanConnectionString(URL_), { url: URL_, cleaned: false });
+  // The three paste accidents a real deploy actually hit: an .env-style
+  // prefix, a psql snippet's quotes, and console label text with a newline.
+  for (const mangled of [
+    `DATABASE_URL=${URL_}`,
+    `'${URL_}'`,
+    `"${URL_}"\n`,
+    `Database\n${URL_}`,
+    `psql '${URL_}'`,
+    `  ${URL_}  `,
+  ]) {
+    assert.deepEqual(cleanConnectionString(mangled), { url: URL_, cleaned: true }, JSON.stringify(mangled));
+  }
+  // The short scheme spelling is a URL too.
+  assert.equal(cleanConnectionString('postgres://u:p@h.example.com/db').cleaned, false);
+  // No URL inside at all: hand back the trimmed text so the boot diagnostics
+  // can name what they actually got.
+  assert.deepEqual(cleanConnectionString('  base  '), { url: 'base', cleaned: true });
+});
 
 test('an email is one account however it is typed', async () => {
   const h = await harness();
