@@ -34,9 +34,26 @@ function cleanOrigin(value: unknown): string {
 
 export function studioRoutes(deps: Deps): Route[] {
   const { sql, clock, config } = deps;
-  // Magic links are the one unauthenticated write, so they are the one thing
+  // Sign-in endpoints are unauthenticated writes, so they are the things
   // worth limiting by address before anything else.
   const loginLimit = rateLimiter(10, 15 * 60_000);
+  // …and, for the link-sender, by TARGET INBOX as well. The per-IP limit
+  // means nothing to a botnet, and the harm of the flood lands on the person
+  // whose address was typed — five an hour is plenty for a human retrying a
+  // typo and useless for making someone's phone buzz all afternoon.
+  const emailLimit = rateLimiter(5, 60 * 60_000);
+
+  /** Issue a session and set its cookie — the tail of every sign-in path. */
+  async function establishSession(ctx: Ctx, userId: string): Promise<void> {
+    const token = newToken();
+    await createSession(sql, userId, token, clock.now(), config.sessionTtlMs);
+    addHeaders(ctx, {
+      'set-cookie': cookieHeader(SESSION_COOKIE, token, {
+        secure: config.cookieSecure, sameSite: config.cookieSameSite,
+        maxAgeSeconds: Math.floor(config.sessionTtlMs / 1000),
+      }),
+    });
+  }
 
   /** The project, plus the caller's role in it — or a 404 that reveals
    * nothing about whether the id exists. */
@@ -65,13 +82,37 @@ export function studioRoutes(deps: Deps): Route[] {
   return [
     // ── signing in ────────────────────────────────────────────────────────
     {
+      /** Which sign-in extras this deployment has switched on. Public: both
+       * values end up in the page anyway, and the Studio uses this to decide
+       * what to render — so turning a feature on is a Fly secret, never a
+       * rebuild. */
+      method: 'GET',
+      pattern: '/v1/auth/config',
+      handler: async () => ({
+        googleClientId: config.googleClientId ?? null,
+        turnstileSiteKey: config.turnstileSiteKey ?? null,
+      }),
+    },
+    {
       method: 'POST',
       pattern: '/v1/auth/request',
       async handler(ctx) {
-        if (!loginLimit(clientIp(ctx.req, config.trustProxy), clock.now().getTime())) throw tooMany();
-        const body = await readJson<{ email?: string }>(ctx.req, 4096);
+        const ip = clientIp(ctx.req, config.trustProxy);
+        if (!loginLimit(ip, clock.now().getTime())) throw tooMany();
+        const body = await readJson<{ email?: string; turnstile?: string }>(ctx.req, 8192);
         const email = normaliseEmail(body.email ?? '');
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw badRequest('a valid email is required');
+        if (!emailLimit(email, clock.now().getTime())) throw tooMany();
+
+        // The human check, when this deployment has one. It guards the ONE
+        // thing a bot gets out of this endpoint — email sent to an address
+        // of its choosing, on our reputation and our quota.
+        if (deps.verifyTurnstile) {
+          const token = String(body.turnstile ?? '');
+          if (!token || !(await deps.verifyTurnstile(token, ip))) {
+            throw forbidden('the human check did not pass — reload the page and try again');
+          }
+        }
 
         const token = newToken();
         await createLoginToken(sql, email, token, clock.now(), config.loginTtlMs);
@@ -103,14 +144,42 @@ export function studioRoutes(deps: Deps): Route[] {
         }
         if (spent.invite) await addMember(sql, spent.invite.orgId, user.id, spent.invite.role, clock.now());
 
-        const token = newToken();
-        await createSession(sql, user.id, token, clock.now(), config.sessionTtlMs);
-        addHeaders(ctx, {
-          'set-cookie': cookieHeader(SESSION_COOKIE, token, {
-            secure: config.cookieSecure, sameSite: config.cookieSameSite,
-            maxAgeSeconds: Math.floor(config.sessionTtlMs / 1000),
-          }),
-        });
+        await establishSession(ctx, user.id);
+        return { user, ...(await me(user.id)) };
+      },
+    },
+    {
+      /**
+       * "Sign in with Google": the button's ID token in, a session out.
+       *
+       * The email inside a VERIFIED token is the same identity a magic link
+       * proves — Google checked the inbox so we don't have to — so it lands
+       * in the same account a link sign-in would, and a first-timer gets a
+       * workshop exactly as if they had clicked one. What it cannot do is
+       * accept an invitation: those ride the link itself, and still work
+       * later regardless of how the account signs in.
+       */
+      method: 'POST',
+      pattern: '/v1/auth/google',
+      async handler(ctx) {
+        if (!deps.verifyGoogleToken) throw notFound('Google sign-in is not enabled here');
+        if (!loginLimit(clientIp(ctx.req, config.trustProxy), clock.now().getTime())) throw tooMany();
+        const body = await readJson<{ credential?: string }>(ctx.req, 16 * 1024);
+        if (!body.credential) throw badRequest('credential required');
+
+        // One uniform refusal whichever check inside failed — the response
+        // must not teach a forger which part of their token was wrong.
+        const identity = await deps.verifyGoogleToken(body.credential);
+        if (!identity) throw badRequest('that Google sign-in could not be verified — please try again');
+
+        const email = normaliseEmail(identity.email);
+        let user = await findUserByEmail(sql, email);
+        if (!user) {
+          user = await createUser(sql, email, clock.now(), identity.name);
+          const workshop = await createOrg(sql, `${email.split('@')[0]}'s workshop`, clock.now());
+          await addMember(sql, workshop.id, user.id, 'owner', clock.now());
+        }
+        await establishSession(ctx, user.id);
         return { user, ...(await me(user.id)) };
       },
     },

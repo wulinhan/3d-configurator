@@ -41,6 +41,13 @@ export interface Config {
    * see clientIp for why this is not the default. */
   trustProxy: boolean;
   revisionsKept: number;
+  /** Set → the Studio shows a "Sign in with Google" button. Public by
+   * nature (it ends up in the page), which is why it lives in config while
+   * the verification lives in Deps. */
+  googleClientId?: string;
+  /** Set → the sign-in form carries a Turnstile human check. The paired
+   * SECRET never appears here — it is inside Deps.verifyTurnstile. */
+  turnstileSiteKey?: string;
 }
 
 export const SESSION_COOKIE = 'cfg_session';
@@ -52,6 +59,11 @@ export interface Deps {
   mail: Mailer;
   config: Config;
   log?: (message: string, err?: unknown) => void;
+  /** Absent → Google sign-in is off. Injected so the tests can hand in a
+   * fake instead of Google. */
+  verifyGoogleToken?: (credential: string) => Promise<{ email: string; name?: string } | null>;
+  /** Absent → no human check on the sign-in form. Same injection reasoning. */
+  verifyTurnstile?: (token: string, ip?: string) => Promise<boolean>;
 }
 
 export interface Session { user: User }

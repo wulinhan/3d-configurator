@@ -182,6 +182,54 @@ spam-flagged campaign cannot drag order and sign-in mail down with it.
 Without `RESEND_API_KEY` at all, links print to `flyctl logs` — usable for
 your own first sign-in, not for anyone else.
 
+## 4b. Google sign-in and the bot check — both optional
+
+Each is one dashboard errand and one or two Fly secrets. The Studio
+discovers them from the service at runtime, so there is **no rebuild and no
+Vercel change** — set the secrets, restart the app, and the sign-in page
+grows the button and the check by itself.
+
+**Google sign-in.**
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → create (or
+   pick) a project → **APIs & Services → OAuth consent screen**: External,
+   app name "Allin Studio", your support email. No extra scopes, no
+   verification review — email and name on sign-in is the non-sensitive
+   tier.
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID**
+   → type **Web application**. Under **Authorized JavaScript origins** add
+   `https://studio.allin-studio.com` (and `http://localhost:5173` if you
+   develop locally). Leave the redirect URIs EMPTY — the button flow never
+   redirects.
+3. Copy the client ID (it ends `.apps.googleusercontent.com`) → Fly secret
+   `GOOGLE_CLIENT_ID`. The same screen shows a client secret; this flow
+   never uses it — the service verifies Google's signed token against
+   Google's published keys instead, so there is no second secret to hold.
+
+Someone who signs in with Google lands in the same account their email
+would: the verified address is the identity, however it was proven. The one
+thing Google sign-in cannot do is accept an invitation — invitations ride
+the emailed link, and still work regardless of how the invitee signs in
+afterwards.
+
+**Cloudflare Turnstile** — the CAPTCHA-that-isn't: free, no puzzle for most
+humans, and you already have the account from R2.
+
+1. [dash.cloudflare.com](https://dash.cloudflare.com) → **Turnstile** →
+   **Add site** → hostname `studio.allin-studio.com`, widget mode
+   **Managed** (it only challenges when something looks off; most people
+   just see a tick).
+2. Copy both keys → Fly secrets `TURNSTILE_SITE_KEY` **and**
+   `TURNSTILE_SECRET`. They only work as a pair, and the service refuses to
+   boot with one and not the other — a half-configured check would break
+   sign-in quietly.
+
+What this protects: the send-me-a-link endpoint, because the one thing a
+bot gets out of this service is email sent to an address of its choosing,
+on your Resend quota (100/day free) and your domain's reputation.
+Independently of Turnstile, links are also capped at 5/hour per ADDRESS, so
+a botnet cannot flood one victim's inbox even from a thousand IPs.
+
 ## 5. The Studio
 
 A static build. The service's URL is compiled in:

@@ -115,8 +115,22 @@ export const api = {
     }
   },
 
-  requestLink: (email: string) => request<void>('/v1/auth/request', { method: 'POST', ...json({ email }) }),
+  /** Which sign-in extras this deployment has switched on. Both values are
+   * public keys that end up in the page anyway; failure means "neither",
+   * so an old service without the route degrades to plain magic links. */
+  authConfig: async (): Promise<{ googleClientId: string | null; turnstileSiteKey: string | null }> => {
+    try {
+      return await request('/v1/auth/config');
+    } catch {
+      return { googleClientId: null, turnstileSiteKey: null };
+    }
+  },
+
+  requestLink: (email: string, turnstile?: string) =>
+    request<void>('/v1/auth/request', { method: 'POST', ...json({ email, ...(turnstile ? { turnstile } : {}) }) }),
   consumeLink: (token: string) => request<Me>('/v1/auth/consume', { method: 'POST', ...json({ token }) }),
+  googleSignIn: (credential: string) =>
+    request<Me>('/v1/auth/google', { method: 'POST', ...json({ credential }) }),
   signOut: () => request<void>('/v1/auth/logout', { method: 'POST' }),
 
   listProjects: (orgId: string) =>

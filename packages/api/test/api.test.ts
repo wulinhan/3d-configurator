@@ -102,13 +102,14 @@ interface Rig extends Harness {
   stop(): Promise<void>;
 }
 
-async function rig(config: Partial<Config> = {}): Promise<Rig> {
+async function rig(config: Partial<Config> = {}, extra: Partial<Parameters<typeof createApp>[0]> = {}): Promise<Rig> {
   const h = await harness();
   const mail = consoleMailer(() => {});
   const app = createApp({
     sql: h.sql, store: h.store, clock: h.clock, mail,
     config: { ...CONFIG, ...config },
     log: () => {},
+    ...extra,
   });
   const server = createServer((req, res) => { void app.handle(req, res); });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -251,6 +252,93 @@ test('a cookie is not enough: writes must come from the Studio', async () => {
   assert.equal(forged.status, 403);
   // Reads are unaffected — there is nothing to forge.
   assert.equal((await client.fetch('/v1/me', { origin: 'https://evil.example' })).status, 200);
+  await r.stop();
+});
+
+test('Google sign-in lands in the same account a magic link would', async () => {
+  const r = await rig({ googleClientId: 'cid.apps.googleusercontent.com' }, {
+    // The fake stands where Google's signature check stands; everything the
+    // route does around it is real.
+    verifyGoogleToken: async (cred) =>
+      cred === 'tok-ada' ? { email: 'Ada@Example.com', name: 'Ada' } : null,
+  });
+  const google = (client: ReturnType<Rig['client']>, credential: string) =>
+    client.fetch('/v1/auth/google', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ credential }),
+    });
+
+  // The Studio discovers the button exists from config, not from a build.
+  const cfg = await r.client().json<{ googleClientId: string | null }>('/v1/auth/config');
+  assert.equal(cfg.googleClientId, 'cid.apps.googleusercontent.com');
+
+  // A token the verifier rejects gets one uniform refusal.
+  assert.equal((await google(r.client(), 'forged')).status, 400);
+
+  // A verified token signs in: account, workshop, working session cookie.
+  const ada = r.client();
+  const signedUp = await google(ada, 'tok-ada');
+  assert.equal(signedUp.status, 200);
+  const body = await signedUp.json() as { user: { email: string }; orgs: Array<{ role: string }> };
+  assert.equal(body.user.email, 'ada@example.com', 'normalised like every other email');
+  assert.equal(body.orgs[0].role, 'owner');
+  assert.equal((await ada.fetch('/v1/me')).status, 200);
+
+  // Signing in again — or having first signed up by LINK — is the same
+  // account: the verified email IS the identity, however it was proven.
+  const again = r.client();
+  await google(again, 'tok-ada');
+  const one = await orgOf(ada);
+  const two = await orgOf(again);
+  assert.equal(one.id, two.id, 'one person, one workshop, not one per method');
+  await r.stop();
+});
+
+test('without configuration, Google sign-in is a closed door', async () => {
+  const r = await rig();
+  const cfg = await r.client().json<{ googleClientId: string | null; turnstileSiteKey: string | null }>('/v1/auth/config');
+  assert.equal(cfg.googleClientId, null);
+  assert.equal(cfg.turnstileSiteKey, null);
+  assert.equal((await r.client().fetch('/v1/auth/google', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ credential: 'anything' }),
+  })).status, 404);
+  await r.stop();
+});
+
+test('the human check gates the link-sender when configured', async () => {
+  const r = await rig({ turnstileSiteKey: 'site-key' }, {
+    verifyTurnstile: async (token) => token === 'passed-the-check',
+  });
+  const ask = (payload: Record<string, string>) => r.client().fetch('/v1/auth/request', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  // No token, or a bad one → refused, and no email leaves.
+  assert.equal((await ask({ email: 'ada@example.com' })).status, 403);
+  assert.equal((await ask({ email: 'ada@example.com', turnstile: 'made-up' })).status, 403);
+  assert.equal(r.mail.sent.length, 0);
+
+  const ok = await ask({ email: 'ada@example.com', turnstile: 'passed-the-check' });
+  assert.equal(ok.status, 204);
+  assert.equal(r.mail.sent.length, 1);
+  await r.stop();
+});
+
+test('one inbox cannot be flooded, whatever the check says', async () => {
+  const r = await rig();
+  const ask = (email: string) => r.client().fetch('/v1/auth/request', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  // Five links an hour per ADDRESS — plenty for a human retrying a typo,
+  // useless for making a victim's phone buzz all afternoon. Another address
+  // is unaffected, so the cap reveals nothing across inboxes.
+  for (let i = 0; i < 5; i++) assert.equal((await ask('victim@example.com')).status, 204);
+  assert.equal((await ask('victim@example.com')).status, 429);
+  assert.equal((await ask('someone-else@example.com')).status, 204);
+  assert.equal(r.mail.sent.filter((m) => m.to === 'victim@example.com').length, 5);
   await r.stop();
 });
 

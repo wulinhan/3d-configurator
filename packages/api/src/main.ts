@@ -11,6 +11,8 @@ import { systemClock } from './ids.ts';
 import { consoleMailer, resendMailer } from './mail.ts';
 import { fsStore, s3Store, type ObjectStore } from './storage.ts';
 import { pruneExpiredSessions, pruneUnclaimedUploads } from './store.ts';
+import { googleVerifier } from './google.ts';
+import { turnstileVerifier } from './turnstile.ts';
 
 const env = (key: string, fallback?: string): string => {
   const value = process.env[key] ?? fallback;
@@ -32,7 +34,17 @@ const config: Config = {
   cookieSameSite: env('COOKIE_SAMESITE', 'lax') === 'none' ? 'none' : 'lax',
   trustProxy: env('TRUST_PROXY', 'false') === 'true',
   revisionsKept: Number(env('REVISIONS_KEPT', '50')),
+  googleClientId: process.env.GOOGLE_CLIENT_ID,
+  turnstileSiteKey: process.env.TURNSTILE_SITE_KEY,
 };
+
+// Turnstile is a PAIR: the site key renders the widget, the secret verifies
+// its tokens. One without the other would either show a widget nothing
+// checks, or demand a token nothing can produce — refuse to half-start
+// rather than let sign-in break quietly.
+if (!!process.env.TURNSTILE_SITE_KEY !== !!process.env.TURNSTILE_SECRET) {
+  throw new Error('TURNSTILE_SITE_KEY and TURNSTILE_SECRET must be set together (or neither)');
+}
 
 // A pasted secret often arrives wearing its `.env` prefix, its console
 // label, or the quotes from a psql snippet — see cleanConnectionString.
@@ -125,7 +137,11 @@ try {
 await migrate(sql);
 console.log('[api] schema applied');
 
-const app = createApp({ sql, store, clock: systemClock, mail, config });
+const app = createApp({
+  sql, store, clock: systemClock, mail, config,
+  verifyGoogleToken: process.env.GOOGLE_CLIENT_ID ? googleVerifier(env('GOOGLE_CLIENT_ID')) : undefined,
+  verifyTurnstile: process.env.TURNSTILE_SECRET ? turnstileVerifier(env('TURNSTILE_SECRET')) : undefined,
+});
 
 // Housekeeping, in-process. Sessions that have expired and artwork nobody
 // ordered — an abandoned basket must not become storage the merchant pays
@@ -149,6 +165,8 @@ server.listen(port, () => {
   console.log(`[api] listening on ${port}; public base ${config.publicBase}`);
   if (!process.env.RESEND_API_KEY) console.log('[api] no mail provider — sign-in links print here');
   if (!process.env.S3_BUCKET) console.log('[api] no object store — bytes go to local disk');
+  console.log(`[api] Google sign-in ${config.googleClientId ? 'on' : 'off'}; `
+    + `Turnstile ${config.turnstileSiteKey ? 'on' : 'off'}`);
 });
 
 // A deploy replaces machines, and a merchant mid-publish is streaming a
