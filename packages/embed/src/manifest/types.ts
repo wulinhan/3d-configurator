@@ -469,6 +469,17 @@ export interface SelectionPayload {
   type: 'configurator:change';
   productId: string;
   manifestVersion?: string;
+  /**
+   * Which FROZEN version the customer is looking at — present whenever the
+   * manifest came from the service.
+   *
+   * An order must pin this rather than the project: the storefront fetches
+   * the live URL, so a republish five minutes later would otherwise re-price
+   * and re-render an order that was placed against the old product. It is
+   * also what a merchant's backend posts to `/p/<id>/price` to have the
+   * total checked by the same code that computed it.
+   */
+  publicationId?: string;
   /** optionId → chosen value (swatch id, choice id, hex, or free text). */
   selections: Record<string, string>;
   /** Human-readable colour per option, for order notes and pick lists. */

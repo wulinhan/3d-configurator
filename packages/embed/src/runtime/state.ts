@@ -427,6 +427,7 @@ export function buildPayload(manifest: Manifest, selections: Selections): Select
     type: 'configurator:change',
     productId: manifest.id,
     manifestVersion: manifest.version,
+    ...(manifest.uploads?.publication ? { publicationId: manifest.uploads.publication } : {}),
     selections: resolved,
     colourNames,
     priceDeltas: deltas,

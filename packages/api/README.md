@@ -112,7 +112,7 @@ npm run test:unit -w @allin/api
 
 See `DEPLOY.md` at the repository root for Neon + Fly + R2.
 
-31 tests, against **real Postgres** — PGlite is Postgres compiled to WASM, so
+33 tests, against **real Postgres** — PGlite is Postgres compiled to WASM, so
 the cascades, unique indexes, `returning` and transactions under test are the
 ones that ship. A hand-written fake store would have passed every one of them
 while proving nothing about `001_init.sql`, which is where the guarantees
@@ -135,7 +135,7 @@ test/store.test.ts  14 — the data layer: an email is one account however it
                     artwork is kept, deleting an org really deletes
                     everything it owns, and a pasted DATABASE_URL is
                     recovered from its label, quotes and line breaks
-test/api.test.ts    17 — the service through its own front door, on a real
+test/api.test.ts    19 — the service through its own front door, on a real
                     socket with fetch: a magic link signs you in once and
                     gives you a workshop, an unknown address is answered
                     exactly like a known one, a cookie is not enough for a
@@ -148,9 +148,11 @@ test/api.test.ts    17 — the service through its own front door, on a real
                     decides which storefronts may embed, artwork comes back
                     as an id short enough for a cart, an upload is checked
                     against the very product it claims to belong to, a
-                    zone that allows 400 kB does not allow a megabyte, and
-                    the dashboard thumbnail round-trips under the same
-                    permissions as everything else
+                    zone that allows 400 kB does not allow a megabyte, the
+                    dashboard thumbnail round-trips under the same
+                    permissions as everything else, and a cart's total is
+                    re-derived from the frozen manifest rather than read
+                    out of the request
 ```
 
 ## Deploying it next to the Studio

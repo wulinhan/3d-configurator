@@ -51,6 +51,43 @@ const MANIFEST = {
   pricing: { currency: 'SGD' },
 };
 
+/** A product with money on it, for the price endpoint: a palette whose
+ * bronze swatch costs 4, a custom-colour rule at 35, a priced add-on, and
+ * per-character engraving. */
+const PRICED = {
+  schema: 1, id: 'plate', name: 'Plate', units: 'mm',
+  models: [{ id: 'main', url: 'model.glb' }],
+  parts: [
+    { id: 'body', label: 'Body', mesh: 'main#body' },
+    { id: 'stand', label: 'Stand', mesh: 'main#stand', visibleWhen: { option: 'stand', equals: ['yes'] } },
+  ],
+  palettes: [{
+    id: 'std',
+    label: 'Standard',
+    swatches: [
+      { id: 'white', name: 'White', hex: '#FFFFFF' },
+      { id: 'bronze', name: 'Bronze', hex: '#8C6239', priceDelta: 4 },
+    ],
+  }],
+  options: [
+    {
+      id: 'body-colour', type: 'colour', label: 'Body', parts: ['body'],
+      palette: 'std', default: 'white', custom: { allowed: true, priceDelta: 35 },
+    },
+    {
+      id: 'stand', type: 'choice', label: 'Stand', role: 'addon',
+      choices: [{ id: 'no', label: 'None' }, { id: 'yes', label: 'Add stand', priceDelta: 24 }],
+      default: 'no',
+    },
+    {
+      id: 'body-text', type: 'text', label: 'Engraving', part: 'body',
+      origin: [0, 0, 5], normal: [0, 0, 1], font: 'sans-bold',
+      sizeMm: 8, depthMm: 2, maxLength: 20, pricePerChar: 2,
+    },
+  ],
+  pricing: { currency: 'SGD' },
+};
+
 interface Client {
   fetch(path: string, init?: RequestInit & { origin?: string | null }): Promise<Response>;
   json<T>(path: string, init?: RequestInit & { origin?: string | null }): Promise<T>;
@@ -385,6 +422,80 @@ test('publishing freezes the product; editing the draft afterwards does not reac
   const rolled = await (await r.client().fetch(
     `/e/${project.id}/manifest.json`, { origin: SHOP })).json() as { name: string };
   assert.equal(rolled.name, 'Plate');
+  await r.stop();
+});
+
+test('the cart can have its total checked against the frozen product', async () => {
+  const r = await rig();
+  const client = await signedIn(r);
+  const project = await newProject(client, (await orgOf(client)).id, PRICED);
+  const { publication } = await client.json<{ publication: { id: string } }>(
+    `/v1/projects/${project.id}/publications`, { method: 'POST', body: GLB });
+
+  // A merchant's SERVER calls this: no cookie, no Origin header at all.
+  const price = async (selections: Record<string, string>, origin: string | null = null) =>
+    r.client().fetch(`/p/${publication.id}/price`, {
+      method: 'POST', origin, headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ selections }),
+    });
+
+  const empty = await (await price({})).json() as { deltaTotal: number; currency: string };
+  assert.equal(empty.deltaTotal, 0, 'the default configuration is the base price');
+  assert.equal(empty.currency, 'SGD');
+
+  const full = await (await price({
+    'body-colour': '#FF5733', stand: 'yes', 'body-text': 'MIA',
+  })).json() as { deltaTotal: number; priceDeltas: Array<{ optionId: string; amount: number }>; version: number };
+  assert.equal(full.deltaTotal, 35 + 24 + 3 * 2, 'custom colour + stand + three characters');
+  assert.equal(full.version, 1);
+
+  // The whole point: a shopper who edits the numbers on the way to the cart
+  // gets the service's arithmetic, not their own. Prices are never READ from
+  // the request — only option ids and values are.
+  const forged = await (await price({ stand: 'yes', priceDeltas: '0', deltaTotal: '0' } as never))
+    .json() as { deltaTotal: number };
+  assert.equal(forged.deltaTotal, 24);
+
+  // A swatch the palette does not offer resolves to no colour, so it charges
+  // nothing and — the point — cannot stand in for one that does cost money.
+  const bronze = await (await price({ 'body-colour': 'bronze' })).json() as
+    { deltaTotal: number; priceDeltas: unknown[] };
+  assert.equal(bronze.deltaTotal, 4);
+  const invented = await (await price({ 'body-colour': 'free-gold' })).json() as
+    { deltaTotal: number; priceDeltas: unknown[]; selections: Record<string, string> };
+  assert.equal(invented.deltaTotal, 0);
+  assert.deepEqual(invented.priceDeltas, [], 'an id nobody offers buys nothing');
+  // Echoed rather than silently swapped for a real swatch: the merchant sees
+  // what the service made of the submission and can spot the nonsense.
+  assert.equal(invented.selections['body-colour'], 'free-gold');
+
+  // Bad input is refused rather than priced as zero, and an unknown
+  // publication is a 404 like every other id.
+  assert.equal((await r.client().fetch(`/p/${publication.id}/price`, {
+    method: 'POST', origin: null, headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ selections: 'all of them' }),
+  })).status, 400);
+  assert.equal((await price({}, SHOP)).status, 200, 'a browser may ask too — nothing here is secret');
+  assert.equal((await r.client().fetch('/p/pub_nope/price', {
+    method: 'POST', origin: null, headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ selections: {} }),
+  })).status, 404);
+  await r.stop();
+});
+
+test('a published manifest names its own frozen version, so an order can pin it', async () => {
+  const r = await rig();
+  const client = await signedIn(r);
+  const project = await newProject(client, (await orgOf(client)).id, PRICED);
+  const { publication } = await client.json<{ publication: { id: string } }>(
+    `/v1/projects/${project.id}/publications`, { method: 'POST', body: GLB });
+
+  // The embed reads `uploads.publication` and puts it in every payload; it is
+  // what the merchant's backend posts to /price.
+  const served = await (await r.client().fetch(
+    `/e/${project.id}/manifest.json`, { origin: SHOP })).json() as
+    { uploads: { publication: string } };
+  assert.equal(served.uploads.publication, publication.id);
   await r.stop();
 });
 

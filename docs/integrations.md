@@ -5,6 +5,18 @@ server, so it drops into anything that lets you add HTML. What varies per
 platform is only **how the customer's configuration and its surcharges reach
 the order**. This document covers both halves.
 
+**If you are wiring up an actual store, start with its own guide** — each is
+a copy-paste walkthrough written for the merchant rather than for a
+developer:
+
+| | Guide | Effort | Pricing |
+| --- | --- | --- | --- |
+| WooCommerce | [`woocommerce.md`](./woocommerce.md) | one PHP file | the real line price |
+| Shopify | [`shopify.md`](./shopify.md) | three pasted things | $1 fee product |
+| Wix | [`wix.md`](./wix.md) | Dev Mode + page code | $1 fee product |
+
+This page is the reference behind all three.
+
 ## 1. Embedding
 
 Host the two published files (`manifest.json`, `model.glb`) anywhere — your
@@ -80,12 +92,19 @@ the MIME/type sniff, re-clamp `u`/`v`/`s` against the zone.
 
 ## 3. Getting it onto the order, per platform
 
-**WooCommerce (cleanest fit).** Listen for the event, write the payload into
-a hidden field inside the add-to-cart form, then on the server read it in
-`woocommerce_add_cart_item_data` and add the surcharge with
-`WC()->cart->add_fee()` (or per-item price adjustment) in
-`woocommerce_before_calculate_totals`. The selections become order item meta
-your production team sees on every order.
+**WooCommerce (cleanest fit).** A complete drop-in plugin file lives in
+[`docs/woocommerce.md`](./woocommerce.md). The mechanics: write the payload
+into a hidden field inside the add-to-cart form, read it in
+`woocommerce_add_cart_item_data`, verify the total against the endpoint
+above, `set_price()` in `woocommerce_before_calculate_totals`, and persist
+the choices in `woocommerce_checkout_create_order_line_item`. It is the only
+one of the three where the configured product costs what it costs, on one
+line, with no fee-product trick.
+
+**Wix.** [`docs/wix.md`](./wix.md). Needs a Premium plan, Wix Stores and Dev
+Mode; the embed is a sandboxed iframe that `postMessage`s up to Velo page
+code, choices land in a pre-defined product text field, and surcharges use
+the same $1 fee-product trick as Shopify.
 
 **Shopify.** A complete copy-paste walkthrough lives in
 [`docs/shopify.md`](./shopify.md) — start there. The mechanics, for
@@ -110,12 +129,42 @@ endpoint together with the cart line. It is deliberately plain JSON.
 ## 4. Trust: never bill the client's numbers
 
 The payload's `deltaTotal` is computed in the customer's browser, so treat it
-as a *quote*, not an invoice. The pricing logic (`priceDeltas` in
-`runtime/state.ts`) is pure and dependency-free — run the same function
-server-side (Node) against the same published manifest and the submitted
-`selections`, and charge THAT result. If the recomputed total disagrees with
-the submitted one, someone edited the request. One manifest, one pricing
-function, verified twice.
+as a *quote*, not an invoice. Post the **selections** — never the prices — to
+the service and charge what it returns:
+
+```
+POST https://api.your-studio.com/p/<publicationId>/price
+Content-Type: application/json
+
+{ "selections": { "body-colour": "#FF5733", "stand": "yes", "body-text": "MIA" } }
+```
+
+```json
+{
+  "publicationId": "pub_…", "version": 4, "currency": "SGD",
+  "priceDeltas": [ { "optionId": "stand", "label": "Desk stand: Oak stand", "amount": 24 } ],
+  "deltaTotal": 59,
+  "selections": { "body-colour": "#FF5733", "stand": "yes", "body-text": "MIA" }
+}
+```
+
+`publicationId` comes with every payload the embed emits, so you are always
+pricing the exact frozen version the customer saw — not whatever is live by
+the time the order lands.
+
+This runs the same `priceDeltas` from `runtime/state.ts` that drew the
+numbers on screen, against the same frozen manifest, so there is one pricing
+function rather than a second implementation to drift. It needs no key: it
+is arithmetic over a manifest anyone can already fetch, and it is meant to be
+called from a merchant's server, which sends no Origin header. It ignores
+any prices in the request and re-derives them, so the worst a tampered
+request achieves is a different valid configuration at its correct price.
+The echoed `selections` are what the service actually used — compare them
+with what you sent if something looks odd.
+
+If your backend happens to be Node you can skip the call and import
+`priceDeltas` directly; everyone else (WooCommerce's PHP, a Velo backend)
+uses the endpoint.
 
 ## 5. Order of work when wiring a store
 

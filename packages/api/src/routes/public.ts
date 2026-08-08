@@ -7,7 +7,7 @@
 // merchant's origin allowlist decides who may read.
 
 import type { Route, Ctx } from '../http.ts';
-import { readBody, Raw, Redirect, allowedOrigin, rateLimiter, clientIp } from '../http.ts';
+import { readBody, readJson, Raw, Redirect, allowedOrigin, rateLimiter, clientIp } from '../http.ts';
 import { type Deps, addHeaders } from '../app.ts';
 import { ApiError, badRequest, notFound, forbidden, tooLarge, tooMany, unprocessable } from '../errors.ts';
 import { sha256 } from '../ids.ts';
@@ -17,6 +17,7 @@ import {
   originsForPublication, listOrigins,
 } from '../store.ts';
 import type { Manifest, UploadOption } from '../../../embed/src/manifest/types.ts';
+import { defaultSelections, applySelection, priceDeltas } from '../../../embed/src/runtime/state.ts';
 
 /** A year. Everything under /p/ is frozen, so the edge may keep it forever;
  * the live pointer gets a minute, because moving it is the point. */
@@ -72,6 +73,9 @@ export function publicRoutes(deps: Deps): Route[] {
   // Customers upload once or twice; a script uploading two hundred times is
   // not a customer.
   const uploadLimit = rateLimiter(30, 10 * 60_000);
+  // Pricing is called once per add-to-cart from a merchant's server, so the
+  // bucket is per-STORE rather than per-shopper and can be generous.
+  const priceLimit = rateLimiter(600, 60_000);
 
   /** Serve a frozen publication's two files, or the live pointer's. */
   async function serve(ctx: Ctx, publicationId: string, what: 'manifest' | 'model', cache: string) {
@@ -133,6 +137,60 @@ export function publicRoutes(deps: Deps): Route[] {
       method: 'GET',
       pattern: '/p/:pub/model.glb',
       handler: (ctx) => serve(ctx, ctx.params.pub, 'model', IMMUTABLE),
+    },
+
+    // ── what it actually costs ────────────────────────────────────────────
+    //
+    // The cart's answer to "never bill the client's numbers".
+    //
+    // `deltaTotal` in the payload is computed in the customer's browser, so
+    // it is a quote. This re-runs the SAME pricing function against the SAME
+    // frozen manifest, server-side, and the merchant's backend charges what
+    // comes back. One manifest, one pricing function, verified twice — which
+    // until now was only possible for backends that happened to be Node.
+    //
+    // Deliberately NOT origin-checked: the callers are merchants' servers —
+    // WooCommerce's PHP, a Velo backend function — which send no Origin at
+    // all, so the check would reject precisely the traffic this exists for.
+    // Nothing here is a secret either: every number is derived from a
+    // manifest anyone can already fetch. Rate-limited instead.
+    {
+      method: 'POST',
+      pattern: '/p/:pub/price',
+      async handler(ctx) {
+        if (!priceLimit(clientIp(ctx.req, config.trustProxy), clock.now().getTime())) throw tooMany();
+        const pub = await getPublication(sql, ctx.params.pub);
+        if (!pub) throw notFound('publication');
+
+        const body = await readJson<{ selections?: unknown }>(ctx.req, 64 * 1024);
+        const sent = body.selections;
+        if (!sent || typeof sent !== 'object' || Array.isArray(sent)) {
+          throw badRequest('selections must be an object of optionId → value');
+        }
+
+        // Start from the product's own defaults and apply what was sent
+        // through applySelection — the same funnel the browser uses. A value
+        // the manifest does not offer never lands, so a caller cannot invent
+        // a cheaper swatch by naming one that does not exist.
+        const manifest = pub.manifest as Manifest;
+        const selections = defaultSelections(manifest);
+        for (const [optionId, value] of Object.entries(sent as Record<string, unknown>)) {
+          if (typeof value !== 'string') continue;
+          applySelection(manifest, selections, optionId, value);
+        }
+        const deltas = priceDeltas(manifest, selections);
+        addHeaders(ctx, { 'cache-control': 'no-store' });
+        return {
+          publicationId: pub.id,
+          version: pub.version,
+          currency: manifest.pricing.currency,
+          priceDeltas: deltas,
+          deltaTotal: Math.round(deltas.reduce((sum, d) => sum + d.amount, 0) * 100) / 100,
+          // What the service made of the submission, so a mismatch with what
+          // the browser sent is visible rather than merely priced away.
+          selections,
+        };
+      },
     },
 
     // ── the live pointer: the URL a merchant pastes into their store ──────
