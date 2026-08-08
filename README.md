@@ -28,11 +28,12 @@ The configurator never states a price — the merchant's store stays the
 authority on money.
 
 Wiring it into a real store: [`docs/woocommerce.md`](docs/woocommerce.md),
-[`docs/shopify.md`](docs/shopify.md), [`docs/wix.md`](docs/wix.md) are
+[`docs/shopify.md`](docs/shopify.md) and [`docs/wix.md`](docs/wix.md) are
 copy-paste walkthroughs written for merchants;
-[`docs/integrations.md`](docs/integrations.md) is the reference behind them,
-including the `/p/<id>/price` endpoint a backend uses so it never bills the
-browser's arithmetic.
+[`docs/custom.md`](docs/custom.md) is the same job for a developer on a
+bespoke storefront. [`docs/integrations.md`](docs/integrations.md) is the
+reference behind them, including the `/p/<id>/price` endpoint a backend uses
+so it never bills the browser's arithmetic.
 
 The embed runs with or without the service. Host `manifest.json` and
 `model.glb` yourself and everything works with no server at all; put the

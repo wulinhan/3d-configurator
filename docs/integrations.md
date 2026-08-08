@@ -11,11 +11,13 @@ developer:
 
 | | Guide | Effort | Pricing |
 | --- | --- | --- | --- |
+| Custom site | [`custom.md`](./custom.md) | an afternoon, for a developer | the real line price |
 | WooCommerce | [`woocommerce.md`](./woocommerce.md) | one PHP file | the real line price |
 | Shopify | [`shopify.md`](./shopify.md) | three pasted things | $1 fee product |
 | Wix | [`wix.md`](./wix.md) | Dev Mode + page code | $1 fee product |
 
-This page is the reference behind all three.
+The first three are written for the merchant; `custom.md` is written for their
+developer. This page is the reference behind all four.
 
 ## 1. Embedding
 
@@ -123,8 +125,9 @@ reference:
      arbitrary deltas; a serverless endpoint receives the payload, re-prices
      it, and creates the checkout.
 
-**Anything else** (custom backend, headless): POST the payload to your order
-endpoint together with the cart line. It is deliberately plain JSON.
+**Anything else** (custom storefront, headless): [`docs/custom.md`](./custom.md)
+is the developer's version of this page — mounting, the payload, the order
+record, and the server-side re-price, with the framework and CSP caveats.
 
 ## 4. Trust: never bill the client's numbers
 

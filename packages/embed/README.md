@@ -195,3 +195,20 @@ every unit test:
 
 Both were only visible on screen, which is the argument for the browser test
 existing at all.
+
+`test:browser` also runs `test/custom-mount-check.mjs`, which drives the
+integration a bespoke storefront writes — the code printed in
+[`docs/custom.md`](../../docs/custom.md) — against a page carrying no
+`data-configurator` attribute: programmatic `mount()`, the handle it resolves
+with, the `configurator:change` listener, and `post()`. It pins the promises
+that document makes to somebody else's codebase, two especially:
+
+- **A payload is emitted on mount**, before any interaction. Without it every
+  integration silently loses the DEFAULT configuration — a customer who likes
+  the product as it opens and clicks straight through would produce an order
+  with no specification on it.
+- **The handle's `selections` is RAW; the payload's is RESOLVED.** They differ
+  for linked colours and customer-chosen text colours. The check asserts they
+  are not interchangeable, because a developer reading the handle would get
+  order records that are wrong only for the products whose options are linked
+  — the subtlest possible bug to find in production.
