@@ -14,9 +14,17 @@ on:
     branches: [main]
     # Only when something the image actually contains has changed. The
     # Studio and the demo app deploy elsewhere.
+    #
+    # The WHOLE of packages/embed/src, not just the manifest: the image now
+    # builds and serves the embed bundle, so every line of that runtime is
+    # part of it. This listed `manifest/**` alone when the bundle moved into
+    # the image — the very next commit fixed the pasted snippet by editing
+    # embed.ts, no deploy ran, and production kept serving a bundle built
+    # before the fix. Deploy triggers have to track what the image is made
+    # of, not what it used to be made of.
     paths:
       - 'packages/api/**'
-      - 'packages/embed/src/manifest/**'
+      - 'packages/embed/src/**'
       - 'package-lock.json'
       - '.github/workflows/deploy-api.yml'
 
