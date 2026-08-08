@@ -629,11 +629,47 @@ export async function mount(opts: MountOptions) {
   return { viewer, selections, manifest, post };
 }
 
-/** Auto-mount when the page carries `<div data-configurator="…manifest.json">`. */
+/** Auto-mount when the page carries `<div data-configurator="…manifest.json">`.
+ *
+ * Idempotent: the element is marked once claimed, so the self-invocation
+ * below and an explicit call from a host page cannot mount twice over each
+ * other. */
 export async function autoMount() {
   const host = document.querySelector<HTMLElement>('[data-configurator]');
-  if (!host) return;
+  if (!host || host.dataset.configuratorMounted) return;
+  host.dataset.configuratorMounted = '1';
   const url = host.dataset.configurator!;
-  const manifest: Manifest = await fetch(url).then((r) => r.json());
-  return mount({ root: host, manifest, baseUrl: new URL(url, location.href).href });
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`the product could not be loaded (${res.status})`);
+    const manifest: Manifest = await res.json();
+    return await mount({ root: host, manifest, baseUrl: new URL(url, location.href).href });
+  } catch (err) {
+    // A merchant's storefront must not be left with a silent empty box, and
+    // the person who can fix it is reading the console, not the page.
+    console.error('[configurator] could not start:', err);
+    host.append(el('div', 'cfg-error', 'This product could not be loaded.'));
+    host.dataset.configuratorMounted = '';
+    throw err;
+  }
+}
+
+/**
+ * Start on our own.
+ *
+ * The snippet a merchant pastes is a stylesheet, a `<div>` and this script
+ * — there is nobody to call `autoMount` for them. Exporting it and waiting
+ * to be invoked meant the pasted snippet loaded a module that defined
+ * everything and did nothing; the demo page happened to call it by hand, so
+ * every test passed while every real storefront showed an empty box.
+ *
+ * Module scripts are deferred, so the element normally exists by now; the
+ * readyState branch covers a page that injects the script some other way.
+ * Hosts that mount by hand are unaffected — the guard above makes whichever
+ * call arrives second a no-op.
+ */
+if (typeof document !== 'undefined') {
+  const start = () => { void autoMount().catch(() => { /* already reported */ }); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 }

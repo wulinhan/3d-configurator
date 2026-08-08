@@ -49,11 +49,29 @@ const PAGE = `<!doctype html><meta charset="utf-8">
   window.__ready = true;
 </script>`;
 
+// The merchant snippet, alone, exactly as the Studio prints it: a
+// stylesheet, a div and a module script. Nothing calls mount — the bundle
+// has to start itself, which is precisely what it failed to do in
+// production while every other test passed.
+const SNIPPET_PAGE = `<!doctype html><meta charset="utf-8">
+<link rel="stylesheet" href="/embed.css">
+<div data-configurator="${MANIFEST}" style="width:1100px;height:600px"></div>
+<script type="module" src="/embed.js"></script>
+<script>
+  window.__seen = [];
+  document.addEventListener('configurator:change', (e) => { window.__seen.push(e.detail); });
+</script>`;
+
 const server = createServer((req, res) => {
   const rel = decodeURIComponent(req.url.split('?')[0]);
   if (rel === '/' || rel === '/index.html') {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(PAGE);
+    return;
+  }
+  if (rel === '/snippet') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(SNIPPET_PAGE);
     return;
   }
   // The bare harness page has no icon; answer it so the strict console-error
@@ -143,6 +161,23 @@ try {
   const n = await page.evaluate(() => { const was = window.__seen.length; window.__cfg.post(); return was; });
   const after = await page.evaluate(() => window.__seen.length);
   check('post() re-emits the current state without a change', after === n + 1, `${n} → ${after}`);
+
+  // ── the pasted snippet, with nobody to call mount for it ──────────────────
+  await page.goto(`http://127.0.0.1:${PORT}/snippet`, { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => !document.querySelector('.cfg-loading'), { timeout: 30000 })
+    .catch(() => { /* asserted below */ });
+  const snippet = await page.evaluate(() => ({
+    stage: !!document.querySelector('.cfg-stage'),
+    canvas: !!document.querySelector('.cfg-stage canvas'),
+    tabs: document.querySelectorAll('.cfg-tab').length,
+    payloads: (window.__seen ?? []).length,
+    claimed: document.querySelector('[data-configurator]')?.dataset.configuratorMounted ?? '',
+  }));
+  check('the pasted snippet mounts with no code of its own', snippet.stage, snippet);
+  check('…and renders into a canvas', snippet.canvas, snippet.canvas);
+  check('…with the customiser panel built', snippet.tabs > 0, snippet.tabs);
+  check('…and reports a payload the host page can read', snippet.payloads > 0, snippet.payloads);
+  check('…marking its host so a second mount cannot stack on it', snippet.claimed === '1', snippet.claimed);
 
   check('no console errors across the whole session', errors.length === 0, errors.join(' | '));
 } catch (err) {
