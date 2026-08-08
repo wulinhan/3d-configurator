@@ -604,14 +604,22 @@ input, select { font: inherit; }
   color: var(--ink2); font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em;
 }
 .auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
-.auth-turnstile { display: flex; justify-content: center; margin-top: 10px; min-height: 65px; }
-.auth-error { text-align: left; margin: 2px 0 0; }
-.auth-escape {
-  background: none; border: none; font-size: 12.5px; color: var(--ink2);
-  text-decoration: underline; text-underline-offset: 3px;
+/* The Turnstile widget draws a sharp-cornered rectangle we cannot restyle
+ * from inside its iframe. The shell CLIPS it to the buttons' radius and
+ * repaints the rounded border the clipping cuts away, in the widget's own
+ * light-theme colours — so the rounding reads as the widget's, not as a
+ * frame around it. Rendered `flexible`, it fills the form's width like the
+ * button below it; 65px is Turnstile's fixed widget height. */
+.auth-turnstile {
+  position: relative; margin-top: 10px; height: 65px;
+  border-radius: 8px; overflow: hidden; background: #fafafa;
 }
-.auth-escape:hover { color: var(--ink); }
-
+.auth-turnstile iframe { display: block; }
+.auth-turnstile::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  border: 1px solid #e0e0e0; border-radius: 8px;
+}
+.auth-error { text-align: left; margin: 2px 0 0; }
 /* ── dashboard ── */
 .dash { min-height: 100vh; display: flex; flex-direction: column; background: #fff; }
 .dash-top {

@@ -14,7 +14,7 @@
 // working, links-only, against a service that has neither.
 
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, go, type Me } from '../lib/api.ts';
+import { api, ApiError, type Me } from '../lib/api.ts';
 
 const MARK = (
   <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -56,6 +56,8 @@ interface VendorWindow {
   turnstile?: {
     render(el: HTMLElement, cfg: {
       sitekey: string;
+      theme?: 'light' | 'dark' | 'auto';
+      size?: 'normal' | 'flexible' | 'compact';
       callback: (token: string) => void;
       'expired-callback'?: () => void;
       'error-callback'?: () => void;
@@ -149,6 +151,11 @@ export function SignIn(props: { token: string | null; onSignedIn: (me: Me) => vo
       if (!live || !turnstileRef.current || !vendor.turnstile || turnstileRef.current.childElementCount) return;
       turnstileId.current = vendor.turnstile.render(turnstileRef.current, {
         sitekey: siteKey,
+        // Pinned light, not auto: the card is light whatever the OS thinks,
+        // and a dark widget inside it reads as a hole. Flexible width makes
+        // the widget fill the form like the buttons do.
+        theme: 'light',
+        size: 'flexible',
         callback: (t) => { turnstileToken.current = t; },
         'expired-callback': () => { turnstileToken.current = null; },
         'error-callback': () => { turnstileToken.current = null; },
@@ -239,10 +246,6 @@ export function SignIn(props: { token: string | null; onSignedIn: (me: Me) => vo
 
         {error && <p className="error auth-error" role="alert" data-testid="signin-error">{error}</p>}
       </div>
-
-      <button className="auth-escape" onClick={() => go('/')}>
-        Or keep working without an account
-      </button>
     </div>
   );
 }
