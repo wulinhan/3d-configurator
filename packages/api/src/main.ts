@@ -80,6 +80,33 @@ const sql: Sql = {
   },
 };
 
+/**
+ * A CDN base the BROWSER can actually read from.
+ *
+ * R2's `pub-….r2.dev` address is Cloudflare's "public development URL", and
+ * it answers with no CORS headers whatever the bucket's CORS policy says —
+ * that policy only applies to a custom domain and the S3 API. A model
+ * served from there downloads fine and is then unreadable to the page that
+ * asked for it, so the configurator renders an empty viewport on every
+ * storefront while every URL in the chain returns 200.
+ *
+ * Ignoring it is better than honouring it: the service streams the model
+ * itself, which costs Fly egress but WORKS. Silently, though, would be its
+ * own trap — hence the noise.
+ */
+const cdnBase = (() => {
+  const base = process.env.CDN_BASE;
+  if (!base) return undefined;
+  if (/(^|\/\/)[^/]*\.r2\.dev(\/|$)/.test(base)) {
+    console.warn('[api] IGNORING CDN_BASE — an r2.dev address serves no CORS headers, so the'
+      + ' browser cannot read the model and every configurator would render empty.'
+      + ' Serving models through the service instead. To use the CDN, attach an R2 CUSTOM'
+      + ' DOMAIN (models.your-domain.com) and set CDN_BASE to that.');
+    return undefined;
+  }
+  return base;
+})();
+
 const store: ObjectStore = process.env.S3_BUCKET
   ? await s3Store({
     bucket: env('S3_BUCKET'),
@@ -87,7 +114,7 @@ const store: ObjectStore = process.env.S3_BUCKET
     endpoint: process.env.S3_ENDPOINT,
     accessKeyId: env('S3_ACCESS_KEY_ID'),
     secretAccessKey: env('S3_SECRET_ACCESS_KEY'),
-    cdnBase: process.env.CDN_BASE,
+    cdnBase,
   })
   : fsStore(env('STORAGE_DIR', './.storage'));
 

@@ -38,9 +38,11 @@ changing the registrar's nameservers, which moves DNS for the live marketing
 site too. Cloudflare imports the existing records first and you check them
 before flipping, but it is still a change to something that is working.
 
-You do not have to decide now. Use the r2.dev URL, ship, and move the zone
-later if the rate limit ever matters: `CDN_BASE` is a Fly secret, not a
-stored value, so switching is one `flyctl secrets set` and a restart.
+You do not have to decide now: ship with `CDN_BASE` unset and the service
+serves models itself, correctly. Move the zone when egress starts to matter
+— `CDN_BASE` is a Fly secret, not a stored value, so switching is one
+`flyctl secrets set` and a restart. What you cannot do is substitute the
+r2.dev URL for a custom domain; it serves no CORS headers (§2).
 
 `api.` and `studio.` need no such thing — those are ordinary CNAMEs at
 whatever DNS provider you already use.
@@ -81,18 +83,23 @@ Then, in order:
    `packages/api/r2-cors.json`. Without this the embed cannot fetch
    `model.glb` from the CDN and every configurator on every storefront shows
    an empty viewport.
-3. **Public access**, one of two ways. `CDN_BASE` is read on every request
-   and never stored, so this one is genuinely reversible — start with
-   whichever is quicker:
-   - **r2.dev subdomain** (bucket → Settings → Public access → Allow):
-     zero setup, no DNS, rate-limited and not meant for production traffic.
-     Fine for the first weeks.
-   - **Custom domain** → `models.allin-studio.com`. Needs the DNS zone to be
-     on Cloudflare, which for `allin-studio.com` means moving nameservers —
-     see §0b.
+3. **Public access — and only one of the two ways works.**
 
-   Leave `CDN_BASE` unset entirely and the service streams models itself:
-   correct, just slower and billed for egress.
+   - **Custom domain** → `models.allin-studio.com`. The only option that can
+     serve a model to a browser. Needs the DNS zone on Cloudflare, which for
+     `allin-studio.com` means moving nameservers — see §0b.
+   - **r2.dev subdomain**: do **not** set this as `CDN_BASE`. Cloudflare
+     calls it the *public development URL*, and it answers with **no CORS
+     headers at all** — the bucket's CORS policy applies to custom domains
+     and the S3 API, not to it. The model downloads and is then unreadable
+     to the page that asked for it, so every configurator renders an empty
+     viewport while every URL in the chain returns 200. The service refuses
+     an r2.dev `CDN_BASE` for exactly this reason and says so in the log.
+
+   **Leave `CDN_BASE` unset** unless you have a custom domain. The service
+   then streams models itself, with the right CORS headers: correct, and
+   billed for Fly egress rather than free R2 egress. That is the right
+   trade until models are a real bandwidth line.
 
 ## 3. Fly — from the browser
 
@@ -119,7 +126,7 @@ These never go in `fly.toml`, which is committed:
 | `S3_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
 | `S3_ACCESS_KEY_ID` | from the R2 token |
 | `S3_SECRET_ACCESS_KEY` | from the R2 token |
-| `CDN_BASE` | the `pub-….r2.dev` URL |
+| `CDN_BASE` | **leave unset** unless you have an R2 *custom domain*; an r2.dev URL serves no CORS and is refused — see §2 |
 
 Fly will say the app has no machines yet. That is expected — secrets are
 stored against the app and applied when the first one starts.
@@ -288,7 +295,7 @@ configuration, not code.
 | Symptom | Cause |
 | --- | --- |
 | Sign-in seems to work, then everything 401s | Studio and API on different registrable domains — the cookie was dropped. `COOKIE_SAMESITE=none`, or move them together. |
-| Configurator loads, model never appears | R2 CORS not applied. |
+| Configurator loads, model never appears | `CDN_BASE` points at an r2.dev address (no CORS — see §2), or R2 CORS is not applied to your custom domain. |
 | `/health` 503 | `DATABASE_URL` wrong, or the pooled host was not used. |
 | Sign-in emails never arrive | Resend domain unverified. |
 | Published products 404 after a hostname change | `PUBLIC_BASE` was changed after publishing. See §0. |
