@@ -9,6 +9,10 @@ apps/demo/embed.js
 apps/demo/embed.css
 apps/demo/standalone.html
 
+# The embed bundle the SERVICE serves. Built inside packages/api/Dockerfile,
+# so the repository never needs a checked-in copy.
+packages/embed/dist/
+
 # OS/editor
 .DS_Store
 .vscode/

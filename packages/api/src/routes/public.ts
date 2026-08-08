@@ -6,6 +6,9 @@
 // are checked against the very manifest they claim to belong to, and the
 // merchant's origin allowlist decides who may read.
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Route, Ctx } from '../http.ts';
 import { readBody, readJson, Raw, Redirect, allowedOrigin, rateLimiter, clientIp } from '../http.ts';
 import { type Deps, addHeaders } from '../app.ts';
@@ -23,6 +26,35 @@ import { defaultSelections, applySelection, priceDeltas } from '../../../embed/s
  * the live pointer gets a minute, because moving it is the point. */
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 const LIVE = 'public, max-age=60, stale-while-revalidate=600';
+
+/**
+ * Reader for the built embed bundle on disk.
+ *
+ * Each file is read once and held — these are the hottest things the
+ * service serves (every storefront page load) and they cannot change under
+ * a running process. Built per app rather than per module so the directory
+ * is resolved when the app is, and so one test's fixture directory cannot
+ * leak into the next.
+ *
+ * EMBED_DIR exists so a deployment that would rather serve the bundle from
+ * a CDN can point this elsewhere, or at nothing: a missing directory just
+ * means these paths 404, exactly as they did before.
+ */
+function embedReader(): (file: string) => Promise<Uint8Array | null> {
+  const dir = process.env.EMBED_DIR
+    ?? fileURLToPath(new URL('../../../embed/dist/', import.meta.url));
+  const cache = new Map<string, Uint8Array | null>();
+  return async (file) => {
+    const hit = cache.get(file);
+    if (hit !== undefined) return hit;
+    let bytes: Uint8Array | null = null;
+    try {
+      bytes = await readFile(join(dir, file));
+    } catch { bytes = null; }
+    cache.set(file, bytes);
+    return bytes;
+  };
+}
 
 /**
  * What the bytes actually are.
@@ -76,6 +108,7 @@ export function publicRoutes(deps: Deps): Route[] {
   // Pricing is called once per add-to-cart from a merchant's server, so the
   // bucket is per-STORE rather than per-shopper and can be generous.
   const priceLimit = rateLimiter(600, 60_000);
+  const embedAsset = embedReader();
 
   /** Serve a frozen publication's two files, or the live pointer's. */
   async function serve(ctx: Ctx, publicationId: string, what: 'manifest' | 'model', cache: string) {
@@ -289,6 +322,42 @@ export function publicRoutes(deps: Deps): Route[] {
           clock.now());
         const upload = await createUpload(sql, pub.id, optionId, asset.id, clock.now());
         return { id: upload.id, url: `${config.publicBase}/u/${upload.id}`, bytes: bytes.length, contentType: sniffed };
+      },
+    },
+    {
+      /**
+       * The embed bundle, at PUBLIC_BASE.
+       *
+       * The snippet a merchant pastes references `embed.js` and `embed.css`
+       * HERE — `embedBase` in the Studio is the service's own address — so
+       * if nothing serves them the snippet is a 404 on every storefront
+       * that has ever pasted it. Serving them from the service is what
+       * makes the published snippet true by construction, with no upload
+       * step anyone can forget.
+       *
+       * Registered last, and narrow: only `embed*.js|css` is served, so
+       * every other unmatched path still 404s as it always did.
+       *
+       * The module script and its lazy chunks are fetched CROSS-ORIGIN by
+       * the merchant's page, which for `type="module"` means CORS applies —
+       * the wildcard header the app already sets on non-/v1 paths is what
+       * makes that work.
+       */
+      method: 'GET',
+      pattern: '/:file',
+      async handler(ctx) {
+        const file = ctx.params.file;
+        if (!/^embed[\w.-]*\.(js|css)$/.test(file) || file.includes('..')) throw notFound('not found');
+        const body = await embedAsset(file);
+        if (!body) throw notFound('not found');
+        addHeaders(ctx, {
+          // A hashed chunk name changes whenever its contents do, so it can
+          // be kept forever. `embed.js` and `embed.css` are stable names
+          // whose contents change on deploy — an hour, so a merchant's
+          // customers pick up a fix the same day without re-pasting.
+          'cache-control': /-[A-Z0-9]{8}\.js$/.test(file) ? IMMUTABLE : 'public, max-age=3600',
+        });
+        return new Raw(body, file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8');
       },
     },
     {

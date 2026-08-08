@@ -250,14 +250,22 @@ anything without a file extension must return `index.html`. Vercel:
 
 Cloudflare Pages: a `_redirects` file containing `/* /index.html 200`.
 
-## 6. The embed bundle
+## 6. The embed bundle — nothing to do
 
 The snippet a merchant pastes references `embed.js` and `embed.css` at
-`PUBLIC_BASE`. Upload `packages/embed/dist/*` to the R2 bucket at the root,
-or serve them from the Studio's host and change `embedBase` in
-`CloudPublish.tsx`. Keep the whole set together — `embed.js` fetches its
-lazy chunks (typeface data, the engraving engine, the mesh decoder)
-relative to its own URL.
+`PUBLIC_BASE`, and **the service serves them itself**: they are built inside
+`packages/api/Dockerfile` and ship in the image, so a deploy cannot leave
+the snippet pointing at a 404. The hashed lazy chunks (typeface data, the
+engraving engine, the mesh decoder) sit beside them and are served with a
+one-year immutable cache; `embed.js` and `embed.css` revalidate hourly, so
+a fix reaches every storefront the same day without anyone re-pasting.
+
+> This used to be a manual upload step, and it was silently skipped: the
+> service ran for weeks with a live Studio handing out snippets whose
+> `embed.js` 404'd on every storefront. If you ever move the bundle to a CDN
+> for the egress saving, set `EMBED_DIR` to somewhere empty and change
+> `embedBase` in `CloudPublish.tsx` in the same commit — the snippet and the
+> files it names have to move together.
 
 ---
 

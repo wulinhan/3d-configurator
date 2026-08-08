@@ -9,6 +9,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { harness, type Harness } from './harness.ts';
 import { createApp, type Config } from '../src/app.ts';
 import { consoleMailer } from '../src/mail.ts';
@@ -466,6 +469,48 @@ test('the dashboard thumbnail round-trips; strangers see nothing, viewers cannot
   assert.equal((await eve.fetch(`/v1/projects/${project.id}/thumbnail`)).status, 404);
   assert.equal((await eve.fetch(`/v1/projects/${project.id}/thumbnail`, { method: 'POST', body: PNG })).status, 404);
   await r.stop();
+});
+
+test('the embed bundle is served where the pasted snippet says it is', async () => {
+  // The Studio builds its snippet against the SERVICE's address, so these
+  // paths are load-bearing on every storefront that ever pasted one. They
+  // were 404 in production for weeks without a single test noticing, which
+  // is the argument for this one.
+  const dir = await mkdtemp(join(tmpdir(), 'embed-'));
+  await writeFile(join(dir, 'embed.js'), 'export const mount = () => {};');
+  await writeFile(join(dir, 'embed.css'), '.cfg { display: grid }');
+  await writeFile(join(dir, 'embed-sans-TKQQJVUI.js'), 'export default 1;');
+  process.env.EMBED_DIR = dir;
+
+  const r = await rig();
+  const shop = { origin: SHOP };
+
+  const js = await r.client().fetch('/embed.js', shop);
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get('content-type') ?? '', /javascript/);
+  // A module script is fetched cross-origin by the merchant's page, so CORS
+  // applies to it — without this header the storefront gets nothing.
+  assert.equal(js.headers.get('access-control-allow-origin'), '*');
+  // A stable name whose contents change on deploy must not be immutable.
+  assert.doesNotMatch(js.headers.get('cache-control') ?? '', /immutable/);
+
+  const css = await r.client().fetch('/embed.css', shop);
+  assert.equal(css.status, 200);
+  assert.match(css.headers.get('content-type') ?? '', /text\/css/);
+
+  // A hashed lazy chunk changes name whenever it changes, so it keeps.
+  const chunk = await r.client().fetch('/embed-sans-TKQQJVUI.js', shop);
+  assert.equal(chunk.status, 200);
+  assert.match(chunk.headers.get('cache-control') ?? '', /immutable/);
+
+  // Narrow on purpose: this route must not become a way to read the disk.
+  assert.equal((await r.client().fetch('/embed.js.map', shop)).status, 404);
+  assert.equal((await r.client().fetch('/main.ts', shop)).status, 404);
+  assert.equal((await r.client().fetch('/health', { origin: null })).status, 200, 'and it shadows nothing');
+
+  delete process.env.EMBED_DIR;
+  await r.stop();
+  await rm(dir, { recursive: true, force: true });
 });
 
 // ── publishing ────────────────────────────────────────────────────────────
