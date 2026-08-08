@@ -16,6 +16,32 @@ the only part that is not optional.
 
 ---
 
+## 0. No, you do not need an iframe
+
+The configurator mounts **directly into your page** — it becomes part of your
+DOM, sized by whatever box you put it in. That is the normal path and the one
+the rest of this page assumes.
+
+An iframe is for two situations, neither of which is a custom site:
+
+- **The platform forces one.** Wix's Embed HTML, Squarespace-style code blocks
+  and Notion-ish pages only accept an iframe. That is why `docs/wix.md` uses
+  `postMessage` — Wix's constraint, not ours.
+- **You want hard isolation** from a host page whose CSS you do not control.
+
+The trade-off, stated plainly: the embed's styles are all scoped under `.cfg`,
+so it will not leak *out* into your design — but there is no shadow DOM, so
+aggressive global rules on your side (`button { text-transform: uppercase }`,
+a CSS reset that restyles `input`) *can* leak *in*. If your design system does
+that and you would rather not scope around it, an iframe is a legitimate
+choice. Everything else here works the same either way; only the listener in
+§2 changes.
+
+Layout takes care of itself: the root uses container queries, so it responds to
+the width of the box you give it rather than to the viewport, and drops the
+panel below the viewport under about 720px. Give the container a width and a
+real height — the 3D stage needs a box to fill.
+
 ## 1. Mount it
 
 Two files, both from the address in the Studio's Publish window:
@@ -71,7 +97,10 @@ returns 403 with a message saying exactly that.
 
 ## 2. Listen
 
-The embed reports the same payload two ways. Use whichever suits you:
+The embed reports the same payload two ways, and **both are always available** —
+it dispatches the DOM event *and* posts the message on every change. Mounted
+directly (§0), `window.parent` is your own window, so the `postMessage` simply
+arrives back on the same page; use whichever channel suits you:
 
 ```js
 // Same page — a DOM CustomEvent that bubbles from the root element.
