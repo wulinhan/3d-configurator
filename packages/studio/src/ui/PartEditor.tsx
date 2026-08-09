@@ -10,12 +10,12 @@ import {
   sizeMm, withSizeMm, withAnchor, withRotation,
   makePartOptional, makePartRequired, setChoicePrice,
   setDefaultSwatch, setCustomColour,
-  ungroup, renameGroup, nudgeGroup, partToOrigin, groupToOrigin,
+  partToOrigin, groupToOrigin,
   matchPose, partCentreMm, setPartCentre, isPartAtOrigin, setLockAspect,
-  nudgeVariant, variantToOrigin, renameVariantSet, dissolveVariantChoice,
+  variantToOrigin,
   setTextSlot, removeTextSlot, setTextPath, type TextSlotPatch,
   setImageZone, nudgeImageZone, removeImageZone, type ImageZonePatch,
-  entrySizeMm, withEntrySizeMm,
+  entrySizeMm, withEntrySizeMm, entryBoxOf, rotateEntry, setEntryCentre,
   addRepeat, setRepeat, removeRepeat,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
@@ -161,20 +161,140 @@ function RepeatSection(props: {
   );
 }
 
+// Absolute position + rigid rotation for a whole assembly / variant set —
+// the same fields a single part shows, acting on every member as one rigid
+// thing. Position is absolute (where the union's centre sits); rotation is
+// a delta about that centre, because a set of parts has no single stored
+// angle to display.
+function EntryPlaceSections(props: {
+  entryId: string;
+  project: Project;
+  act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
+  toOrigin: { testId: string; title: string; label: string; make: () => Manifest };
+}) {
+  // Remount the rotation fields after each turn so they read 0 again — they
+  // are deltas, not angles.
+  const [turnTick, setTurnTick] = useState(0);
+  const { manifest, raw } = props.project;
+  let centre: number[];
+  try {
+    centre = entryBoxOf(manifest, props.entryId, raw).centre;
+  } catch {
+    return null;
+  }
+  return (
+    <>
+      <Section title="Position" icon="position" testId="section-position">
+        <p className="hint">Where the centre sits. Every member moves rigidly with it — anchored parts keep their joints.</p>
+        <div className="field-row">
+          {UI_AXES.map(({ label, axis }) => (
+            <NumberField
+              key={label} label={axisTint(label)} value={centre[axis]} suffix="mm"
+              testId={`set-pos-${label.toLowerCase()}`}
+              onCommit={(mm, o) => props.act(() =>
+                setEntryCentre(manifest, props.entryId, axis, mm, raw), o)}
+            />
+          ))}
+        </div>
+        <div className="match-row">
+          <button
+            className="mini" data-testid={props.toOrigin.testId}
+            title={props.toOrigin.title}
+            onClick={() => props.act(props.toOrigin.make)}
+          >{props.toOrigin.label}</button>
+        </div>
+      </Section>
+      <Section title="Rotation" icon="rotation" testId="section-set-rotation">
+        <p className="hint">Turns the whole thing about its centre — members spin and orbit together.</p>
+        <div className="field-row" key={turnTick}>
+          {UI_AXES.map(({ label, axis }) => (
+            <NumberField
+              key={label} label={axisTint(label)} value={0} suffix="°" step={5}
+              testId={`set-rot-${label.toLowerCase()}`}
+              onCommit={(deg) => {
+                if (!deg) return;
+                const deltas: [number, number, number] = [0, 0, 0];
+                deltas[axis] = deg;
+                props.act(() => rotateEntry(manifest, props.entryId, deltas, raw));
+                setTurnTick((t) => t + 1);
+              }}
+            />
+          ))}
+        </div>
+      </Section>
+    </>
+  );
+}
+
+// The members' customer-facing zones, surfaced at the set level: every 3D
+// text slot and image zone that lives on a part inside this entry, editable
+// here without hunting down which member owns it.
+function EntryMemberSlots(props: {
+  partIds: string[];
+  project: Project;
+  onChange: (m: Manifest, opts?: SetManifestOptions) => void;
+  act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
+  onShapeText: (optionId: string | null) => void;
+  shapingText: string | null;
+}) {
+  const { manifest } = props.project;
+  const inSet = (part: string) => props.partIds.includes(part);
+  const textSlots = manifest.options.filter((o): o is TextOption => o.type === 'text' && inSet(o.part));
+  const imageZones = manifest.options.filter((o): o is UploadOption => o.type === 'upload' && inSet(o.part));
+  if (!textSlots.length && !imageZones.length) return null;
+  const partName = (id: string) => manifest.parts.find((p) => p.id === id)?.label ?? id;
+  return (
+    <>
+      {textSlots.length > 0 && (
+        <Section title="3D text" icon="text" testId="section-text">
+          <p className="hint">
+            Text slots on parts inside — surfaced here so the whole thing
+            edits in one place. To add one, open its part and click a face.
+          </p>
+          {textSlots.map((slot, i, all) => (
+            <div key={slot.id}>
+              <p className="hint">On “{partName(slot.part)}”</p>
+              <TextSlotEditor
+                slot={slot} manifest={manifest} onChange={props.onChange} act={props.act}
+                onShapeText={props.onShapeText} shaping={props.shapingText === slot.id}
+                first={i === 0} last={i === all.length - 1}
+              />
+            </div>
+          ))}
+        </Section>
+      )}
+      {imageZones.length > 0 && (
+        <Section title="Image zone" icon="image" testId="section-image">
+          <p className="hint">
+            Image zones on parts inside. To add one, open its part and click
+            a face.
+          </p>
+          {imageZones.map((zone, i, all) => (
+            <div key={zone.id}>
+              <p className="hint">On “{partName(zone.part)}”</p>
+              <ImageZoneEditor
+                zone={zone} manifest={manifest} act={props.act}
+                first={i === 0} last={i === all.length - 1}
+              />
+            </div>
+          ))}
+        </Section>
+      )}
+    </>
+  );
+}
+
 export function GroupEditor(props: {
   project: Project;
   groupId: string;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
-  onDuplicate: (entryId: string) => void;
   onRepeat: (entryId: string, opts: RepeatOpts) => void;
-  onClose: () => void;
+  onShapeText: (optionId: string | null) => void;
+  shapingText: string | null;
 }) {
   const { manifest } = props.project;
   const group = manifest.groups?.find((g) => g.id === props.groupId);
   const [error, setError] = useState<string | null>(null);
-  // Remount the nudge fields after each move so they read 0 again — they are
-  // deltas, not positions.
-  const [nudgeTick, setNudgeTick] = useState(0);
   if (!group) return null;
 
   // `opts` rides through so a field scrub (many steps, one gesture) lands as
@@ -187,47 +307,21 @@ export function GroupEditor(props: {
   return (
     <div className="part-editor" data-testid={`group-editor-${group.id}`}>
       <h3>{group.label} <span className="tag">assembly</span></h3>
-      <p className="hint">Rename by double-clicking its name in the explorer.</p>
+      <p className="hint">Rename by double-clicking its name in the explorer. Duplicate and split live there too.</p>
       <EntrySizeSection entryId={group.id} project={props.project} act={act} />
-      <Section title="Move together" icon="position" testId="section-group-move">
-        <p className="hint">Shifts every part in the assembly by the given distance. Parts anchored to each other keep their joints.</p>
-        <div className="match-row">
-          <button
-            className="mini" data-testid="group-to-origin"
-            title="Centre the whole assembly on X/Y, sit it on the ground at Z 0"
-            onClick={() => act(() => groupToOrigin(manifest, group.id, props.project.raw))}
-          >Bring assembly to origin</button>
-        </div>
-        <div className="field-row" key={nudgeTick}>
-          {UI_AXES.map(({ label, axis }) => (
-            <NumberField
-              key={label} label={axisTint(label)} value={0} suffix="mm"
-              testId={`nudge-${label.toLowerCase()}`}
-              onCommit={(mm) => {
-                if (!mm) return;
-                const deltas: [number, number, number] = [0, 0, 0];
-                deltas[axis] = mm;
-                act(() => nudgeGroup(manifest, group.id, deltas));
-                setNudgeTick((t) => t + 1);
-              }}
-            />
-          ))}
-        </div>
-      </Section>
-      <Section title="Assembly" icon="assembly" testId="section-assembly">
-        <p className="hint">
-          Parts in an assembly move as one thing but keep their own colours.
-          Splitting it up keeps every part exactly where it is.
-        </p>
-        <div className="publish-actions">
-          <button
-            className="ghost" data-testid="duplicate-entry"
-            title="Copy every part, joint and colour; the copy lands beside the original"
-            onClick={() => { try { props.onDuplicate(group.id); setError(null); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } }}
-          >Duplicate</button>
-          <button className="ghost" onClick={() => { props.onClose(); act(() => ungroup(manifest, group.id)); }}>Split up</button>
-        </div>
-      </Section>
+      <EntryPlaceSections
+        entryId={group.id} project={props.project} act={act}
+        toOrigin={{
+          testId: 'group-to-origin',
+          title: 'Centre the whole assembly on X/Y, sit it on the ground at Z 0',
+          label: 'Bring assembly to origin',
+          make: () => groupToOrigin(manifest, group.id, props.project.raw),
+        }}
+      />
+      <EntryMemberSlots
+        partIds={group.parts} project={props.project} onChange={props.onChange} act={act}
+        onShapeText={props.onShapeText} shapingText={props.shapingText}
+      />
       <RepeatSection entryId={group.id} what="assembly" onRepeat={props.onRepeat} />
       {error && <p className="error" role="alert">{error}</p>}
     </div>
@@ -238,15 +332,15 @@ export function VariantEditor(props: {
   project: Project;
   optionId: string;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
-  onDuplicate: (entryId: string) => void;
   onRepeat: (entryId: string, opts: RepeatOpts) => void;
-  onClose: () => void;
+  onShapeText: (optionId: string | null) => void;
+  shapingText: string | null;
 }) {
   const { manifest } = props.project;
   const option = manifest.options.find((o): o is ChoiceOption => o.id === props.optionId && o.type === 'choice');
   const [error, setError] = useState<string | null>(null);
-  const [nudgeTick, setNudgeTick] = useState(0);
   if (!option || option.role !== 'variant') return null;
+  const memberIds = manifest.parts.filter((p) => p.visibleWhen?.option === option.id).map((p) => p.id);
 
   // `opts` rides through so a field scrub (many steps, one gesture) lands as
   // a single history entry instead of one per step.
@@ -258,47 +352,21 @@ export function VariantEditor(props: {
   return (
     <div className="part-editor" data-testid={`variant-editor-${option.id}`}>
       <h3>{option.label} <span className="tag">variants</span></h3>
-      <p className="hint">Rename by double-clicking its name in the explorer.</p>
+      <p className="hint">Rename by double-clicking its name in the explorer. Duplicate and dissolve live there too.</p>
       <EntrySizeSection entryId={option.id} project={props.project} act={act} />
-      <Section title="Move together" icon="position" testId="section-group-move">
-        <p className="hint">Shifts every variant by the given distance — they usually share one spot, so they travel as one.</p>
-        <div className="match-row">
-          <button
-            className="mini" data-testid="variant-to-origin"
-            title="Centre the whole set on X/Y, sit it on the ground at Z 0"
-            onClick={() => act(() => variantToOrigin(manifest, option.id, props.project.raw))}
-          >Bring set to origin</button>
-        </div>
-        <div className="field-row" key={nudgeTick}>
-          {UI_AXES.map(({ label, axis }) => (
-            <NumberField
-              key={label} label={axisTint(label)} value={0} suffix="mm"
-              testId={`vnudge-${label.toLowerCase()}`}
-              onCommit={(mm) => {
-                if (!mm) return;
-                const deltas: [number, number, number] = [0, 0, 0];
-                deltas[axis] = mm;
-                act(() => nudgeVariant(manifest, option.id, deltas));
-                setNudgeTick((t) => t + 1);
-              }}
-            />
-          ))}
-        </div>
-      </Section>
-      <Section title="Variant set" icon="variant" testId="section-variant-set">
-        <p className="hint">
-          Customers pick exactly one of these parts; its colour carries over
-          when they switch. Dissolving keeps every part, always included.
-        </p>
-        <div className="publish-actions">
-          <button
-            className="ghost" data-testid="duplicate-entry"
-            title="Copy the whole set — parts, joints, colours, exclusivity"
-            onClick={() => { try { props.onDuplicate(option.id); setError(null); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } }}
-          >Duplicate</button>
-          <button className="ghost" onClick={() => { props.onClose(); act(() => dissolveVariantChoice(manifest, option.id)); }}>Dissolve</button>
-        </div>
-      </Section>
+      <EntryPlaceSections
+        entryId={option.id} project={props.project} act={act}
+        toOrigin={{
+          testId: 'variant-to-origin',
+          title: 'Centre the whole set on X/Y, sit it on the ground at Z 0',
+          label: 'Bring set to origin',
+          make: () => variantToOrigin(manifest, option.id, props.project.raw),
+        }}
+      />
+      <EntryMemberSlots
+        partIds={memberIds} project={props.project} onChange={props.onChange} act={act}
+        onShapeText={props.onShapeText} shapingText={props.shapingText}
+      />
       <RepeatSection entryId={option.id} what="set" onRepeat={props.onRepeat} />
       {error && <p className="error" role="alert">{error}</p>}
     </div>

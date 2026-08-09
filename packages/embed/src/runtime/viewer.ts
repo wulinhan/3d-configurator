@@ -757,17 +757,70 @@ export class Viewer {
   }
 
   /**
-   * A square, whole-product still — the dashboard thumbnail.
+   * Where the product's material actually is — the area-weighted centroid of
+   * every visible triangle, in world space.
    *
-   * Renders once from the same 45° opening shot the customiser uses, framed
-   * off the bounding sphere so the ENTIRE object is in frame whatever its
-   * proportions. Everything that is not the product or a light is hidden
-   * for the shot (the Studio's grid, axes and gizmos live in the scene but
-   * are not the product), then the camera, canvas size and visibility are
+   * The bounding-box centre is the wrong "middle" for a thumbnail: one tall
+   * antenna drags the box up and the product ends up in the bottom third of
+   * the frame. Mass follows surface, not extremes. Heavy meshes are sampled
+   * with a stride so a million-triangle import doesn't stall the save path.
+   */
+  private centreOfMass(): THREE.Vector3 | null {
+    return this.centreOfMassOf(null);
+  }
+
+  /**
+   * Centre of mass restricted to SOME parts — what an assembly's gizmo and
+   * camera centre on. `null` means the whole product. Traversal starts at
+   * each part's root so glyphs and decals parented under it count too.
+   */
+  centreOfMassOf(partIds: string[] | null): THREE.Vector3 | null {
+    const roots: THREE.Object3D[] = partIds
+      ? partIds.map((id) => this.meshes.get(id)).filter((m): m is THREE.Mesh => !!m)
+      : [this.group];
+    const acc = new THREE.Vector3();
+    let total = 0;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+    this.group.updateWorldMatrix(true, true);
+    for (const root of roots) root.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!(mesh as { isMesh?: boolean }).isMesh || !mesh.visible) return;
+      const geom = mesh.geometry as THREE.BufferGeometry;
+      const pos = geom.getAttribute('position');
+      if (!pos) return;
+      const index = geom.getIndex();
+      const count = index ? index.count : pos.count;
+      const at = (k: number, out: THREE.Vector3) =>
+        out.fromBufferAttribute(pos, index ? index.getX(k) : k).applyMatrix4(mesh.matrixWorld);
+      // At most ~20k triangles per mesh feed the estimate.
+      const stride = 3 * Math.max(1, Math.floor(count / 3 / 20000));
+      for (let i = 0; i + 2 < count; i += stride) {
+        at(i, a); at(i + 1, b); at(i + 2, c);
+        const area = ab.subVectors(b, a).cross(ac.subVectors(c, a)).length() / 2;
+        if (!Number.isFinite(area) || area === 0) continue;
+        acc.addScaledVector(a.add(b).add(c).divideScalar(3), area);
+        total += area;
+      }
+    });
+    return total > 0 ? acc.divideScalar(total) : null;
+  }
+
+  /**
+   * A 16:9, whole-product still — the dashboard thumbnail.
+   *
+   * Framed from the same 45° three-quarter angle the customiser opens on,
+   * but CENTRED ON THE CENTRE OF MASS rather than the bounding box's middle,
+   * so the product sits where the eye expects it however lopsided its
+   * extremes. The radius is the farthest bounding-box corner from that
+   * centre, which is what keeps the whole object in frame even when the
+   * centre is off-middle. Everything that is not the product or a light is
+   * hidden for the shot (the Studio's grid, axes and gizmos live in the
+   * scene but are not the product), then camera, canvas and visibility are
    * restored and a normal frame is rendered so the merchant never sees the
    * detour.
    */
-  snapshot(sizePx = 512): string {
+  snapshot(widthPx = 640, heightPx = Math.round(widthPx * 9 / 16)): string {
     const cam = this.camera;
     const ctl = this.controls;
     const keep = {
@@ -783,10 +836,39 @@ export class Viewer {
       hidden.push(child);
     }
     try {
-      this.renderer.setSize(sizePx, sizePx, false);
-      cam.aspect = 1;
+      this.renderer.setSize(widthPx, heightPx, false);
+      cam.aspect = widthPx / heightPx;
       cam.updateProjectionMatrix();
-      this.frameFromDefaultAngle();
+
+      const bounds = this.layoutBounds();
+      if (Number.isFinite(bounds.min[0])) {
+        const centre = this.centreOfMass()
+          ?? new THREE.Vector3(
+            ...[0, 1, 2].map((axis) => (bounds.min[axis] + bounds.max[axis]) / 2) as [number, number, number],
+          ).add(this.centreOffset);
+        let radius = 1;
+        for (const x of [bounds.min[0], bounds.max[0]]) {
+          for (const y of [bounds.min[1], bounds.max[1]]) {
+            for (const z of [bounds.min[2], bounds.max[2]]) {
+              radius = Math.max(radius,
+                centre.distanceTo(new THREE.Vector3(x, y, z).add(this.centreOffset)));
+            }
+          }
+        }
+        const fov = (cam.fov * Math.PI) / 180;
+        const fitV = radius / Math.sin(fov / 2);
+        const fitH = radius / Math.sin(Math.atan(Math.tan(fov / 2) * cam.aspect));
+        const distance = Math.max(fitV, fitH) * 1.08;
+        const up = Math.SQRT1_2;
+        const flat = Math.SQRT1_2 * up;
+        const dir = new THREE.Vector3(flat, up, flat).normalize();
+        ctl.target.copy(centre);
+        cam.position.copy(centre).addScaledVector(dir, distance);
+        cam.near = Math.max(distance / 100, 0.1);
+        cam.far = distance * 20;
+        cam.updateProjectionMatrix();
+        ctl.update();
+      }
       this.renderer.render(this.scene, cam);
       return this.renderer.domElement.toDataURL('image/png');
     } finally {

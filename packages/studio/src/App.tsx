@@ -176,6 +176,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('clean');
   const [saveNote, setSaveNote] = useState<string | null>(null);
+  // A viewer share opens the project read-only: nothing is autosaved, so
+  // they can play with it freely and the owner's copy never moves.
+  const [readOnly, setReadOnly] = useState(false);
   const saverRef = useRef<Autosave<Manifest> | null>(null);
   /** The manifest as the service last knew it. Guards the first render from
    * writing back exactly what it just read. */
@@ -206,11 +209,15 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         const modelUrl = URL.createObjectURL(new Blob([writeGlb(model.parts)], { type: 'model/gltf-binary' }));
         syncedRef.current = manifest;
         syncedPartsRef.current = model.parts;
-        saverRef.current = new Autosave<Manifest>({
-          revision: detail.revision,
-          save: async (m, baseRevision) => api.saveProject(cloudProjectId, { manifest: m, baseRevision, name: m.name }),
-          onState: (state, extra) => { setSaveState(state); setSaveNote(extra?.message ?? null); },
-        });
+        if (detail.role === 'viewer') {
+          setReadOnly(true);
+        } else {
+          saverRef.current = new Autosave<Manifest>({
+            revision: detail.revision,
+            save: async (m, baseRevision) => api.saveProject(cloudProjectId, { manifest: m, baseRevision, name: m.name }),
+            onState: (state, extra) => { setSaveState(state); setSaveNote(extra?.message ?? null); },
+          });
+        }
         setProject({ model, manifest, raw, modelUrl });
         setSelectedPart(manifest.parts[0]?.id ?? null);
         setLoading(false);
@@ -260,7 +267,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
       const viewer = (window as { __studioViewer?: { snapshot?: (px?: number) => string } }).__studioViewer;
       if (!viewer?.snapshot) return;
       try {
-        const dataUrl = viewer.snapshot(512);
+        const dataUrl = viewer.snapshot(640, 360);
         const bytes = Uint8Array.from(atob(dataUrl.split(',')[1] ?? ''), (c) => c.charCodeAt(0));
         if (!bytes.length) return;
         lastThumbAtRef.current = Date.now();
@@ -569,9 +576,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   // slides out (keeping its last content while it goes) when nothing is.
   const floatContent = project && tab === 'Parts'
     ? (editingVariant
-      ? <VariantEditor key={editingVariant} project={project} optionId={editingVariant} onChange={setManifest} onDuplicate={duplicateEntryInApp} onRepeat={repeatEntryInApp} onClose={() => setEditingVariant(null)} />
+      ? <VariantEditor key={editingVariant} project={project} optionId={editingVariant} onChange={setManifest} onRepeat={repeatEntryInApp} onShapeText={shapeTextInApp} shapingText={shapingText} />
       : editingGroup
-        ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onDuplicate={duplicateEntryInApp} onRepeat={repeatEntryInApp} onClose={() => setEditingGroup(null)} />
+        ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onRepeat={repeatEntryInApp} onShapeText={shapeTextInApp} shapingText={shapingText} />
         : selectedPart
           ? <PartEditor
               key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} onRepeat={repeatEntryInApp}
@@ -621,9 +628,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         />
         {cloudProjectId && (
           <span
-            className={`save-state is-${saveState}`} data-testid="save-state"
-            role="status" title={saveNote ?? undefined}
-          >{saveLabel(saveState)}</span>
+            className={`save-state is-${readOnly ? 'clean' : saveState}`} data-testid="save-state"
+            role="status" title={readOnly ? 'Shared with you to view — changes stay in this tab' : saveNote ?? undefined}
+          >{readOnly ? 'View only' : saveLabel(saveState)}</span>
         )}
         <span className="spacer" />
         {saveState === 'conflict' && (

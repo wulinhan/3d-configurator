@@ -226,9 +226,9 @@ export class Gizmo {
   }
 
   /**
-   * Attach ONLY the translate arrows to an arbitrary object — the proxy an
-   * assembly or variant set parks at its centre of mass. Rotation and scale
-   * of a whole set aren't single-mesh operations, so their handles stay away.
+   * Attach ONLY the translate arrows to an arbitrary object. Kept for the
+   * cases where rotation genuinely has no meaning; assemblies now use
+   * attachObject below and get the full set.
    */
   attachTranslate(object: THREE.Object3D | null): void {
     for (const c of this.all) c.detach();
@@ -236,6 +236,21 @@ export class Gizmo {
     if (!object || this.mode === 'off') return;
     this.all[0].attach(object);
     this.helpers[0].visible = true;
+  }
+
+  /**
+   * The FULL gizmo on an arbitrary object — the proxy an assembly or
+   * variant set parks at its centre of mass. The proxy starts at identity,
+   * so its rotation and scale read as deltas: the commit layer turns those
+   * into rigid whole-set operations, which is what makes an assembly
+   * transform like a part.
+   */
+  attachObject(object: THREE.Object3D | null): void {
+    for (const c of this.all) c.detach();
+    for (const h of this.helpers) h.visible = false;
+    if (!object || this.mode === 'off') return;
+    for (const c of this.all) c.attach(object);
+    for (const h of this.helpers) h.visible = true;
   }
 
   dispose(): void {

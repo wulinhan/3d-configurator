@@ -513,6 +513,90 @@ test('the embed bundle is served where the pasted snippet says it is', async () 
   await rm(dir, { recursive: true, force: true });
 });
 
+test('a dashboard rename reaches the manifest too, and moves the revision on', async () => {
+  const r = await rig();
+  const client = await signedIn(r);
+  const project = await newProject(client, (await orgOf(client)).id);
+
+  const renamed = await client.json<{ name: string; revision: number }>(
+    `/v1/projects/${project.id}/rename`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Better Plate' }),
+    });
+  assert.equal(renamed.name, 'Better Plate');
+  assert.equal(renamed.revision, project.revision + 1, 'an open tab must conflict, not clobber');
+
+  const detail = await client.json<{ project: { name: string; manifest: { name: string } } }>(
+    `/v1/projects/${project.id}`);
+  assert.equal(detail.project.name, 'Better Plate');
+  assert.equal(detail.project.manifest.name, 'Better Plate',
+    'a row-only rename would be reverted by the next autosave');
+
+  assert.equal((await client.fetch(`/v1/projects/${project.id}/rename`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '   ' }),
+  })).status, 400);
+  await r.stop();
+});
+
+test('a share opens one project to one person, at the role it names', async () => {
+  const r = await rig();
+  const ada = await signedIn(r, 'ada@example.com');
+  const project = await newProject(ada, (await orgOf(ada)).id);
+
+  // Share with an address that has NO account yet.
+  const shared = await ada.json<{ shares: Array<{ email: string; role: string }> }>(
+    `/v1/projects/${project.id}/shares`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'Bo@Example.com', role: 'viewer' }),
+    });
+  assert.equal(shared.shares[0].email, 'bo@example.com');
+  assert.equal(shared.shares[0].role, 'viewer');
+  assert.ok(r.mail.sent.some((m) => m.to === 'bo@example.com' && /shared/.test(m.text)),
+    'the person is told, or the share sits unfound forever');
+
+  // Bo signs in later and the share is waiting — plus a workshop of their
+  // own, because an account pre-created by a share still deserves one.
+  const bo = await signedIn(r, 'bo@example.com');
+  const mine = await bo.json<{ orgs: Array<{ role: string }> }>('/v1/me');
+  assert.equal(mine.orgs.length, 1);
+  assert.equal(mine.orgs[0].role, 'owner');
+  const sharedList = await bo.json<{ projects: Array<{ id: string; role: string; from: string }> }>('/v1/me/shared');
+  assert.equal(sharedList.projects[0]?.id, project.id);
+  assert.equal(sharedList.projects[0]?.role, 'viewer');
+
+  // A viewer share reads but does not write…
+  const detail = await bo.json<{ project: { role: string } }>(`/v1/projects/${project.id}`);
+  assert.equal(detail.project.role, 'viewer');
+  assert.equal((await bo.fetch(`/v1/projects/${project.id}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ manifest: MANIFEST, baseRevision: 1 }),
+  })).status, 403);
+
+  // …an editor share writes. Upgrading is the same call again.
+  await ada.json(`/v1/projects/${project.id}/shares`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'bo@example.com', role: 'editor' }),
+  });
+  assert.equal((await bo.fetch(`/v1/projects/${project.id}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ manifest: MANIFEST, baseRevision: project.revision }),
+  })).status, 200);
+
+  // The sharee never appears in the ORG — one project was shared, not the team.
+  const org = await orgOf(ada);
+  const members = await ada.json<{ members: Array<{ email: string }> }>(`/v1/orgs/${org.id}/members`);
+  assert.ok(!members.members.some((m) => m.email === 'bo@example.com'));
+
+  // Revoke, and the door closes without revealing whether the id exists.
+  const boUser = shared.shares[0] as { email: string; role: string; id?: string };
+  const list = await ada.json<{ shares: Array<{ id: string }> }>(`/v1/projects/${project.id}/shares`);
+  await ada.fetch(`/v1/projects/${project.id}/shares/${list.shares[0].id}`, { method: 'DELETE' });
+  assert.equal((await bo.fetch(`/v1/projects/${project.id}`)).status, 404);
+  void boUser;
+  await r.stop();
+});
+
 // ── publishing ────────────────────────────────────────────────────────────
 
 test('publishing freezes the product; editing the draft afterwards does not reach it', async () => {

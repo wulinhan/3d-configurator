@@ -164,3 +164,18 @@ create index if not exists uploads_unclaimed_idx on uploads (claimed_at, created
 -- saves. A column added after release, so it arrives as its own idempotent
 -- statement rather than a rewrite of the projects table.
 alter table projects add column if not exists thumb_asset_id text references assets(id) on delete set null;
+
+-- Sharing ONE project with ONE person, without inviting them into the org.
+-- A share never outranks a membership: access checks take the better of the
+-- two, so sharing a viewer role with someone who is already an org editor
+-- changes nothing. 'editor' may author; 'viewer' may open and configure.
+create table if not exists project_shares (
+  project_id  text not null references projects(id) on delete cascade,
+  user_id     text not null references users(id) on delete cascade,
+  role        text not null check (role in ('editor', 'viewer')),
+  created_by  text references users(id) on delete set null,
+  created_at  timestamptz not null,
+  primary key (project_id, user_id)
+);
+
+create index if not exists project_shares_user_idx on project_shares (user_id);

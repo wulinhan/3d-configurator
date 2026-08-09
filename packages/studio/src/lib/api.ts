@@ -35,6 +35,27 @@ export interface ProjectDetail {
   hasModel: boolean;
   live: string | null;
   updatedAt: string;
+  /** The caller's standing on THIS project — membership or share, whichever
+   * grants more. 'viewer' means the editor opens read-only. */
+  role: Role;
+}
+
+export interface SharedProject {
+  id: string;
+  name: string;
+  updatedAt: string;
+  hasThumb: boolean;
+  live: string | null;
+  role: 'editor' | 'viewer';
+  /** Whose workshop it lives in — the card says where it came from. */
+  from: string;
+}
+
+export interface Share {
+  id: string;
+  email: string;
+  name: string | null;
+  role: 'editor' | 'viewer';
 }
 
 export interface PublicationSummary {
@@ -143,6 +164,17 @@ export const api = {
     request<{ revision: number; valid: boolean; errors: unknown[]; warnings: unknown[] }>(
       `/v1/projects/${id}`, { method: 'PUT', ...json(patch) }),
   archiveProject: (id: string) => request<void>(`/v1/projects/${id}`, { method: 'DELETE' }),
+  renameProject: (id: string, name: string) =>
+    request<{ name: string; revision: number }>(`/v1/projects/${id}/rename`, { method: 'POST', ...json({ name }) }),
+
+  sharedWithMe: () => request<{ projects: SharedProject[] }>('/v1/me/shared').then((r) => r.projects),
+  listShares: (id: string) => request<{ shares: Share[] }>(`/v1/projects/${id}/shares`).then((r) => r.shares),
+  share: (id: string, email: string, role: 'editor' | 'viewer') =>
+    request<{ shares: Share[] }>(`/v1/projects/${id}/shares`, { method: 'PUT', ...json({ email, role }) })
+      .then((r) => r.shares),
+  unshare: (id: string, userId: string) =>
+    request<{ shares: Share[] }>(`/v1/projects/${id}/shares/${userId}`, { method: 'DELETE' })
+      .then((r) => r.shares),
 
   putModel: (id: string, glb: Uint8Array) =>
     request<{ assetId: string; sha256: string; bytes: number }>(`/v1/projects/${id}/model`, {

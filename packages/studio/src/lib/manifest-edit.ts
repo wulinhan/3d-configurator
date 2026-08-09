@@ -164,6 +164,179 @@ export function withEntrySizeMm(
   return next;
 }
 
+/** 3×3 rotation matrices, row-major, column-vector convention — enough to
+ * compose rigid turns without pulling three.js into the edit layer. */
+type Mat3 = [number, number, number, number, number, number, number, number, number];
+const DEG = Math.PI / 180;
+const mat3Mul = (a: Mat3, b: Mat3): Mat3 => {
+  const out = new Array(9).fill(0) as Mat3;
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      out[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+    }
+  }
+  return out;
+};
+/** three.js Euler order 'XYZ' — the order layout feeds mesh.rotation — is
+ * the matrix Rx·Ry·Rz. Composing any other order here would make the panel
+ * and the viewport disagree about what a turn means. */
+const eulerToMat3 = ([x, y, z]: [number, number, number]): Mat3 => {
+  const cx = Math.cos(x * DEG), sx = Math.sin(x * DEG);
+  const cy = Math.cos(y * DEG), sy = Math.sin(y * DEG);
+  const cz = Math.cos(z * DEG), sz = Math.sin(z * DEG);
+  const rx: Mat3 = [1, 0, 0, 0, cx, -sx, 0, sx, cx];
+  const ry: Mat3 = [cy, 0, sy, 0, 1, 0, -sy, 0, cy];
+  const rz: Mat3 = [cz, -sz, 0, sz, cz, 0, 0, 0, 1];
+  return mat3Mul(rx, mat3Mul(ry, rz));
+};
+const mat3ToEuler = (m: Mat3): [number, number, number] => {
+  const clamped = Math.min(1, Math.max(-1, m[2]));
+  const y = Math.asin(clamped);
+  let x: number, z: number;
+  if (Math.abs(clamped) < 0.9999999) {
+    x = Math.atan2(-m[5], m[8]);
+    z = Math.atan2(-m[1], m[0]);
+  } else {
+    x = Math.atan2(m[7], m[4]);
+    z = 0;
+  }
+  return [x / DEG, y / DEG, z / DEG];
+};
+const mat3Apply = (m: Mat3, v: number[]): [number, number, number] => [
+  m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+  m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+  m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
+];
+
+/** The union bounding box of an entry\'s members, from the CURRENT layout —
+ * its centre is what the panel\'s absolute position fields speak about. */
+export function entryBoxOf(
+  manifest: Manifest, entryId: string, raw: Map<string, PartBounds>,
+): { min: number[]; max: number[]; centre: [number, number, number] } {
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  const layout = resolveLayout(manifest, raw);
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (const id of entry.parts) {
+    const box = layout.get(id)?.box;
+    if (!box) continue;
+    for (const a of [0, 1, 2]) {
+      min[a] = Math.min(min[a], box.min[a]);
+      max[a] = Math.max(max[a], box.max[a]);
+    }
+  }
+  if (!Number.isFinite(min[0])) throw new EditError('the set has no placed geometry yet');
+  return { min, max, centre: [0, 1, 2].map((a) => (min[a] + max[a]) / 2) as [number, number, number] };
+}
+
+/**
+ * Turn a whole entry — assembly or variant set — rigidly about a pivot.
+ *
+ * Rigid means what a hand means: every member spins by the same amount AND
+ * orbits the pivot, so the assembly turns as one object instead of each
+ * part pirouetting in place. Each member\'s stored rotation is composed in
+ * matrix space (Euler components cannot simply be added once anything is
+ * already turned), and centres are landed with setPartCentre in two passes
+ * so members anchored to each other settle instead of double-moving.
+ *
+ * The pivot defaults to the union centre; the gizmo passes its own centre
+ * of mass so the viewport turn happens about the handles the user grabbed.
+ */
+export function rotateEntry(
+  manifest: Manifest, entryId: string, deltaDeg: [number, number, number],
+  raw: Map<string, PartBounds>, pivot?: [number, number, number],
+): Manifest {
+  if (deltaDeg.some((d) => !Number.isFinite(d))) throw new EditError('rotation must be finite degrees');
+  if (deltaDeg.every((d) => d === 0)) return manifest;
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  const box = entryBoxOf(manifest, entryId, raw);
+  const p = pivot ?? box.centre;
+  const d = eulerToMat3(deltaDeg);
+
+  const layout = resolveLayout(manifest, raw);
+  const targets = new Map<string, [number, number, number]>();
+  for (const id of entry.parts) {
+    const b = layout.get(id)?.box;
+    if (!b) continue;
+    const centre = [0, 1, 2].map((a) => (b.min[a] + b.max[a]) / 2);
+    const spun = mat3Apply(d, [centre[0] - p[0], centre[1] - p[1], centre[2] - p[2]]);
+    targets.set(id, [p[0] + spun[0], p[1] + spun[1], p[2] + spun[2]]);
+  }
+
+  let next = edit(manifest, (draft) => {
+    for (const id of entry.parts) {
+      const part = partOf(draft, id);
+      const composed = mat3ToEuler(mat3Mul(d, eulerToMat3(part.placement?.rotation ?? [0, 0, 0])));
+      part.placement = { ...part.placement, rotation: composed.map(round3) as [number, number, number] };
+    }
+  });
+  for (let pass = 0; pass < 2; pass++) {
+    for (const [id, target] of targets) {
+      for (const a of [0, 1, 2] as Axis[]) next = setPartCentre(next, id, a, round3(target[a]), raw);
+    }
+  }
+  return next;
+}
+
+/**
+ * Scale a whole entry by a factor about a pivot — the gizmo\'s handle drag,
+ * where withEntrySizeMm is the panel\'s absolute field. Uniform on purpose:
+ * an assembly stretched on one axis shears its joints apart, which is never
+ * what grabbing a corner of the whole thing means.
+ */
+export function scaleEntryBy(
+  manifest: Manifest, entryId: string, factor: number,
+  raw: Map<string, PartBounds>, pivot?: [number, number, number],
+): Manifest {
+  if (!Number.isFinite(factor) || factor <= 0) throw new EditError('scale must be a positive factor');
+  if (Math.abs(factor - 1) < 1e-9) return manifest;
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  const box = entryBoxOf(manifest, entryId, raw);
+  const p = pivot ?? box.centre;
+
+  const layout = resolveLayout(manifest, raw);
+  const targets = new Map<string, [number, number, number]>();
+  for (const id of entry.parts) {
+    const b = layout.get(id)?.box;
+    if (!b) continue;
+    const centre = [0, 1, 2].map((a) => (b.min[a] + b.max[a]) / 2);
+    targets.set(id, [0, 1, 2].map((a) => p[a] + (centre[a] - p[a]) * factor) as [number, number, number]);
+  }
+  let next = edit(manifest, (draft) => {
+    for (const id of entry.parts) {
+      const part = partOf(draft, id);
+      const scale = (part.placement?.scale ?? [1, 1, 1]).map((v) => round3(v * factor)) as [number, number, number];
+      part.placement = { ...part.placement, scale };
+    }
+  });
+  for (let pass = 0; pass < 2; pass++) {
+    for (const [id, target] of targets) {
+      for (const a of [0, 1, 2] as Axis[]) next = setPartCentre(next, id, a, round3(target[a]), raw);
+    }
+  }
+  return next;
+}
+
+/** Land the entry\'s union centre at an absolute coordinate on one axis —
+ * the panel\'s position fields, speaking the same mm a part\'s do. */
+export function setEntryCentre(
+  manifest: Manifest, entryId: string, axis: Axis, mm: number, raw: Map<string, PartBounds>,
+): Manifest {
+  if (!Number.isFinite(mm)) throw new EditError('position must be a number of millimetres');
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  const box = entryBoxOf(manifest, entryId, raw);
+  const delta = mm - box.centre[axis];
+  if (Math.abs(delta) < 1e-9) return manifest;
+  const deltas: [number, number, number] = [0, 0, 0];
+  deltas[axis] = round3(delta);
+  const isGroup = (manifest.groups ?? []).some((g) => g.id === entryId);
+  return isGroup ? nudgeGroup(manifest, entryId, deltas) : nudgeVariant(manifest, entryId, deltas);
+}
+
 // ── position ────────────────────────────────────────────────────────────────
 
 /**

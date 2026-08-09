@@ -978,13 +978,17 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     (await page.isVisible('[data-testid="variant-price"]'))
     && !(await page.isVisible('[data-testid="addon-toggle"]')), '');
 
-  // Duplicate the whole set from its editor: parts, joints, colours and
+  // Duplicate the whole set from the explorer: parts, joints, colours and
   // exclusivity all copied; the viewer rebuilds so the copies render.
   await page.click('.part-name:has-text("Body style")');
   await page.waitForTimeout(200);
   check('the set header opens the variant editor',
     await page.isVisible('[data-testid="variant-editor-body-style"]'), '');
-  await page.click('[data-testid="duplicate-entry"]');
+  check('the set editor transforms like a part — position, rotation, no set-management section',
+    (await page.isVisible('[data-testid="set-pos-x"]'))
+    && (await page.isVisible('[data-testid="set-rot-x"]'))
+    && !(await page.isVisible('[data-testid="section-variant-set"]')), '');
+  await page.click('[data-testid="duplicate-body-style"]');
   await page.waitForFunction(() => (window).__studio?.manifest?.parts?.length === 4, { timeout: 20000 });
   await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
   m = await manifest();
@@ -1067,8 +1071,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   check('the assembly header carries a delete ✕ of its own',
     await page.isVisible('[data-testid="delete-shell"]'), '');
 
-  // Opening the assembly's editor + Transform parks a translate-only gizmo
-  // at the set's centre of mass.
+  // Opening the assembly's editor + Transform parks the FULL gizmo at the
+  // set's centre of mass — an assembly transforms like a part now.
   await page.click('.part-name:has-text("Shell")');
   await page.waitForTimeout(200);
   await page.click('[data-testid="gizmo-transform"]');
@@ -1077,8 +1081,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
     translate: !!window.__studioGizmo.translate.object,
     rotate: !!window.__studioGizmo.rotate.object,
   }));
-  check('a translate-only gizmo parks at the assembly\'s centre of mass',
-    setGizmo.translate && !setGizmo.rotate, setGizmo);
+  check('the full gizmo parks at the assembly\'s centre of mass',
+    setGizmo.translate && setGizmo.rotate, setGizmo);
   await page.click('[data-testid="gizmo-transform"]');
   await page.waitForTimeout(150);
   await page.click('[data-testid="eye-shell"]');

@@ -16,7 +16,7 @@ import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
 import type { TextOption } from '../../../embed/src/manifest/types.ts';
 import { openCurveSegments, curvePoint, type Pt } from '../../../embed/src/runtime/text-path.ts';
-import { applyGizmoPose, setCameraView, setTextPath, snapFaces, nudgeGroup, nudgeVariant, type GizmoPose } from '../lib/manifest-edit.ts';
+import { applyGizmoPose, setCameraView, setTextPath, snapFaces, nudgeGroup, nudgeVariant, rotateEntry, scaleEntryBy, type GizmoPose } from '../lib/manifest-edit.ts';
 import { Gizmo, type GizmoMode, type CommitPhase } from './gizmo.ts';
 import { ViewCube } from './view-cube.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -111,7 +111,11 @@ export function ViewerPane(props: {
   const commitCtx = useRef({ project: props.project, selectedPart: props.selectedPart, editingEntity: props.editingEntity, onChange: props.onChange });
   commitCtx.current = { project: props.project, selectedPart: props.selectedPart, editingEntity: props.editingEntity, onChange: props.onChange };
   const proxyRef = useRef<THREE.Object3D | null>(null);
-  const proxyBaseRef = useRef<[number, number, number] | null>(null);
+  const proxyBaseRef = useRef<{
+    position: [number, number, number];
+    rotationDeg: [number, number, number];
+    scale: [number, number, number];
+  } | null>(null);
 
   // One viewer + gizmo per loaded model (keyed by the blob URL).
   useEffect(() => {
@@ -149,18 +153,41 @@ export function ViewerPane(props: {
       midDrag = phase !== 'end';
       try {
         if (editingEntity) {
-          // The proxy's travel since the last commit becomes a whole-set
-          // nudge — the same op the panel's Move-together fields use.
+          // The proxy started at identity, so its pose reads as deltas from
+          // the last commit: travel becomes a whole-set nudge, turn becomes
+          // a rigid rotateEntry about the proxy (the centre of mass the
+          // handles sit on), a scale handle becomes a uniform scaleEntryBy.
           const base = proxyBaseRef.current;
           if (!base) return;
-          const deltas: [number, number, number] = [
-            pose.position[0] - base[0], pose.position[1] - base[1], pose.position[2] - base[2],
+          const move: [number, number, number] = [
+            pose.position[0] - base.position[0],
+            pose.position[1] - base.position[1],
+            pose.position[2] - base.position[2],
           ];
-          proxyBaseRef.current = [...pose.position];
-          if (deltas.every((d) => Math.abs(d) < 1e-9)) return;
-          onChange(editingEntity.kind === 'group'
-            ? nudgeGroup(project.manifest, editingEntity.id, deltas)
-            : nudgeVariant(project.manifest, editingEntity.id, deltas), { transient });
+          const turn: [number, number, number] = [
+            pose.rotationDeg[0] - base.rotationDeg[0],
+            pose.rotationDeg[1] - base.rotationDeg[1],
+            pose.rotationDeg[2] - base.rotationDeg[2],
+          ];
+          // The handle that moved furthest from its base sets the ratio —
+          // an assembly always scales uniformly (see scaleEntryBy).
+          const factor = pose.scale
+            .map((v, a) => v / (base.scale[a] || 1))
+            .reduce((best, r) => (r > 0 && Math.abs(Math.log(r)) > Math.abs(Math.log(best)) ? r : best), 1);
+          const pivot = base.position;
+          proxyBaseRef.current = {
+            position: [...pose.position], rotationDeg: [...pose.rotationDeg], scale: [...pose.scale],
+          };
+
+          let m = project.manifest;
+          if (turn.some((d) => Math.abs(d) > 1e-6)) m = rotateEntry(m, editingEntity.id, turn, project.raw, pivot);
+          if (Math.abs(factor - 1) > 1e-6) m = scaleEntryBy(m, editingEntity.id, factor, project.raw, pivot);
+          if (move.some((d) => Math.abs(d) > 1e-9)) {
+            m = editingEntity.kind === 'group'
+              ? nudgeGroup(m, editingEntity.id, move)
+              : nudgeVariant(m, editingEntity.id, move);
+          }
+          if (m !== project.manifest) onChange(m, { transient });
           return;
         }
         if (!selectedPart) return;
@@ -289,6 +316,35 @@ export function ViewerPane(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  // Opening an assembly / variant set editor eases the camera onto it — the
+  // same treatment a selected part gets, but centred on the set's centre of
+  // mass so orbiting pivots where the material is. Keyed on the entity's id,
+  // not the object: each edit rebuilds the object and mid-edit refocusing
+  // would fight the merchant's own orbiting.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const entity = props.editingEntity;
+    if (!viewer || !entity) return;
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (const partId of entity.parts) {
+      const box = viewer.partBox(partId);
+      if (!box) continue;
+      for (const a of [0, 1, 2]) {
+        min[a] = Math.min(min[a], box.min[a]);
+        max[a] = Math.max(max[a], box.max[a]);
+      }
+    }
+    if (!Number.isFinite(min[0])) return;
+    const com = viewer.centreOfMassOf(entity.parts);
+    const centre = com
+      ? [com.x, com.y, com.z] as [number, number, number]
+      : [0, 1, 2].map((a) => (min[a] + max[a]) / 2) as [number, number, number];
+    const span = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+    viewer.focusOn(centre, { distance: Math.max(span * 2.4, spanRef.current * 0.7) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.editingEntity?.id]);
+
   // Clicking away from a part IS the switch back to orbiting: with nothing
   // selected and no set editor open, Transform has no target, so it disarms
   // itself instead of lying in wait for the next selection.
@@ -304,8 +360,10 @@ export function ViewerPane(props: {
     if (axes) axes.visible = !((props.selectedPart || props.editingEntity) && mode === 'transform');
   }, [props.selectedPart, props.editingEntity, mode, props.project.modelUrl]);
 
-  // An open assembly / variant set editor + Transform mode = a translate
-  // gizmo at the set's centre of mass, moving all members as one.
+  // An open assembly / variant set editor + Transform mode = the FULL gizmo
+  // at the set's centre of mass, transforming all members as one rigid
+  // thing. The proxy re-seats at identity after every committed step, so
+  // its pose is always a delta.
   useEffect(() => {
     const viewer = viewerRef.current;
     const gizmo = gizmoRef.current;
@@ -317,21 +375,30 @@ export function ViewerPane(props: {
       if (!props.selectedPart) gizmo.attach(null);
       return;
     }
-    const min = [Infinity, Infinity, Infinity];
-    const max = [-Infinity, -Infinity, -Infinity];
-    for (const partId of entity.parts) {
-      const box = viewer.partBox(partId);
-      if (!box) continue;
-      for (const a of [0, 1, 2]) {
-        min[a] = Math.min(min[a], box.min[a]);
-        max[a] = Math.max(max[a], box.max[a]);
+    // Centre of MASS, not of bounding box: the handles sit where the
+    // material is, and rotation pivots about the same point.
+    let centre = viewer.centreOfMassOf(entity.parts);
+    if (!centre) {
+      const min = [Infinity, Infinity, Infinity];
+      const max = [-Infinity, -Infinity, -Infinity];
+      for (const partId of entity.parts) {
+        const box = viewer.partBox(partId);
+        if (!box) continue;
+        for (const a of [0, 1, 2]) {
+          min[a] = Math.min(min[a], box.min[a]);
+          max[a] = Math.max(max[a], box.max[a]);
+        }
       }
+      if (!Number.isFinite(min[0])) return;
+      centre = new THREE.Vector3(...[0, 1, 2].map((a) => (min[a] + max[a]) / 2) as [number, number, number]);
     }
-    if (!Number.isFinite(min[0])) return;
-    const centre: [number, number, number] = [0, 1, 2].map((a) => (min[a] + max[a]) / 2) as [number, number, number];
-    proxy.position.set(...centre);
-    proxyBaseRef.current = centre;
-    gizmo.attachTranslate(proxy);
+    proxy.position.copy(centre);
+    proxy.rotation.set(0, 0, 0);
+    proxy.scale.set(1, 1, 1);
+    proxyBaseRef.current = {
+      position: [centre.x, centre.y, centre.z], rotationDeg: [0, 0, 0], scale: [1, 1, 1],
+    };
+    gizmo.attachObject(proxy);
   }, [props.editingEntity, mode, props.project.manifest, props.selectedPart]);
 
   // The dark pill glides onto the armed tool (the framer-motion layoutId tab

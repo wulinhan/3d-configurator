@@ -204,13 +204,26 @@ export async function createProject(
   return rows[0];
 }
 
-/** A project the user may see, or null. The membership join IS the
- * permission check (see the note at the top of this file). */
+/**
+ * A project the user may see, or null; the joins ARE the permission check
+ * (see the note at the top of this file).
+ *
+ * Two doors in: an org membership, or a per-project share. Whichever grants
+ * MORE wins, so sharing "viewer" with your own org's editor demotes nobody,
+ * and an org viewer handed an editor share genuinely gets to edit that one
+ * project. A user with neither simply gets no rows.
+ */
 export async function projectFor(sql: Sql, projectId: string, userId: string): Promise<(ProjectRow & { role: Role }) | null> {
   const { rows } = await sql.query<ProjectRow & { role: Role }>(
-    `select p.*, m.role from projects p
-     join memberships m on m.org_id = p.org_id and m.user_id = $2
-     where p.id = $1`, [projectId, userId]);
+    `select p.*,
+       (case when m.role = 'owner' then 'owner'
+             when 'editor' in (m.role, s.role) then 'editor'
+             else coalesce(m.role, s.role) end)::text as role
+     from projects p
+     left join memberships m on m.org_id = p.org_id and m.user_id = $2
+     left join project_shares s on s.project_id = p.id and s.user_id = $2
+     where p.id = $1 and (m.user_id is not null or s.user_id is not null)`,
+    [projectId, userId]);
   return rows[0] ?? null;
 }
 
@@ -276,6 +289,66 @@ export async function setProjectThumb(sql: Sql, projectId: string, assetId: stri
 
 export async function renameProject(sql: Sql, projectId: string, name: string, now: Date): Promise<void> {
   await sql.query('update projects set name = $2, updated_at = $3 where id = $1', [projectId, name, now]);
+}
+
+/**
+ * Rename from the DASHBOARD, where there is no open editor holding the
+ * manifest.
+ *
+ * The stored manifest's own `name` has to move with the row: autosave sends
+ * `manifest.name` on every write, so a row-only rename would be quietly
+ * reverted the next time the project was opened and touched. The revision
+ * bump is what makes the change stick the other way round too — an editor
+ * tab already open goes into its normal conflict path instead of silently
+ * overwriting the new name with the old one.
+ */
+export async function renameProjectEverywhere(sql: Sql, projectId: string, name: string, now: Date): Promise<number> {
+  const { rows } = await sql.query<{ revision: number }>(
+    `update projects set
+       name = $2,
+       manifest = jsonb_set(manifest, '{name}', to_jsonb($2::text)),
+       revision = revision + 1,
+       updated_at = $3
+     where id = $1 returning revision`, [projectId, name, now]);
+  if (!rows[0]) throw notFound('project');
+  return rows[0].revision;
+}
+
+// ── per-project shares ────────────────────────────────────────────────────
+
+export type ShareRole = 'editor' | 'viewer';
+
+export async function setShare(
+  sql: Sql, projectId: string, userId: string, role: ShareRole, byUserId: string, now: Date,
+): Promise<void> {
+  await sql.query(
+    `insert into project_shares (project_id, user_id, role, created_by, created_at)
+     values ($1, $2, $3, $4, $5)
+     on conflict (project_id, user_id) do update set role = excluded.role`,
+    [projectId, userId, role, byUserId, now]);
+}
+
+export async function removeShare(sql: Sql, projectId: string, userId: string): Promise<void> {
+  await sql.query('delete from project_shares where project_id = $1 and user_id = $2', [projectId, userId]);
+}
+
+export async function listShares(sql: Sql, projectId: string): Promise<Array<User & { role: ShareRole }>> {
+  const { rows } = await sql.query<User & { role: ShareRole }>(
+    `select u.id, u.email, u.name, s.role from project_shares s
+     join users u on u.id = s.user_id where s.project_id = $1 order by u.email`, [projectId]);
+  return rows;
+}
+
+/** What lands in the dashboard's "Shared with you" section. */
+export async function sharedProjectsFor(sql: Sql, userId: string): Promise<Array<ProjectRow & { share_role: ShareRole; owner_org: string }>> {
+  const { rows } = await sql.query<ProjectRow & { share_role: ShareRole; owner_org: string }>(
+    `select p.*, s.role as share_role, o.name as owner_org
+     from project_shares s
+     join projects p on p.id = s.project_id
+     join orgs o on o.id = p.org_id
+     where s.user_id = $1 and p.archived_at is null
+     order by p.updated_at desc`, [userId]);
+  return rows;
 }
 
 export async function archiveProject(sql: Sql, projectId: string, now: Date): Promise<void> {

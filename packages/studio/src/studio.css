@@ -644,7 +644,7 @@ input, select { font: inherit; }
 .dash-grid {
   list-style: none; margin: 0; padding: 0;
   display: grid; gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(252px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 }
 /* The card is one grid so the name can wrap without pushing the pill or the
  * arrow out of alignment with its neighbours. */
@@ -770,7 +770,7 @@ input, select { font: inherit; }
 .dash-card.has-thumb { grid-template-columns: 1fr auto; }
 .dash-thumb {
   grid-column: 1 / -1; position: relative;
-  aspect-ratio: 1; border-radius: 10px; overflow: hidden;
+  aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden;
   background: var(--surface); border: 1px solid var(--line);
   margin-bottom: 6px;
 }
@@ -779,7 +779,7 @@ input, select { font: inherit; }
 .dash-tag {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
-  padding: 3px 8px 3px 7px; border-radius: 4px 999px 999px 4px;
+  padding: 3px 9px; border-radius: 999px;
   background: rgba(255, 255, 255, .92); color: var(--ink2);
   border: 1px solid var(--line); backdrop-filter: blur(3px);
 }
@@ -791,3 +791,91 @@ input, select { font: inherit; }
 .dash-card.has-thumb .dash-card-name { grid-column: 1; grid-row: 2; }
 .dash-card.has-thumb .dash-card-meta { grid-column: 1; grid-row: 3; }
 .dash-card.has-thumb .dash-card-go { grid-column: 2; grid-row: 2 / span 2; }
+
+/* ── dashboard: account menu, card menus, dialogs ─────────────────────── */
+.dash-sep { color: var(--line); font-size: 15px; margin: 0 2px; }
+.account { position: relative; }
+.account-btn { border: none; background: none; padding: 2px; border-radius: 50%; }
+.account-btn:hover .avatar, .account-btn[aria-expanded="true"] .avatar { box-shadow: 0 0 0 3px var(--line); }
+.avatar {
+  width: 30px; height: 30px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff;
+  font-size: 11.5px; font-weight: 700; letter-spacing: .03em; user-select: none;
+}
+.avatar-sm { width: 26px; height: 26px; font-size: 10.5px; }
+
+.menu {
+  display: flex; flex-direction: column; min-width: 210px;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(29, 29, 31, .13);
+  padding: 6px; z-index: 40;
+}
+.account-pop { position: absolute; top: calc(100% + 8px); right: 0; }
+.menu-id { display: flex; align-items: center; gap: 10px; padding: 8px 10px; }
+.menu-id-text { display: flex; flex-direction: column; min-width: 0; }
+.menu-id-text strong { font-size: 13px; }
+.menu-id-text span { font-size: 12px; color: var(--ink2); overflow: hidden; text-overflow: ellipsis; }
+.menu-sep { height: 1px; background: var(--line); margin: 5px 4px; }
+.menu-item {
+  border: none; background: none; text-align: left;
+  padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--ink);
+}
+.menu-item:hover { background: var(--surface); }
+.menu-item.danger { color: var(--danger); }
+
+/* The ⋯ on a card, and its little menu. */
+.dash-actions { position: absolute; top: 10px; right: 10px; z-index: 3; }
+.dash-card { position: relative; }
+.dash-dots {
+  width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .92); color: var(--ink2);
+  display: grid; place-items: center; padding: 0;
+  opacity: 0; transition: opacity .12s;
+}
+.dash-card:hover .dash-dots, .dash-dots[aria-expanded="true"] { opacity: 1; }
+.dash-dots:hover { color: var(--ink); border-color: #c5c2bb; }
+.card-pop { position: absolute; top: calc(100% + 6px); right: 0; min-width: 150px; }
+
+.dash-rename {
+  font-weight: 600; font-size: 14.5px; font-family: inherit;
+  border: 1.5px solid var(--ink); border-radius: 7px; padding: 2px 6px;
+  margin: -3px 0; min-width: 0; width: 100%;
+}
+.dash-rename:focus { outline: none; }
+
+.dash-head-shared { margin-top: 36px; }
+.dash-head-shared h1 { font-size: 17px; color: var(--ink2); }
+
+/* One dialog card serves delete, share and people. */
+.dialog-card {
+  width: min(480px, calc(100vw - 40px)); max-height: min(600px, 86vh);
+  overflow-y: auto; background: #fff; border-radius: 16px;
+  padding: 22px 24px 24px; display: flex; flex-direction: column; gap: 12px;
+  scrollbar-width: thin; scrollbar-color: #d8d5cf transparent;
+}
+.dialog-card h3 { margin: 0; font-size: 17px; }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dialog-row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.dialog-card input[type="email"], .dialog-card input:not([type]) {
+  border: 1.5px solid var(--line); border-radius: 9px; padding: 9px 11px;
+  font-size: 13px; background: #fff; width: 100%;
+}
+.dialog-card input:focus { outline: none; border-color: var(--ink); }
+.danger-cta { background: var(--danger); }
+.danger-cta:hover { background: #963627; }
+.danger-cta:disabled { background: var(--line); color: var(--ink2); cursor: default; }
+
+.share-add { display: flex; gap: 8px; }
+.share-add input { flex: 1; min-width: 0; }
+.share-add select, .people-role {
+  border: 1.5px solid var(--line); border-radius: 9px; padding: 8px 8px;
+  font-size: 12.5px; background: #fff;
+}
+.people-you { color: var(--ink3, var(--ink2)); font-style: normal; font-size: 12px; }
+.people-role-pill {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--surface); color: var(--ink2); border: 1px solid var(--line);
+  white-space: nowrap;
+}

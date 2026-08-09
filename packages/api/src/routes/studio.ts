@@ -9,12 +9,14 @@ import { type Deps, SESSION_COOKIE, requireUser, requireStudioOrigin, addHeaders
 import { badRequest, forbidden, notFound, unprocessable, tooMany } from '../errors.ts';
 import { newToken, sha256 } from '../ids.ts';
 import { assetKey } from '../storage.ts';
-import { signInEmail } from '../mail.ts';
+import { signInEmail, shareEmail } from '../mail.ts';
 import {
   type Role, roleAtLeast, findUserByEmail, createUser, createOrg, addMember, removeMember,
   membershipsOf, membersOf, roleIn, createLoginToken, consumeLoginToken, createSession,
   deleteSession, putAsset, getAsset, createProject, projectFor, listProjects, saveProject,
-  pruneRevisions, setProjectModel, setProjectThumb, renameProject, archiveProject, createPublication,
+  pruneRevisions, setProjectModel, setProjectThumb, renameProject, renameProjectEverywhere,
+  archiveProject, createPublication, setShare, removeShare, listShares, sharedProjectsFor,
+  type ShareRole,
   listPublications, setLivePublication, listOrigins, setOrigins, normaliseEmail,
 } from '../store.ts';
 import { validateManifest } from '../../../embed/src/manifest/validate.ts';
@@ -133,16 +135,16 @@ export function studioRoutes(deps: Deps): Route[] {
         if (!spent) throw badRequest('that link has expired or has already been used');
 
         let user = await findUserByEmail(sql, spent.email);
-        if (!user) {
-          user = await createUser(sql, spent.email, clock.now());
-          // Signing up gives you somewhere to work. An invited user joins the
-          // inviting org instead of getting an empty one of their own.
-          if (!spent.invite) {
-            const workshop = await createOrg(sql, `${spent.email.split('@')[0]}'s workshop`, clock.now());
-            await addMember(sql, workshop.id, user.id, 'owner', clock.now());
-          }
-        }
+        if (!user) user = await createUser(sql, spent.email, clock.now());
         if (spent.invite) await addMember(sql, spent.invite.orgId, user.id, spent.invite.role, clock.now());
+        // Everyone signs in to somewhere they can work. Checked on the
+        // MEMBERSHIPS rather than on user-creation: an account can exist
+        // before its first sign-in (a project was shared with the address),
+        // and that person still deserves a workshop of their own.
+        if (!(await membershipsOf(sql, user.id)).length) {
+          const workshop = await createOrg(sql, `${spent.email.split('@')[0]}'s workshop`, clock.now());
+          await addMember(sql, workshop.id, user.id, 'owner', clock.now());
+        }
 
         await establishSession(ctx, user.id);
         return { user, ...(await me(user.id)) };
@@ -174,8 +176,8 @@ export function studioRoutes(deps: Deps): Route[] {
 
         const email = normaliseEmail(identity.email);
         let user = await findUserByEmail(sql, email);
-        if (!user) {
-          user = await createUser(sql, email, clock.now(), identity.name);
+        if (!user) user = await createUser(sql, email, clock.now(), identity.name);
+        if (!(await membershipsOf(sql, user.id)).length) {
           const workshop = await createOrg(sql, `${email.split('@')[0]}'s workshop`, clock.now());
           await addMember(sql, workshop.id, user.id, 'owner', clock.now());
         }
@@ -292,6 +294,9 @@ export function studioRoutes(deps: Deps): Route[] {
             id: p.id, orgId: p.org_id, name: p.name, revision: p.revision, valid: p.valid,
             manifest: p.manifest, hasModel: !!p.model_asset_id,
             live: p.live_publication_id, updatedAt: p.updated_at,
+            // The caller's own standing, so the editor can go read-only for
+            // a viewer instead of letting them edit into a wall of 403s.
+            role: p.role,
           },
         };
       },
@@ -395,6 +400,82 @@ export function studioRoutes(deps: Deps): Route[] {
         const object = asset && await deps.store.get(asset.storage_key);
         if (!object) throw notFound('thumbnail');
         return new Raw(object.bytes, object.contentType, { 'cache-control': 'private, max-age=60' });
+      },
+    },
+
+    // ── renaming, from the dashboard ──────────────────────────────────────
+    {
+      method: 'POST',
+      pattern: '/v1/projects/:id/rename',
+      async handler(ctx) {
+        const { project: p } = await project(ctx, 'editor');
+        const body = await readJson<{ name?: string }>(ctx.req, 4096);
+        const name = (body.name ?? '').trim();
+        if (!name) throw badRequest('a product needs a name');
+        if (name.length > 120) throw badRequest('that name is too long');
+        const revision = await renameProjectEverywhere(sql, p.id, name, clock.now());
+        return { name, revision };
+      },
+    },
+
+    // ── sharing one project with one person ───────────────────────────────
+    {
+      /** Projects other people shared with the caller — the dashboard's
+       * "Shared with you" section. */
+      method: 'GET',
+      pattern: '/v1/me/shared',
+      async handler(ctx) {
+        const user = await requireUser(deps, ctx);
+        const rows = await sharedProjectsFor(sql, user.id);
+        return {
+          projects: rows.map((p) => ({
+            id: p.id, name: p.name, updatedAt: p.updated_at,
+            hasThumb: !!p.thumb_asset_id, live: p.live_publication_id,
+            role: p.share_role, from: p.owner_org,
+          })),
+        };
+      },
+    },
+    {
+      method: 'GET',
+      pattern: '/v1/projects/:id/shares',
+      async handler(ctx) {
+        await project(ctx, 'editor');
+        return { shares: await listShares(sql, ctx.params.id) };
+      },
+    },
+    {
+      /**
+       * Share by EMAIL, whether or not the address has an account yet. An
+       * unknown address gets a user row now and finds the share waiting the
+       * first time they sign in — which also means the share email can say
+       * "sign in to open it" and be telling the truth.
+       */
+      method: 'PUT',
+      pattern: '/v1/projects/:id/shares',
+      async handler(ctx) {
+        const { user, project: p } = await project(ctx, 'editor');
+        const body = await readJson<{ email?: string; role?: string }>(ctx.req, 4096);
+        const email = normaliseEmail(body.email ?? '');
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw badRequest('a valid email is required');
+        const role = body.role === 'viewer' ? 'viewer' : body.role === 'editor' ? 'editor' : null;
+        if (!role) throw badRequest('role must be editor or viewer');
+        if (email === normaliseEmail(user.email)) throw badRequest('that is you — no need to share');
+
+        let target = await findUserByEmail(sql, email);
+        if (!target) target = await createUser(sql, email, clock.now());
+        await setShare(sql, p.id, target.id, role as ShareRole, user.id, clock.now());
+        await deps.mail.send({ to: email, ...shareEmail(p.name, user.email, role, config.appBase) });
+        return { shares: await listShares(sql, p.id) };
+      },
+    },
+    {
+      method: 'DELETE',
+      pattern: '/v1/projects/:id/shares/:user',
+      async handler(ctx) {
+        const { project: p } = await project(ctx, 'editor');
+        await removeShare(sql, p.id, ctx.params.user);
+        return { shares: await listShares(sql, p.id) };
       },
     },
 

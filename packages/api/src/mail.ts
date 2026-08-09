@@ -40,6 +40,16 @@ export function resendMailer(apiKey: string, from: string): Mailer {
   };
 }
 
+export function shareEmail(projectName: string, byEmail: string, role: 'editor' | 'viewer', appBase: string): { subject: string; text: string } {
+  return {
+    subject: `${byEmail} shared "${projectName}" with you`,
+    text: `${byEmail} shared the product "${projectName}" with you in the configurator Studio`
+      + (role === 'editor' ? ', with permission to edit it.' : ', to view and try out.')
+      + `\n\nSign in with this email address to open it:\n${appBase}\n\n`
+      + 'If you were not expecting this, you can ignore this email.',
+  };
+}
+
 export function signInEmail(link: string, orgName?: string): { subject: string; text: string } {
   return orgName
     ? {
