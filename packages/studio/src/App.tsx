@@ -613,7 +613,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         {cloudProjectId
           ? (
             <button className="brand brand-back" data-testid="back-to-products" onClick={() => go('/')}>
-              ‹ Studio
+              <span className="back-chip" aria-hidden="true">‹</span> Studio
             </button>
           )
           : <span className="brand">Studio</span>}
@@ -626,7 +626,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
             setManifest(draft);
           }}
         />
-        {cloudProjectId && (
+        {/* Nothing to say = nothing shown: before the first edit the state is
+          * 'clean' and an empty pill would just look broken. */}
+        {cloudProjectId && (readOnly || saveState !== 'clean') && (
           <span
             className={`save-state is-${readOnly ? 'clean' : saveState}`} data-testid="save-state"
             role="status" title={readOnly ? 'Shared with you to view — changes stay in this tab' : saveNote ?? undefined}

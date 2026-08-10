@@ -969,52 +969,57 @@ function TextSlotEditor(props: {
           onCommit={(v, o) => patch({ pricePerChar: v }, o)}
         />
       </div>
-      <label className="lock">
-        <input
-          type="checkbox" checked={!!slot.perChar} data-testid={`text-spawn-${slot.id}`}
-          onChange={(e) => patch({ perChar: e.target.checked ? {} : null })}
-        />
-        One piece per letter — each typed character spawns its own copy of this
-        part (or its whole assembly)
-      </label>
-      {slot.perChar && (
-        <div className="field-row">
-          <label className="field">
-            <span className="field-label">Pattern</span>
-            <Select
-              ariaLabel="Spawn pattern" testId={`text-spawn-mode-${slot.id}`} compact
-              value={slot.perChar.mode ?? 'line'}
-              options={[{ value: 'line', label: 'Linear' }, { value: 'circle', label: 'Circular' }]}
-              onChange={(v) => patch({ perChar: { ...slot.perChar, mode: v as 'line' | 'circle' } })}
-            />
-          </label>
-          {(slot.perChar.mode ?? 'line') === 'line' ? (
-            <>
-              <label className="field">
-                <span className="field-label">Row axis</span>
-                <Select
-                  ariaLabel="Row axis" testId={`text-spawn-axis-${slot.id}`} compact
-                  value={String(slot.perChar.axis ?? 0)}
-                  options={UI_AXES.map(({ label, axis }) => ({ value: String(axis), label, tint: AXIS_COLOURS[label] }))}
-                  onChange={(v) => patch({ perChar: { ...slot.perChar, axis: Number(v) as Axis } })}
-                />
-              </label>
-              <NumberField
-                label="Gap" value={slot.perChar.gapMm ?? 5} suffix="mm" testId={`text-spawn-gap-${slot.id}`}
-                onCommit={(v) => patch({ perChar: { ...slot.perChar, gapMm: v } })}
+      <div className="spawn-zone">
+        <label className="lock spawn-head">
+          <input
+            type="checkbox" checked={!!slot.perChar} data-testid={`text-spawn-${slot.id}`}
+            onChange={(e) => patch({ perChar: e.target.checked ? {} : null })}
+          />
+          <span className="spawn-title">
+            Build from letter pieces
+            <span className="spawn-sub">Each typed character spawns its own copy of this part (or its whole assembly).</span>
+          </span>
+        </label>
+        {slot.perChar && (
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">Pattern</span>
+              <Select
+                ariaLabel="Spawn pattern" testId={`text-spawn-mode-${slot.id}`} compact
+                value={slot.perChar.mode ?? 'line'}
+                options={[{ value: 'line', label: 'Linear' }, { value: 'circle', label: 'Circular' }]}
+                onChange={(v) => patch({ perChar: { ...slot.perChar, mode: v as 'line' | 'circle' } })}
               />
-            </>
-          ) : (
-            <NumberField
-              label="Step" value={slot.perChar.stepDeg ?? 30} suffix="°" step={5} testId={`text-spawn-step-${slot.id}`}
-              onCommit={(v) => patch({ perChar: { ...slot.perChar, stepDeg: v } })}
-            />
-          )}
-        </div>
-      )}
+            </label>
+            {(slot.perChar.mode ?? 'line') === 'line' ? (
+              <>
+                <label className="field">
+                  <span className="field-label">Row axis</span>
+                  <Select
+                    ariaLabel="Row axis" testId={`text-spawn-axis-${slot.id}`} compact
+                    value={String(slot.perChar.axis ?? 0)}
+                    options={UI_AXES.map(({ label, axis }) => ({ value: String(axis), label, tint: AXIS_COLOURS[label] }))}
+                    onChange={(v) => patch({ perChar: { ...slot.perChar, axis: Number(v) as Axis } })}
+                  />
+                </label>
+                <NumberField
+                  label="Gap" value={slot.perChar.gapMm ?? 5} suffix="mm" testId={`text-spawn-gap-${slot.id}`}
+                  onCommit={(v) => patch({ perChar: { ...slot.perChar, gapMm: v } })}
+                />
+              </>
+            ) : (
+              <NumberField
+                label="Step" value={slot.perChar.stepDeg ?? 30} suffix="°" step={5} testId={`text-spawn-step-${slot.id}`}
+                onCommit={(v) => patch({ perChar: { ...slot.perChar, stepDeg: v } })}
+              />
+            )}
+          </div>
+        )}
+      </div>
       {/* The sketch plane's origin, typed instead of picked — the same
         * Z-up axis naming every other position field uses. The plane's
         * facing stays as picked; these slide the text along the part. */}
+      <p className="slot-subhead">Placement on the part (mm)</p>
       <div className="field-row">
         {UI_AXES.map(({ label, axis }) => (
           <NumberField
@@ -1028,7 +1033,6 @@ function TextSlotEditor(props: {
           />
         ))}
       </div>
-      <p className="hint">Position on the part, in its own millimetres.</p>
       <div className="match-row">
         <button
           className="mini danger" data-testid={`text-remove-${slot.id}`}
@@ -1079,6 +1083,7 @@ function ImageZoneEditor(props: {
           onCommit={(v, o) => patch({ rotationDeg: v }, o)}
         />
       </div>
+      <p className="slot-subhead">Placement on the part (mm)</p>
       <div className="field-row">
         <NumberField
           key={`u-${tick}`} label="Slide ↔" value={0} suffix="mm" testId={`image-slide-u-${zone.id}`}
@@ -1089,9 +1094,6 @@ function ImageZoneEditor(props: {
           onCommit={(v) => { if (v) slide(0, v); }}
         />
       </div>
-      <p className="hint">
-        Slide moves the zone across its surface.
-      </p>
       <label className="field wide">
         <span className="field-label">Empty-zone wording (customers see it on the part)</span>
         <input

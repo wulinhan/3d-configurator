@@ -725,8 +725,15 @@ input, select { font: inherit; }
 .brand-back {
   background: none; border: none; padding: 0; color: var(--ink);
   font-weight: 700; font-size: 14px; letter-spacing: .04em;
+  display: inline-flex; align-items: center; gap: 8px;
 }
-.brand-back:hover { color: var(--ink2); }
+.back-chip {
+  width: 26px; height: 26px; display: grid; place-items: center;
+  border: 1.5px solid var(--line); border-radius: 8px; background: #fff;
+  font-size: 16px; line-height: 1; color: var(--ink2);
+  padding-bottom: 2px; /* optical centring — the ‹ sits low in its em box */
+}
+.brand-back:hover .back-chip { border-color: #c5c2bb; background: var(--surface); color: var(--ink); }
 
 /* ── publish, hosted ── */
 .copy-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
@@ -773,6 +780,22 @@ input, select { font: inherit; }
   letter-spacing: .04em; text-transform: uppercase; color: var(--ink2);
 }
 .slot-owner:first-child { margin-top: 0; }
+/* A heading INSIDE a slot card — the group of fields under it is one idea,
+ * announced up front rather than explained in a trailing footnote. */
+.slot-subhead {
+  margin: 6px 0 0; font-size: 11px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink2);
+}
+/* The per-letter spawner: one lightly-tinted zone holding the toggle and
+ * its pattern settings, so they read as a single feature. */
+.spawn-zone {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px; border-radius: 10px; background: var(--surface);
+}
+.spawn-head { align-items: flex-start; }
+.spawn-head input { margin-top: 2px; }
+.spawn-title { display: flex; flex-direction: column; gap: 2px; font-weight: 600; color: var(--ink); }
+.spawn-sub { font-size: 11.5px; font-weight: 400; color: var(--ink2); line-height: 1.45; }
 .slot-chevron {
   display: grid; place-items: center; width: 24px; height: 24px;
   border: none; background: none; color: var(--ink2); border-radius: 6px;
