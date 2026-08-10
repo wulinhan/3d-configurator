@@ -10,7 +10,9 @@ import type { Manifest } from '../../embed/src/manifest/types.ts';
 import { initManifest, boundsOf, type PartBounds } from '../src/lib/manifest-init.ts';
 import {
   makeGroup, withAnchor, rotateEntry, scaleEntryBy, setEntryCentre, entryBoxOf, EditError,
+  addTextSlot, setTextSlot, addRepeat, setRepeat,
 } from '../src/lib/manifest-edit.ts';
+import type { TextOption } from '../../embed/src/manifest/types.ts';
 
 const near = (a: number, b: number, tol = 0.02) => assert.ok(Math.abs(a - b) < tol, `${a} !== ${b}`);
 const tri = (positions: number[]) => ({
@@ -110,6 +112,26 @@ test('setEntryCentre lands the union centre at an absolute coordinate', () => {
   // Members kept their spacing — the move was rigid.
   const [l, r] = [centreOf(moved, 'left'), centreOf(moved, 'right')];
   near(r[0] - l[0], 20, 0.05);
+});
+
+test('scaling an entry scales its patterns\' spacing too — per-letter gaps and repeat rows', () => {
+  let m = makeGroup(fresh(), ['left', 'right'], 'Pair');
+  // A per-letter run riding on a member, and a linear repeat on the other.
+  m = addTextSlot(m, 'left', { origin: [0, 5, 5], normal: [0, 0, 1] });
+  m = setTextSlot(m, 'left-text', { perChar: { axis: 0, gapMm: 6 } });
+  m = addRepeat(m, 'right');
+  const specId = m.parts.find((p) => p.id === 'right')!.repeats![0].id;
+  m = setRepeat(m, 'right', specId, { mode: 'line', axis: 0, gapMm: 4 });
+
+  const scaled = scaleEntryBy(m, 'pair', 2, RAW);
+  const slot = scaled.options.find((o): o is TextOption => o.type === 'text');
+  assert.equal(slot?.perChar?.gapMm, 12);
+  assert.equal(scaled.parts.find((p) => p.id === 'right')!.repeats![0].gapMm, 8);
+  // Angular steps are size-free: a circular gap survives a scale untouched.
+  const ring = setTextSlot(m, 'left-text', { perChar: { mode: 'circle', stepDeg: 30 } });
+  const ringScaled = scaleEntryBy(ring, 'pair', 2, RAW);
+  const ringSlot = ringScaled.options.find((o): o is TextOption => o.type === 'text');
+  assert.equal(ringSlot?.perChar?.stepDeg, 30);
 });
 
 test('junk is refused before it can shear an assembly apart', () => {

@@ -152,6 +152,7 @@ export function withEntrySizeMm(
       for (let a = 0; a < 3; a++) scale[a] *= factors[a];
       part.placement = { ...part.placement, scale };
     }
+    scalePatternGaps(draft, entry.parts, factors);
   });
   for (let pass = 0; pass < 2; pass++) {
     for (const [id, target] of targets) {
@@ -281,6 +282,29 @@ export function rotateEntry(
 }
 
 /**
+ * A member's live patterns are part of the entry's shape: scaling the entry
+ * scales their linear spacing too, or per-letter runs and repeat rows crowd
+ * together while their pieces grow. Angular steps (circle mode) are
+ * size-free and stay. Mutates the DRAFT — call inside edit().
+ */
+function scalePatternGaps(draft: Manifest, partIds: string[], factors: [number, number, number]): void {
+  for (const option of draft.options) {
+    if (option.type !== 'text' || !option.perChar || !partIds.includes(option.part)) continue;
+    const axis = option.perChar.axis ?? 0;
+    if ((option.perChar.mode ?? 'line') === 'line' && factors[axis] !== 1) {
+      option.perChar = { ...option.perChar, gapMm: round3((option.perChar.gapMm ?? 5) * factors[axis]) };
+    }
+  }
+  for (const id of partIds) {
+    const part = draft.parts.find((p) => p.id === id);
+    for (const spec of part?.repeats ?? []) {
+      const axis = spec.axis ?? 0;
+      if (spec.mode === 'line' && factors[axis] !== 1) spec.gapMm = round3((spec.gapMm ?? 5) * factors[axis]);
+    }
+  }
+}
+
+/**
  * Scale a whole entry by a factor about a pivot — the gizmo\'s handle drag,
  * where withEntrySizeMm is the panel\'s absolute field. Uniform on purpose:
  * an assembly stretched on one axis shears its joints apart, which is never
@@ -311,6 +335,7 @@ export function scaleEntryBy(
       const scale = (part.placement?.scale ?? [1, 1, 1]).map((v) => round3(v * factor)) as [number, number, number];
       part.placement = { ...part.placement, scale };
     }
+    scalePatternGaps(draft, entry.parts, [factor, factor, factor]);
   });
   for (let pass = 0; pass < 2; pass++) {
     for (const [id, target] of targets) {

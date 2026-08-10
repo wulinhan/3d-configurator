@@ -253,7 +253,7 @@ function EntryMemberSlots(props: {
           </p>
           {textSlots.map((slot, i, all) => (
             <div key={slot.id}>
-              <p className="hint">On “{partName(slot.part)}”</p>
+              <p className="slot-owner">On “{partName(slot.part)}”</p>
               <TextSlotEditor
                 slot={slot} manifest={manifest} onChange={props.onChange} act={props.act}
                 onShapeText={props.onShapeText} shaping={props.shapingText === slot.id}
@@ -271,7 +271,7 @@ function EntryMemberSlots(props: {
           </p>
           {imageZones.map((zone, i, all) => (
             <div key={zone.id}>
-              <p className="hint">On “{partName(zone.part)}”</p>
+              <p className="slot-owner">On “{partName(zone.part)}”</p>
               <ImageZoneEditor
                 zone={zone} manifest={manifest} act={props.act}
                 first={i === 0} last={i === all.length - 1}
@@ -747,14 +747,20 @@ function SlotCard(props: {
           title="Customers see this name in the customiser"
           onChange={(e) => props.onRename(e.target.value)}
         />
-        <button
-          className="slot-move" data-testid={`slot-up-${props.id}`} aria-label="Move up"
-          disabled={props.first} onClick={() => props.onMove(-1)}
-        >▲</button>
-        <button
-          className="slot-move" data-testid={`slot-down-${props.id}`} aria-label="Move down"
-          disabled={props.last} onClick={() => props.onMove(1)}
-        >▼</button>
+        {/* One slot has no order to change — the arrows only appear once
+          * there is a sibling to swap with. */}
+        {!(props.first && props.last) && (
+          <>
+            <button
+              className="slot-move" data-testid={`slot-up-${props.id}`} aria-label="Move up"
+              disabled={props.first} onClick={() => props.onMove(-1)}
+            >▲</button>
+            <button
+              className="slot-move" data-testid={`slot-down-${props.id}`} aria-label="Move down"
+              disabled={props.last} onClick={() => props.onMove(1)}
+            >▼</button>
+          </>
+        )}
       </div>
       {open && <div className="slot-body">{props.children}</div>}
     </div>

@@ -46,10 +46,12 @@ input, select { font: inherit; }
 }
 .brand { font-weight: 700; font-size: 14px; letter-spacing: .04em; }
 .product-name {
-  border: 1.5px solid transparent; border-radius: 8px; padding: 6px 10px;
+  border: 1.5px solid var(--line); border-radius: 8px; padding: 6px 10px;
   font-size: 15px; font-weight: 600; min-width: 240px;
+  background: var(--surface);
 }
-.product-name:hover, .product-name:focus { border-color: var(--line); outline: none; }
+.product-name:hover { border-color: #c5c2bb; }
+.product-name:focus { border-color: #c5c2bb; background: #fff; outline: none; }
 .spacer { flex: 1; }
 .ghost {
   background: none; border: 1.5px solid var(--line); border-radius: 8px;
@@ -433,12 +435,23 @@ input, select { font: inherit; }
   width: 358px; max-width: calc(100% - 28px);
   background: #fff; border: 1px solid var(--line); border-radius: 12px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, .1);
-  padding: 16px; overflow-y: auto;
+  padding: 16px 12px 16px 16px; overflow-y: auto;
+  /* The scrollbar must not push content around as sections grow and shrink:
+   * the gutter is always reserved, and the bar itself is a slim inset thumb
+   * whose track stops short of the rounded corners instead of crossing them. */
+  scrollbar-gutter: stable;
   transform: translateX(calc(100% + 22px));
   transition: transform .24s ease, opacity .24s ease;
   opacity: 0; pointer-events: none;
   z-index: 4;
 }
+.props-float::-webkit-scrollbar { width: 10px; }
+.props-float::-webkit-scrollbar-track { background: transparent; margin: 14px 0; }
+.props-float::-webkit-scrollbar-thumb {
+  background: #d8d5ce; border-radius: 8px;
+  border: 3px solid #fff; background-clip: padding-box;
+}
+.props-float::-webkit-scrollbar-thumb:hover { background-color: #c5c2bb; }
 .props-float.is-open { transform: translateX(0); opacity: 1; pointer-events: auto; }
 
 .icon-btn { padding: 7px 9px; display: inline-flex; align-items: center; }
@@ -694,12 +707,21 @@ input, select { font: inherit; }
 }
 
 /* ── save state ── */
+/* A pill, not floating words: on the flat white header, bare text next to
+ * the name field read as a glitch rather than a status. */
 .save-state {
-  font-size: 12px; color: var(--ink2); min-width: 96px;
-  transition: color .15s;
+  font-size: 12px; color: var(--ink2);
+  display: inline-block; min-width: 84px; text-align: center;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--line);
+  transition: color .15s, background .15s, border-color .15s;
+  white-space: nowrap;
 }
-.save-state.is-saved { color: #2f6b3a; }
-.save-state.is-conflict, .save-state.is-error { color: var(--danger); font-weight: 600; }
+.save-state.is-saved { color: #2f6b3a; background: #ecf4ed; border-color: #d3e4d6; }
+.save-state.is-conflict, .save-state.is-error {
+  color: var(--danger); font-weight: 600;
+  background: #faedea; border-color: #eed2cc;
+}
 .brand-back {
   background: none; border: none; padding: 0; color: var(--ink);
   font-weight: 700; font-size: 14px; letter-spacing: .04em;
@@ -737,12 +759,20 @@ input, select { font: inherit; }
 
 /* ── slot cards (text slots + image zones) ─────────────────────────────── */
 .slot-card { padding: 0; overflow: hidden; }
+/* The header is part of the card's OUTLINE, not a filled bar — the card's
+ * own border does the framing and the header stays on white. */
 .slot-head {
   display: flex; align-items: center; gap: 6px;
-  padding: 7px 8px; background: var(--surface);
+  padding: 7px 8px; background: none;
   border-bottom: 1px solid var(--line);
 }
 .slot-card:has(> .slot-head:last-child) .slot-head { border-bottom: none; }
+/* Which member a slot belongs to, when it is surfaced at assembly level. */
+.slot-owner {
+  margin: 6px 0 4px; font-size: 11px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--ink2);
+}
+.slot-owner:first-child { margin-top: 0; }
 .slot-chevron {
   display: grid; place-items: center; width: 24px; height: 24px;
   border: none; background: none; color: var(--ink2); border-radius: 6px;
@@ -756,10 +786,10 @@ input, select { font: inherit; }
 .slot-name:hover, .slot-name:focus { border-color: var(--line); background: #fff; outline: none; }
 .slot-move {
   width: 24px; height: 24px; display: grid; place-items: center;
-  border: none; background: none; color: var(--ink2);
+  border: 1.5px solid var(--line); background: #fff; color: var(--ink2);
   border-radius: 6px; font-size: 9px;
 }
-.slot-move:hover:not(:disabled) { background: #edeae4; color: var(--ink); }
+.slot-move:hover:not(:disabled) { background: #f4f2ed; border-color: #c5c2bb; color: var(--ink); }
 .slot-move:disabled { opacity: .3; cursor: default; }
 .slot-body { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
 

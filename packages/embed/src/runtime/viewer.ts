@@ -150,6 +150,12 @@ export interface SurfaceHit {
  * cube at 90°. */
 export const CURVE_BREAK_DEG = 30;
 
+/** A canonical axis as a unit vector, turned by q — the direction a
+ * per-letter run marches once its template wears a rotation. */
+function axisDir(axis: number, q: THREE.Quaternion): THREE.Vector3 {
+  return new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0).applyQuaternion(q);
+}
+
 /** One per-letter run's live state (see Viewer.syncPerChar). */
 interface PerCharEntry {
   key: string;
@@ -1938,10 +1944,14 @@ export class Viewer {
     // customiser — piece k sits at centre + k·pitch, so the shift that puts
     // the run's mean at zero is −(centre + pitch·(N−1)/2). The target moves
     // with the piece count; the glide toward it happens frame by frame in
-    // updateTextRuns.
+    // updateTextRuns. A turned template marches off the canonical axis, so
+    // only the step's component ALONG that axis joins the target.
     if (this.centreTextRuns && mode === 'line') {
       const span = this.perCharSpan(members, axis, gap);
-      const target = -(span.centre + span.pitch * (chars.length - 1) / 2);
+      const carrierQ = this.meshes.get(option.part)?.quaternion ?? new THREE.Quaternion();
+      const pitch = this.perCharPitch(members, axis, gap, carrierQ);
+      const along = axisDir(axis, carrierQ).getComponent(axis);
+      const target = -(span.centre + pitch * along * (chars.length - 1) / 2);
       if (!entry.offset) entry.offset = { axis, current: 0, target };
       else { entry.offset.axis = axis; entry.offset.target = target; }
     } else {
@@ -1962,6 +1972,36 @@ export class Viewer {
     }
     if (!Number.isFinite(lo)) return { pitch: gap, centre: 0 };
     return { pitch: hi - lo + gap, centre: (lo + hi) / 2 };
+  }
+
+  /**
+   * The template's extent along its OWN row axis, plus the gap — measured in
+   * the carrier's frame, where the world box of a turned template would be
+   * inflated by the turn. Rotation-invariant by construction: turn the
+   * assembly and the letters keep exactly their spacing.
+   */
+  private perCharPitch(members: string[], axis: number, gap: number, carrierQ: THREE.Quaternion): number {
+    const inv = carrierQ.clone().invert();
+    const corner = new THREE.Vector3();
+    let lo = Infinity, hi = -Infinity;
+    for (const memberId of members) {
+      const mesh = this.meshes.get(memberId);
+      if (!mesh) continue;
+      const geo = mesh.geometry as THREE.BufferGeometry;
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      const bb = geo.boundingBox;
+      if (!bb) continue;
+      for (let c = 0; c < 8; c++) {
+        corner
+          .set(c & 1 ? bb.max.x : bb.min.x, c & 2 ? bb.max.y : bb.min.y, c & 4 ? bb.max.z : bb.min.z)
+          .multiply(mesh.scale).applyQuaternion(mesh.quaternion).add(mesh.position)
+          .applyQuaternion(inv);
+        const s = corner.getComponent(axis);
+        lo = Math.min(lo, s);
+        hi = Math.max(hi, s);
+      }
+    }
+    return Number.isFinite(lo) ? hi - lo + gap : gap;
   }
 
   /** The authored (layout) position of a part — what setManifest writes. */
@@ -1994,14 +2034,20 @@ export class Viewer {
       }
     }
 
+    // The pattern belongs to the TEMPLATE, not the world: pieces march along
+    // the carrier's axis (line) or ring its vertical (circle), so turning or
+    // scaling the whole assembly carries the entire run rigidly with it —
+    // spin AND orbit — instead of leaving copies strung along a world axis
+    // while each one twirls in place.
+    const carrierQ = this.meshes.get(entry.part)?.quaternion ?? new THREE.Quaternion();
     if (mode === 'line') {
-      const pitch = this.perCharSpan(members, axis, gap).pitch;
+      const pitch = this.perCharPitch(members, axis, gap, carrierQ);
+      const dir = axisDir(axis, carrierQ);
       entry.pieces.forEach((clones, i) => {
         for (const [memberId, copy] of clones) {
           const src = this.meshes.get(memberId);
           if (!src) continue;
-          copy.position.copy(src.position);
-          copy.position.setComponent(axis, copy.position.getComponent(axis) + pitch * (i + 1));
+          copy.position.copy(src.position).addScaledVector(dir, pitch * (i + 1));
           copy.quaternion.copy(src.quaternion);
           copy.scale.copy(src.scale);
           copy.visible = src.visible;
@@ -2009,11 +2055,15 @@ export class Viewer {
       });
     } else {
       const Y = new THREE.Vector3(0, 1, 0);
+      const invQ = carrierQ.clone().invert();
       entry.pieces.forEach((clones, i) => {
         // Same convention as the repeat tool's circle: piece k sits k·step
         // further round the ring; three's −angle Y-rotation advances the
         // ground-plane angle by +angle, and body spin matches the orbit.
-        const q = new THREE.Quaternion().setFromAxisAngle(Y, -((i + 1) * stepDeg) * Math.PI / 180);
+        // Conjugating by the carrier's rotation tilts the ring's axis with
+        // the template; with no turn it reduces to the plain world-Y ring.
+        const q = new THREE.Quaternion().setFromAxisAngle(Y, -((i + 1) * stepDeg) * Math.PI / 180)
+          .premultiply(carrierQ).multiply(invQ);
         for (const [memberId, copy] of clones) {
           const src = this.meshes.get(memberId);
           if (!src) continue;
