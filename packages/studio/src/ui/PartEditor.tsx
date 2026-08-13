@@ -16,6 +16,7 @@ import {
   setTextSlot, removeTextSlot, setTextPath, type TextSlotPatch,
   setImageZone, nudgeImageZone, removeImageZone, type ImageZonePatch,
   entrySizeMm, withEntrySizeMm, entryBoxOf, rotateEntry, setEntryCentre,
+  setAttach, entriesOf,
   addRepeat, setRepeat, removeRepeat,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
@@ -157,6 +158,131 @@ function RepeatSection(props: {
         >Apply repeat</button>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
+    </Section>
+  );
+}
+
+// Faces in the Studio's Z-up words, stored in the manifest's internal axes
+// (internal x = UI X, internal z = UI Y depth, internal y = UI Z height).
+const ATTACH_FACES: Array<{ value: 'x+' | 'x-' | 'y+' | 'y-' | 'z+' | 'z-'; label: string }> = [
+  { value: 'x+', label: 'Right (X+)' },
+  { value: 'x-', label: 'Left (X−)' },
+  { value: 'z+', label: 'Front (Y+)' },
+  { value: 'z-', label: 'Back (Y−)' },
+  { value: 'y+', label: 'Top (Z+)' },
+  { value: 'y-', label: 'Bottom (Z−)' },
+];
+
+// Glue this part to a face of another body — a charm on the end of a name
+// clicker, a cap after the last tile. While attached, the part's position
+// belongs to the attachment (rotation and size stay its own), and when the
+// target carries a per-letter run the attachment follows the LAST letter.
+function AttachSection(props: {
+  part: Part;
+  manifest: Manifest;
+  act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
+}) {
+  const { part, manifest, act } = props;
+  const attach = part.attach;
+  const [pickedTarget, setPickedTarget] = useState('');
+  const [pickedFace, setPickedFace] = useState<typeof ATTACH_FACES[number]['value']>('x+');
+  // Any body except this part and any body that CONTAINS this part.
+  const bodies = entriesOf(manifest)
+    .filter((e) => e.id !== part.id && !e.parts.includes(part.id))
+    .map((e) => ({
+      value: e.id,
+      label: e.kind === 'part'
+        ? manifest.parts.find((p) => p.id === e.id)?.label ?? e.id
+        : `${e.label} (${e.kind === 'group' ? 'assembly' : 'variant set'})`,
+    }));
+  const targetEntry = attach ? entriesOf(manifest).find((e) => e.id === attach.to) : undefined;
+  const targetHasRun = !!targetEntry && manifest.options.some((o) =>
+    o.type === 'text' && !!o.perChar && targetEntry.parts.includes(o.part));
+  const off = attach?.offsetMm ?? [0, 0, 0];
+
+  return (
+    <Section title="Attach to another body" icon="position" testId="section-attach">
+      {!attach ? (
+        <>
+          <p className="hint">
+            Glue this part to a face of another body at a set gap — it follows
+            that body wherever it goes. On a body that spawns one piece per
+            letter, the attachment rides the LAST letter, however long the
+            text grows.
+          </p>
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">Body</span>
+              <Select
+                ariaLabel="Attach to" testId="attach-target" compact
+                value={pickedTarget} placeholder="Choose a body…"
+                options={bodies}
+                onChange={setPickedTarget}
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Face</span>
+              <Select
+                ariaLabel="Attach face" testId="attach-face" compact
+                value={pickedFace}
+                options={ATTACH_FACES}
+                onChange={(v) => setPickedFace(v as typeof pickedFace)}
+              />
+            </label>
+          </div>
+          <div className="match-row">
+            <button
+              className="mini" data-testid="attach-apply" disabled={!pickedTarget}
+              title={pickedTarget ? 'Snap this part against that face' : 'Choose a body first'}
+              onClick={() => act(() => setAttach(manifest, part.id, { to: pickedTarget, face: pickedFace }))}
+            >Attach</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="hint">
+            Attached to <strong>{bodies.find((b) => b.value === attach.to)?.label ?? attach.to}</strong>
+            {targetHasRun ? ' — follows its last letter as the text grows.' : '.'}
+            {' '}Its position comes from the attachment; rotation and size are still its own.
+          </p>
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">Face</span>
+              <Select
+                ariaLabel="Attach face" testId="attach-face" compact
+                value={attach.face}
+                options={ATTACH_FACES}
+                onChange={(v) => act(() => setAttach(manifest, part.id,
+                  { ...attach, face: v as typeof pickedFace }))}
+              />
+            </label>
+            <NumberField
+              label="Gap" value={attach.gapMm ?? 0} suffix="mm" testId="attach-gap"
+              onCommit={(mm, o) => act(() => setAttach(manifest, part.id, { ...attach, gapMm: mm }), o)}
+            />
+          </div>
+          <div className="field-row">
+            {UI_AXES.map(({ label, axis }) => (
+              <NumberField
+                key={label} label={axisTint(label)} value={off[axis]} suffix="mm"
+                testId={`attach-off-${label.toLowerCase()}`}
+                onCommit={(mm, o) => {
+                  const next = [...off] as [number, number, number];
+                  next[axis] = mm;
+                  act(() => setAttach(manifest, part.id, { ...attach, offsetMm: next }), o);
+                }}
+              />
+            ))}
+          </div>
+          <div className="match-row">
+            <button
+              className="mini" data-testid="attach-detach"
+              title="Let go — the part returns to its own authored position"
+              onClick={() => act(() => setAttach(manifest, part.id, undefined))}
+            >Detach</button>
+          </div>
+        </>
+      )}
     </Section>
   );
 }
@@ -460,37 +586,40 @@ export function PartEditor(props: {
         </div>
       </Section>
 
-      <Section title="Position" icon="position" testId="section-position">
-        {UI_AXES.map(({ label, axis }) => (
-          <AxisAnchorRow
-            key={label} axis={axis} uiLabel={label} {...props}
-            open={openAxis === axis}
-            onToggle={() => setOpenAxis(openAxis === axis ? null : axis)}
-          />
-        ))}
-        <div className="match-row">
-          <Select
-            ariaLabel="Match position and rotation of" testId="match-select"
-            value={matchFrom} placeholder="Match another part…"
-            // Nothing to match against when this is the only part in the scene.
-            disabled={!hasOtherParts}
-            options={manifest.parts.filter((p) => p.id !== part.id).map((p) => ({ value: p.id, label: p.label }))}
-            onChange={setMatchFrom}
-          />
-          <button
-            className="mini" data-testid="match-apply" disabled={!matchFrom || !hasOtherParts}
-            title={hasOtherParts
-              ? 'Land centre-on-centre with the same rotation; follows if that part later moves'
-              : 'Add a second part to match against'}
-            onClick={() => { act(() => matchPose(manifest, matchFrom, part.id)); setMatchFrom(''); }}
-          >Apply</button>
-          <button
-            className="mini" data-testid="to-origin" disabled={atOrigin}
-            title={atOrigin ? 'Already at the origin' : 'Centre on X/Y, sit on the ground at Z 0 — anchors survive'}
-            onClick={() => act(() => partToOrigin(manifest, part.id, raw))}
-          >To origin</button>
-        </div>
-      </Section>
+      {!part.attach && (
+        <Section title="Position" icon="position" testId="section-position">
+          {UI_AXES.map(({ label, axis }) => (
+            <AxisAnchorRow
+              key={label} axis={axis} uiLabel={label} {...props}
+              open={openAxis === axis}
+              onToggle={() => setOpenAxis(openAxis === axis ? null : axis)}
+            />
+          ))}
+          <div className="match-row">
+            <Select
+              ariaLabel="Match position and rotation of" testId="match-select"
+              value={matchFrom} placeholder="Match another part…"
+              // Nothing to match against when this is the only part in the scene.
+              disabled={!hasOtherParts}
+              options={manifest.parts.filter((p) => p.id !== part.id).map((p) => ({ value: p.id, label: p.label }))}
+              onChange={setMatchFrom}
+            />
+            <button
+              className="mini" data-testid="match-apply" disabled={!matchFrom || !hasOtherParts}
+              title={hasOtherParts
+                ? 'Land centre-on-centre with the same rotation; follows if that part later moves'
+                : 'Add a second part to match against'}
+              onClick={() => { act(() => matchPose(manifest, matchFrom, part.id)); setMatchFrom(''); }}
+            >Apply</button>
+            <button
+              className="mini" data-testid="to-origin" disabled={atOrigin}
+              title={atOrigin ? 'Already at the origin' : 'Centre on X/Y, sit on the ground at Z 0 — anchors survive'}
+              onClick={() => act(() => partToOrigin(manifest, part.id, raw))}
+            >To origin</button>
+          </div>
+        </Section>
+      )}
+      {hasOtherParts && <AttachSection part={part} manifest={manifest} act={act} />}
 
       <Section title="Rotation" icon="rotation" testId="section-rotation">
         <div className="field-row">

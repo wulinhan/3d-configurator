@@ -130,6 +130,25 @@ export interface RepeatSpec {
   stepDeg?: number;
 }
 
+/**
+ * Glue this part to a FACE of another body, at a gap — a charm on the end of
+ * a name clicker, a cap after the last tile. The target may be a part, an
+ * assembly, or a variant set (their union box). When the target carries a
+ * per-letter run, the attachment follows the run's LAST piece at runtime, so
+ * the charm stays on the end however long the customer types.
+ */
+export interface PartAttach {
+  /** Part id, assembly (group) id, or variant option id. */
+  to: string;
+  /** Which face of the target to sit against, in canonical axes:
+   * x+ right · x- left · y+ top · y- bottom · z+ front · z- back. */
+  face: 'x+' | 'x-' | 'y+' | 'y-' | 'z+' | 'z-';
+  /** Clearance between the two faces. Negative overlaps. Default 0. */
+  gapMm?: Millimetres;
+  /** Slide off dead-centre, per canonical axis. Default [0,0,0]. */
+  offsetMm?: [Millimetres, Millimetres, Millimetres];
+}
+
 export interface Part {
   id: string;
   label: string;
@@ -137,6 +156,9 @@ export interface Part {
   mesh: string;
   placement?: Placement;
   material?: PartMaterial;
+  /** Glued to another body's face — overrides this part's own position
+   * (rotation and scale still apply). See PartAttach. */
+  attach?: PartAttach;
   /** Live patterns applied to this part, in order — see RepeatSpec. */
   repeats?: RepeatSpec[];
   /**
@@ -150,6 +172,14 @@ export interface Swatch {
   id: string;
   name: string;
   hex: Hex;
+  /** A second stop makes the swatch a GRADIENT: the part blends from `hex`
+   * to `hex2` across its own bounds — the on-screen stand-in for a filament
+   * that shifts colour along the print. */
+  hex2?: Hex;
+  /** Which way the blend runs, in the part's own space: 'x' across the
+   * width, 'y' bottom to top, 'z' front to back. Default 'y' — colour-shift
+   * filament changes along the print's HEIGHT, so that is the honest one. */
+  gradientAxis?: 'x' | 'y' | 'z';
   /** Surcharge when chosen. Rarely used — most palettes are same-price. */
   priceDelta?: number;
   /** Out of stock: shown struck through rather than silently disappearing. */

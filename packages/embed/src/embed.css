@@ -14,23 +14,21 @@
   --cfg-line: #e8e6e1;
   --cfg-muted: #9c9480;
 
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  /* Viewport on top, part list + controls beneath, summary pills at the
+   * bottom — the same shape as a product page, whatever the host's width. */
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   font-family: var(--cfg-font);
   color: var(--cfg-ink);
   container-type: inline-size;
 }
 
-/* Narrow hosts get the panel underneath rather than a squeezed viewport. */
-@container (max-width: 720px) {
-  .cfg { grid-template-columns: minmax(0, 1fr); }
-}
-
 .cfg-stage {
   position: relative;
-  min-height: 320px;
-  aspect-ratio: 4 / 3;
+  min-height: 300px;
+  max-height: 540px;
+  aspect-ratio: 16 / 10;
   background: var(--cfg-surface);
   border-radius: var(--cfg-radius);
   overflow: hidden;
@@ -51,17 +49,40 @@
 
 .cfg-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
-.cfg-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
-.cfg-tab {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 7px 11px;
+/* The bordered two-pane box: parts down the left, controls on the right. */
+.cfg-config {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
   border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
-  background: #fff; color: inherit;
-  font: inherit; font-size: 12px; cursor: pointer;
+  background: #fff; overflow: hidden;
+}
+.cfg-rail { border-right: 1.5px solid var(--cfg-line); padding: 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+.cfg-editor { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cfg-rail-label, .cfg-editor-label {
+  font-size: 9px; font-weight: 700; letter-spacing: .9px;
+  text-transform: uppercase; color: var(--cfg-muted);
+}
+
+/* On a narrow host the rail stacks above the controls. */
+@container (max-width: 560px) {
+  .cfg-config { grid-template-columns: minmax(0, 1fr); }
+  .cfg-rail { border-right: none; border-bottom: 1.5px solid var(--cfg-line); }
+  .cfg-tabs { flex-direction: row; flex-wrap: wrap; }
+  .cfg-tab { width: auto; }
+}
+
+.cfg-tabs { display: flex; flex-direction: column; gap: 6px; }
+.cfg-tab {
+  display: inline-flex; align-items: center; gap: 8px;
+  width: 100%; padding: 10px 12px;
+  border: 1.5px solid var(--cfg-line); border-radius: 10px;
+  background: #fff; color: inherit; text-align: left;
+  font: inherit; font-size: 13px; cursor: pointer;
   transition: border-color .15s, background .15s;
 }
 .cfg-tab:hover { border-color: #c5c2bb; }
-.cfg-tab.is-active { border-color: var(--cfg-accent); background: var(--cfg-surface); }
+.cfg-tab.is-active { border-color: var(--cfg-accent); background: var(--cfg-surface); font-weight: 600; }
+.cfg-tick { margin-left: auto; font-size: 12px; }
 
 .cfg-dot {
   width: 14px; height: 14px; flex: none;
@@ -71,10 +92,15 @@
 .cfg-body { display: flex; flex-direction: column; gap: 10px; }
 .cfg-note { margin: 0; font-size: 11px; line-height: 1.5; color: var(--cfg-muted); }
 
-.cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, 40px); gap: 8px; }
+.cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, 64px); gap: 10px 6px; }
+.cfg-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 64px; }
+.cfg-swatch-name {
+  font-size: 10px; line-height: 1.25; text-align: center;
+  color: var(--cfg-ink); overflow-wrap: break-word; max-width: 100%;
+}
 .cfg-swatch {
-  width: 40px; height: 40px; padding: 0;
-  border: 1.5px solid var(--cfg-line); border-radius: var(--cfg-radius);
+  width: 44px; height: 44px; padding: 0;
+  border: 1.5px solid var(--cfg-line); border-radius: 50%;
   cursor: pointer;
   /* The ring sits outside the swatch so it reads on white and on black alike. */
   box-shadow: none;
@@ -198,15 +224,18 @@
   cursor: pointer; text-decoration: underline;
 }
 
-.cfg-summary { border-top: 1px solid var(--cfg-line); padding-top: 12px; }
-.cfg-summary-label {
-  font-size: 9px; font-weight: 700; letter-spacing: .8px;
-  text-transform: uppercase; color: var(--cfg-muted); margin-bottom: 8px;
-}
+/* The running order, as pills — what the marketing pages show under their
+ * configurators: part name in small caps, then the chosen finish. */
+.cfg-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.cfg-summary:empty { display: none; }
 .cfg-summary-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 4px 0; font-size: 12px;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; font-size: 12px;
+  background: var(--cfg-surface); border-radius: 999px;
 }
-.cfg-summary-part { flex: 1; min-width: 0; }
-.cfg-summary-value { color: var(--cfg-muted); text-align: right; }
-.cfg-summary-delta .cfg-summary-value { color: var(--cfg-accent); font-weight: 600; }
+.cfg-summary-part {
+  flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--cfg-muted); white-space: nowrap;
+}
+.cfg-summary-value { color: var(--cfg-ink); font-weight: 600; white-space: nowrap; }
+.cfg-summary-delta .cfg-summary-value { color: var(--cfg-accent); }

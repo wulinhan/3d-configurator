@@ -395,6 +395,9 @@ input, select { font: inherit; }
 .swatch-name { flex: 1; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .swatch-row code { font-size: 11px; color: var(--ink2); }
 .swatch-row .field { flex: 0 0 110px; }
+.grad-controls { display: inline-flex; align-items: center; gap: 6px; }
+.grad-controls input[type="color"] { width: 28px; height: 28px; padding: 0; border: 1.5px solid var(--line); border-radius: 7px; background: none; }
+.grad-controls .ui-select { flex: 0 0 64px; }
 .add-swatch { display: flex; gap: 8px; align-items: center; }
 .add-swatch input[type="color"] {
   width: 36px; height: 36px; padding: 0; border: 1.5px solid var(--line);

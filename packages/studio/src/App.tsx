@@ -569,8 +569,18 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
       const parts = project.manifest.parts.filter((p) => p.visibleWhen?.option === editingVariant).map((p) => p.id);
       return parts.length ? { kind: 'variant' as const, id: editingVariant, parts } : null;
     }
+    // A part with a LIVE RUN (repeat pattern or per-letter spawning) is a row
+    // on screen, not one piece: it rides the same proxy path an assembly does,
+    // so its gizmo parks at the ROW's centre of mass and drags move the whole
+    // row rigidly instead of anchoring everything to the first instance.
+    if (selectedPart) {
+      const part = project.manifest.parts.find((p) => p.id === selectedPart);
+      const hasRun = !!part?.repeats?.length
+        || project.manifest.options.some((o) => o.type === 'text' && !!o.perChar && o.part === selectedPart);
+      if (hasRun) return { kind: 'part' as const, id: selectedPart, parts: [selectedPart] };
+    }
     return null;
-  }, [project?.manifest, editingGroup, editingVariant]);
+  }, [project?.manifest, editingGroup, editingVariant, selectedPart]);
 
   // The floating properties panel: slides in when something is selected,
   // slides out (keeping its last content while it goes) when nothing is.

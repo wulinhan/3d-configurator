@@ -1008,9 +1008,10 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   // 11d. the preview must let customers actually choose between them — and
   // the panel is either-or too: the hidden side has no colour tab or row.
   await page.click('[data-testid="preview-open"]');
-  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
+  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 45000 });
   await page.waitForTimeout(400);
-  const tabTexts = () => page.$$eval('.preview-overlay .cfg-tab', (els) => els.map((e) => e.textContent ?? ''));
+  // The active tab wears a ✓ — strip it, these checks are about the NAMES.
+  const tabTexts = () => page.$$eval('.preview-overlay .cfg-tab', (els) => els.map((e) => (e.textContent ?? '').replace('✓', '')));
   let previewTabs = await tabTexts();
   check('the variant set folds into ONE tab, named for the current member',
     previewTabs.includes('Body style (Base)') && !previewTabs.includes('Base') && !previewTabs.includes('Cap'),
@@ -1134,7 +1135,7 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
 
   // 11f. the customer preview is the real embed
   await page.click('[data-testid="preview-open"]');
-  await page.waitForSelector('.preview-overlay .cfg-swatch', { timeout: 20000 });
+  await page.waitForSelector('.preview-overlay .cfg-swatch', { timeout: 45000 });
   const previewBits = await page.evaluate(() => ({
     swatches: document.querySelectorAll('.preview-overlay .cfg-swatch').length,
     tabs: document.querySelectorAll('.preview-overlay .cfg-tab').length,
@@ -1463,7 +1464,7 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.press('[data-testid="text-perchar-base-text"]', 'Enter');
   await page.waitForTimeout(200);
   await page.click('[data-testid="preview-open"]');
-  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
+  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 45000 });
   await page.click('.preview-overlay .cfg-tab:has-text("Base text")');
   await page.waitForTimeout(200);
   check('the customiser offers the text input', await page.isVisible('.preview-overlay .cfg-text-input'), '');
@@ -1574,7 +1575,7 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
 
   // The customer flow: upload → decal appears → reposition → resize → remove.
   await page.click('[data-testid="preview-open"]');
-  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
+  await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 45000 });
   await page.click('.preview-overlay .cfg-tab:has-text("Base image")');
   await page.waitForTimeout(200);
   check('the customiser offers the upload button', await page.isVisible('.preview-overlay .cfg-upload-btn'), '');

@@ -125,7 +125,13 @@ export async function mount(opts: MountOptions) {
   const stage = el('div', 'cfg-stage');
   const canvas = document.createElement('canvas');
   stage.append(canvas);
+  // The marketing-site shape: viewport on top; below it one bordered box
+  // with the PART LIST down the left and the active part's controls on the
+  // right; the running summary as pills across the bottom.
   const panel = el('aside', 'cfg-panel');
+  const config = el('div', 'cfg-config');
+  const rail = el('div', 'cfg-rail');
+  const editor = el('div', 'cfg-editor');
   opts.root.append(stage, panel);
 
   const viewer = new Viewer({
@@ -167,7 +173,11 @@ export async function mount(opts: MountOptions) {
   const tabs = el('div', 'cfg-tabs');
   const body = el('div', 'cfg-body');
   const summary = el('div', 'cfg-summary');
-  panel.append(tabs, body, summary);
+  const editorLabel = el('div', 'cfg-editor-label');
+  rail.append(el('div', 'cfg-rail-label', 'Select part'), tabs);
+  editor.append(editorLabel, body);
+  config.append(rail, editor);
+  panel.append(config, summary);
 
   const select = (optionId: string) => { active = optionId; render(); };
 
@@ -186,14 +196,25 @@ export async function mount(opts: MountOptions) {
     opts.root.dispatchEvent(new CustomEvent('configurator:change', { detail: payload, bubbles: true }));
   };
 
-  function swatchButton(hex: string, label: string, selected: boolean, onClick: () => void) {
+  function swatchButton(hex: string, label: string, selected: boolean, onClick: () => void, caption?: string) {
     const b = el('button', `cfg-swatch${selected ? ' is-selected' : ''}`);
     b.type = 'button';
     b.style.background = hex;
     b.title = label;
     b.setAttribute('aria-label', label);
     b.addEventListener('click', onClick);
-    return b;
+    // The name sits under the circle — a colour called "Rosewood" should not
+    // make the customer hover to find that out.
+    const cell = el('span', 'cfg-swatch-cell');
+    cell.append(b, el('span', 'cfg-swatch-name', caption ?? label));
+    return cell;
+  }
+
+  /** What a swatch paints on screen: its colour, or its blend. */
+  function swatchCss(sw: { hex: string; hex2?: string; gradientAxis?: string }): string {
+    if (!sw.hex2) return sw.hex;
+    const dir = { x: 'to right', y: 'to top', z: '135deg' }[sw.gradientAxis ?? 'y'] ?? 'to top';
+    return `linear-gradient(${dir}, ${sw.hex}, ${sw.hex2})`;
   }
 
   function renderColour(option: ColourOption) {
@@ -216,7 +237,8 @@ export async function mount(opts: MountOptions) {
     for (const s of palette?.swatches ?? []) {
       if (s.available === false) continue;
       const label = s.priceDelta ? `${s.name} (+${money(s.priceDelta)})` : s.name;
-      grid.append(swatchButton(s.hex, label, !resolved?.custom && current === s.id, () => change(option.id, s.id)));
+      grid.append(swatchButton(swatchCss(s), label, !resolved?.custom && current === s.id,
+        () => change(option.id, s.id), label));
     }
     body.append(grid);
 
@@ -350,7 +372,9 @@ export async function mount(opts: MountOptions) {
       match.title = asAuthored ? 'As designed' : 'Same as the part';
       match.setAttribute('aria-label', match.title);
       match.addEventListener('click', () => pickColour(''));
-      grid.append(match);
+      const matchCell = el('span', 'cfg-swatch-cell');
+      matchCell.append(match, el('span', 'cfg-swatch-name', match.title));
+      grid.append(matchCell);
       const offered = textColourChoices(manifest, option);
       for (const sw of manifest.palettes?.flatMap((p) => p.swatches) ?? []) {
         if (sw.available === false || !offered.includes(sw.hex.toUpperCase())) continue;
@@ -543,11 +567,19 @@ export async function mount(opts: MountOptions) {
         tab.append(dot);
       }
       tab.append(el('span', undefined, fold?.memberLabel ? `${option.label} (${fold.memberLabel})` : option.label));
+      if (option.id === active) tab.append(el('span', 'cfg-tick', '✓'));
       tab.addEventListener('click', () => select(option.id));
       tabs.append(tab);
     }
 
     const option = manifest.options.find((o) => o.id === active);
+    // The editing pane announces what it edits — colour panes all read the
+    // same way; everything else is named after its option.
+    editorLabel.textContent = !option ? ''
+      : isColour(option) || (isChoice(option) && folds.get(option.id)?.colour) ? 'Finish colour'
+        : option.type === 'text' ? 'Your text'
+          : option.type === 'upload' ? 'Your image'
+            : option.label;
     if (option && isColour(option)) renderColour(option);
     else if (option && isChoice(option)) {
       renderChoice(option);
@@ -585,7 +617,6 @@ export async function mount(opts: MountOptions) {
     }
 
     const payload = buildPayload(manifest, selections);
-    summary.append(el('div', 'cfg-summary-label', 'Your configuration'));
     for (const o of activeOptions) {
       if (o.type === 'text') {
         const text = payload.selections[o.id];
@@ -610,9 +641,14 @@ export async function mount(opts: MountOptions) {
       }
       const row = el('div', 'cfg-summary-row');
       const dot = el('span', 'cfg-dot');
-      dot.style.background = resolveColour(manifest, selections, o)?.hex ?? '#CCC';
+      const resolved = resolveColour(manifest, selections, o);
+      dot.style.background = resolved ? swatchCss(resolved) : '#CCC';
+      const name = payload.colourNames[o.id] ?? '—';
+      // "Jade White (#FEFEFE)" — unless the name IS the hex (custom colours).
+      const value = resolved && name.toUpperCase() !== resolved.hex.toUpperCase()
+        ? `${name} (${resolved.hex.toUpperCase()})` : name;
       row.append(dot, el('span', 'cfg-summary-part', label),
-        el('span', 'cfg-summary-value', payload.colourNames[o.id] ?? '—'));
+        el('span', 'cfg-summary-value', value));
       summary.append(row);
     }
     for (const d of payload.priceDeltas) {

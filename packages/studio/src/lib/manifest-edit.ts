@@ -358,8 +358,11 @@ export function setEntryCentre(
   if (Math.abs(delta) < 1e-9) return manifest;
   const deltas: [number, number, number] = [0, 0, 0];
   deltas[axis] = round3(delta);
-  const isGroup = (manifest.groups ?? []).some((g) => g.id === entryId);
-  return isGroup ? nudgeGroup(manifest, entryId, deltas) : nudgeVariant(manifest, entryId, deltas);
+  // The entry may be an assembly, a variant set, or a bare part — the same
+  // rigid slide serves all three (a part with a live run counts as one).
+  if (entry.kind === 'group') return nudgeGroup(manifest, entryId, deltas);
+  if (entry.kind === 'variant') return nudgeVariant(manifest, entryId, deltas);
+  return nudgePartsTogether(manifest, entry.parts, deltas);
 }
 
 // ── position ────────────────────────────────────────────────────────────────
@@ -426,6 +429,30 @@ export function removeSwatch(manifest: Manifest, paletteId: string, swatchId: st
     }
   });
   return { manifest: next, retargeted };
+}
+
+/** Make a swatch a gradient (hex2 + direction), retune it, or take it back
+ * to a solid (hex2 undefined clears both fields). */
+export function setSwatchGradient(
+  manifest: Manifest, paletteId: string, swatchId: string,
+  gradient: { hex2: Hex; axis?: 'x' | 'y' | 'z' } | undefined,
+): Manifest {
+  if (gradient && !HEX.test(gradient.hex2)) throw new EditError(`"${gradient.hex2}" is not #RRGGBB`);
+  if (gradient?.axis !== undefined && !['x', 'y', 'z'].includes(gradient.axis)) {
+    throw new EditError(`gradient direction must be "x", "y" or "z"`);
+  }
+  return edit(manifest, (draft) => {
+    const swatch = draft.palettes?.find((p) => p.id === paletteId)?.swatches.find((s) => s.id === swatchId);
+    if (!swatch) throw new EditError(`no swatch "${swatchId}" in palette "${paletteId}"`);
+    if (gradient) {
+      swatch.hex2 = gradient.hex2.toUpperCase() as Hex;
+      if (gradient.axis && gradient.axis !== 'y') swatch.gradientAxis = gradient.axis;
+      else delete swatch.gradientAxis; // 'y' is the default — keep the manifest lean
+    } else {
+      delete swatch.hex2;
+      delete swatch.gradientAxis;
+    }
+  });
 }
 
 export function setSwatchPrice(manifest: Manifest, paletteId: string, swatchId: string, priceDelta: number | undefined): Manifest {
@@ -1067,6 +1094,42 @@ export function nudgeVariant(manifest: Manifest, optionId: string, deltas: [numb
   const option = optionOf(manifest, optionId);
   if (!isChoice(option) || option.role !== 'variant') throw new EditError(`"${optionId}" is not a variant set`);
   return nudgePartsTogether(manifest, option.choices.map((c) => c.id), deltas);
+}
+
+/**
+ * Glue a part to another body's face (or unglue it, spec undefined). The
+ * target may be a part, an assembly, or a variant set; validation refuses
+ * unknown bodies, self-attachment and attachment cycles. While attached the
+ * part's own position is overridden by layout — rotation and size still
+ * belong to the part.
+ */
+export function setAttach(
+  manifest: Manifest, partId: string,
+  spec: { to: string; face: 'x+' | 'x-' | 'y+' | 'y-' | 'z+' | 'z-'; gapMm?: number; offsetMm?: [number, number, number] } | undefined,
+): Manifest {
+  if (spec) {
+    if (spec.gapMm != null && !Number.isFinite(spec.gapMm)) throw new EditError('the gap must be a number of millimetres');
+    if (spec.offsetMm && spec.offsetMm.some((v) => !Number.isFinite(v))) throw new EditError('offsets must be numbers of millimetres');
+  }
+  return edit(manifest, (draft) => {
+    const part = partOf(draft, partId);
+    if (!spec) { delete part.attach; return; }
+    part.attach = {
+      to: spec.to,
+      face: spec.face,
+      ...(spec.gapMm ? { gapMm: round3(spec.gapMm) } : {}),
+      ...(spec.offsetMm && spec.offsetMm.some((v) => v !== 0)
+        ? { offsetMm: spec.offsetMm.map(round3) as [number, number, number] } : {}),
+    };
+  });
+}
+
+/** Slide ANY explorer entry — assembly, variant set, or bare part — rigidly.
+ * The gizmo's travel path speaks entry ids; this is its one door. */
+export function nudgeEntry(manifest: Manifest, entryId: string, deltas: [number, number, number]): Manifest {
+  const entry = entriesOf(manifest).find((e) => e.id === entryId);
+  if (!entry) throw new EditError(`no explorer entry "${entryId}"`);
+  return nudgePartsTogether(manifest, entry.parts, deltas);
 }
 
 /** Bring a variant set to the origin, moving all members as one rigid thing. */

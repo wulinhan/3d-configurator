@@ -208,6 +208,51 @@ export function validateManifest(input: unknown): ValidationResult {
     });
   });
 
+  // ── attachments ───────────────────────────────────────────────────────────
+  // Validated after groups so a target may be a part, an assembly, or a
+  // variant set. A cycle of attachments would chase itself around layout's
+  // resolve passes forever, so it is refused here like anchor cycles are.
+  {
+    const groupSet = new Set((m.groups ?? []).map((g) => g?.id).filter(Boolean));
+    const variantSet = new Set((m.options ?? [])
+      .filter((o) => o && isChoice(o) && (o as ChoiceOption).role === 'variant').map((o) => o.id));
+    const targetParts = (id: string): string[] => {
+      if (partIds.has(id)) return [id];
+      const g = (m.groups ?? []).find((x) => x?.id === id);
+      if (g) return g.parts ?? [];
+      const v = (m.options ?? []).find((o) => o?.id === id) as ChoiceOption | undefined;
+      if (v && variantSet.has(id)) return v.choices.map((c) => c.id).filter((pid) => partIds.has(pid));
+      return [];
+    };
+    const attachDeps = new Map<string, string[]>();
+    (m.parts ?? []).forEach((p, i) => {
+      const a = p?.attach;
+      if (!a) return;
+      const at = `parts[${i}].attach`;
+      if (!a.to) { err(`${at}.to`, 'required — the body to attach to'); return; }
+      if (!partIds.has(a.to) && !groupSet.has(a.to) && !variantSet.has(a.to)) {
+        err(`${at}.to`, `unknown body "${a.to}" — must be a part, an assembly, or a variant set`);
+        return;
+      }
+      const members = targetParts(a.to);
+      if (a.to === p.id || members.includes(p.id)) {
+        err(`${at}.to`, 'a part cannot attach to itself (or to a body containing it)');
+        return;
+      }
+      if (!/^[xyz][+-]$/.test(a.face ?? '')) {
+        err(`${at}.face`, `"${a.face}" — must be one of x+ x- y+ y- z+ z-`);
+      }
+      if (a.gapMm != null && !Number.isFinite(a.gapMm)) err(`${at}.gapMm`, 'must be a number of millimetres');
+      if (a.offsetMm != null && (a.offsetMm.length !== 3 || a.offsetMm.some((v) => !Number.isFinite(v)))) {
+        err(`${at}.offsetMm`, 'must be three numbers of millimetres');
+      }
+      attachDeps.set(p.id, members);
+    });
+    for (const cycle of findCycles(attachDeps)) {
+      err('parts', `attachments form a cycle: ${cycle.join(' → ')}`);
+    }
+  }
+
   // ── palettes ──────────────────────────────────────────────────────────────
   const swatchIds = new Map<string, Set<string>>();
   (m.palettes ?? []).forEach((pal, i) => {
@@ -220,6 +265,10 @@ export function validateManifest(input: unknown): ValidationResult {
       ids.add(s?.id);
       if (!s?.name) warn(`${at}.swatches[${j}].name`, 'no name — the cart will show a raw hex code on the order');
       if (!HEX.test(s?.hex ?? '')) err(`${at}.swatches[${j}].hex`, `"${s?.hex}" is not #RRGGBB`);
+      if (s?.hex2 !== undefined && !HEX.test(s.hex2)) err(`${at}.swatches[${j}].hex2`, `"${s.hex2}" is not #RRGGBB`);
+      if (s?.gradientAxis !== undefined && !['x', 'y', 'z'].includes(s.gradientAxis)) {
+        err(`${at}.swatches[${j}].gradientAxis`, `"${s.gradientAxis}" — must be "x", "y" or "z"`);
+      }
     });
     if (pal.id) swatchIds.set(pal.id, ids);
   });

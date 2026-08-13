@@ -137,7 +137,10 @@ console.log('\n══ assertions');
 const checks = [
   ['no console errors or failed requests', errors.length === 0, errors.join(' | ')],
   ['all 17 palette swatches render', a.swatches === 17, a.swatches],
-  ['model fills a sane share of the stage', a.coverage > 0.05, a.coverage.toFixed(4)],
+  // The stage is FULL-WIDTH since the two-pane layout (viewport on top,
+  // parts + controls beneath): the same well-framed model is a smaller share
+  // of a much larger canvas. The check still catches "microscopic".
+  ['model fills a sane share of the stage', a.coverage > 0.02, a.coverage.toFixed(4)],
   ['default total is the base price', amount(a.total) === 129, a.total],
   ['default carries no surcharge', a.payload.priceDeltas.length === 0, a.payload.priceDeltas.length],
   ['canvas repaints on a colour change', a.pixels !== b.pixels, 'identical pixels'],

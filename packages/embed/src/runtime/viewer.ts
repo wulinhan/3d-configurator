@@ -11,10 +11,10 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 import type { Manifest, Part, TextOption, UploadOption } from '../manifest/types.ts';
-import { resolveLayout, modelBounds, type Box } from './layout.ts';
+import { resolveLayout, modelBounds, attachTargetParts, type Box } from './layout.ts';
 import {
   partColours, visibleParts, parseUploadState, textColour, zonePlaceholder,
-  type UploadState, type Selections,
+  type UploadState, type Selections, type ResolvedColour,
 } from './state.ts';
 import { repeatInstances } from './repeat.ts';
 import { loadFont, DEFAULT_FONT } from './fonts.ts';
@@ -150,6 +150,35 @@ export interface SurfaceHit {
  * cube at 90°. */
 export const CURVE_BREAK_DEG = 30;
 
+/**
+ * Paint a two-stop gradient into a geometry's vertex colours, along one of
+ * the part's OWN axes — the on-screen stand-in for colour-shift filament.
+ * Vertex colours ride the geometry, so per-letter pieces and repeat copies
+ * (which share it) blend identically, exactly like pieces off one spool.
+ * new THREE.Color(hex) converts sRGB to the working space, the same road
+ * material.color takes, so a gradient's ends match their solid swatches.
+ */
+function paintGradient(geom: THREE.BufferGeometry, hexA: string, hexB: string, axis: number): void {
+  const pos = geom.getAttribute('position');
+  if (!pos) return;
+  geom.computeBoundingBox();
+  const bb = geom.boundingBox;
+  if (!bb) return;
+  const min = axis === 0 ? bb.min.x : axis === 1 ? bb.min.y : bb.min.z;
+  const max = axis === 0 ? bb.max.x : axis === 1 ? bb.max.y : bb.max.z;
+  const span = Math.max(max - min, 1e-6);
+  const a = new THREE.Color(hexA);
+  const b = new THREE.Color(hexB);
+  const out = new Float32Array(pos.count * 3);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const v = axis === 0 ? pos.getX(i) : axis === 1 ? pos.getY(i) : pos.getZ(i);
+    c.copy(a).lerp(b, Math.min(1, Math.max(0, (v - min) / span)));
+    out[i * 3] = c.r; out[i * 3 + 1] = c.g; out[i * 3 + 2] = c.b;
+  }
+  geom.setAttribute('color', new THREE.BufferAttribute(out, 3));
+}
+
 /** A canonical axis as a unit vector, turned by q — the direction a
  * per-letter run marches once its template wears a rotation. */
 function axisDir(axis: number, q: THREE.Quaternion): THREE.Vector3 {
@@ -209,6 +238,10 @@ export class Viewer {
   private viewTween = 0;
   private hiddenParts = new Set<string>();
   private shadowCatcher?: THREE.Mesh;
+  private keyLight?: THREE.DirectionalLight;
+  /** partId → painted gradient signature, so vertex colours rebuild only
+   * when the swatch or the geometry actually changed. */
+  private gradientSig = new Map<string, string>();
   private surfaceOverlays = new Map<'hover' | 'first', THREE.Mesh>();
   /** optionId → its extruded text mesh; `mesh` empty while the font loads. */
   private textMeshes = new Map<string, { mesh?: THREE.Mesh; key: string; customMat?: THREE.MeshStandardMaterial }>();
@@ -321,6 +354,8 @@ export class Viewer {
     key.shadow.camera.right = key.shadow.camera.top = 160;
     key.shadow.bias = -0.0005;
     this.scene.add(key);
+    this.scene.add(key.target); // the target moves with the model (fitShadowCamera)
+    this.keyLight = key;
 
     const fill = new THREE.DirectionalLight(0xffffff, 0.2 * LIGHT_SCALE);
     fill.position.set(-60, 60, -80);
@@ -497,11 +532,14 @@ export class Viewer {
     }
   }
 
-  /** Keep the contact shadow under the model as edits move and resize it. */
+  /** Keep the contact shadow under the model as edits move and resize it.
+   * FULL bounds — repeat copies and per-letter pieces included — or the
+   * plane (and with it every shadow) ends mid-run: a long clicker's later
+   * letters used to cast onto nothing. */
   private fitShadowCatcher(): void {
     const catcher = this.shadowCatcher;
     if (!catcher) return;
-    const b = modelBounds(this.layout);
+    const b = this.layoutBounds();
     if (!Number.isFinite(b.min[0])) { catcher.visible = false; return; }
     const span = Math.max(b.max[0] - b.min[0], b.max[2] - b.min[2], 1);
     catcher.visible = true;
@@ -512,6 +550,33 @@ export class Viewer {
       Math.min(b.min[1], 0) + this.centreOffset.y - 0.05,
       (b.min[2] + b.max[2]) / 2 + this.centreOffset.z,
     );
+    this.fitShadowCamera(b);
+  }
+
+  /** The key light's orthographic shadow box tracks the model too — its old
+   * fixed ±160mm meant anything past that simply cast no shadow. The light
+   * keeps its direction; its target walks to the model's centre and the
+   * frustum grows to hold the whole bounds (never shrinking below the
+   * original ±160, so small products keep their crisp shadow resolution). */
+  private fitShadowCamera(b: Box): void {
+    const key = this.keyLight;
+    if (!key || !Number.isFinite(b.min[0])) return;
+    const cx = (b.min[0] + b.max[0]) / 2 + this.centreOffset.x;
+    const cy = (b.min[1] + b.max[1]) / 2 + this.centreOffset.y;
+    const cz = (b.min[2] + b.max[2]) / 2 + this.centreOffset.z;
+    key.target.position.set(cx, cy, cz);
+    key.position.set(cx + 80, cy + 140, cz + 120);
+    const reach = Math.hypot(
+      (b.max[0] - b.min[0]) / 2, (b.max[1] - b.min[1]) / 2, (b.max[2] - b.min[2]) / 2);
+    const half = Math.max(160, reach * 1.15);
+    const cam = key.shadow.camera;
+    if (Math.abs(cam.right - half) > 0.5) {
+      cam.left = cam.bottom = -half;
+      cam.right = cam.top = half;
+      cam.far = Math.max(800, half * 4);
+      cam.updateProjectionMatrix();
+    }
+    key.target.updateMatrixWorld();
   }
 
   /** The scale layout gives a part — text divides by it so lettering keeps
@@ -657,8 +722,9 @@ export class Viewer {
     }
   }
 
-  /** Where the laid-out model currently sits, in mm — repeat copies
-   * included, so framing, the grid and the shadow cover the whole row. */
+  /** Where the laid-out model currently sits, in mm — repeat copies AND
+   * per-letter run pieces included, so framing, the grid, the shadow plane
+   * and the shadow camera cover the whole row, however long it grows. */
   layoutBounds(): Box {
     const b = modelBounds(this.layout);
     for (const part of this.manifest.parts) {
@@ -672,6 +738,28 @@ export class Viewer {
           const half = inst.spinDeg ? reach : laid.size[a] / 2;
           b.min[a] = Math.min(b.min[a], inst.centre[a] - half);
           b.max[a] = Math.max(b.max[a], inst.centre[a] + half);
+        }
+      }
+    }
+    // Per-letter pieces live as meshes, not layout entries: each copy is its
+    // member's laid-out box carried to where the piece actually sits (line
+    // pieces keep the member's orientation, so the translated box is exact;
+    // a ring piece is turned, so its bounding sphere stands in).
+    for (const entry of this.perCharText.values()) {
+      for (const clones of entry.pieces) {
+        for (const [memberId, copy] of clones) {
+          const src = this.meshes.get(memberId);
+          const laid = this.laidOut(memberId);
+          if (!src || !laid || !copy.visible) continue;
+          const turned = !copy.quaternion.equals(src.quaternion);
+          const reach = Math.max(...laid.size) / 2;
+          for (const a of [0, 1, 2]) {
+            const centre = laid.centre[a]
+              + copy.position.getComponent(a) - src.position.getComponent(a);
+            const half = turned ? reach : laid.size[a] / 2;
+            b.min[a] = Math.min(b.min[a], centre - half);
+            b.max[a] = Math.max(b.max[a], centre + half);
+          }
         }
       }
     }
@@ -784,6 +872,23 @@ export class Viewer {
     const roots: THREE.Object3D[] = partIds
       ? partIds.map((id) => this.meshes.get(id)).filter((m): m is THREE.Mesh => !!m)
       : [this.group];
+    if (partIds) {
+      // The part's material does not stop at its source mesh: live repeat
+      // copies and per-letter run pieces are the same body continued, so the
+      // centre of mass — and the gizmo parked on it — sits mid-row, not on
+      // the first instance.
+      for (const id of partIds) {
+        const rep = this.repeatCopies.get(id);
+        if (rep) roots.push(...rep.meshes);
+        for (const entry of this.perCharText.values()) {
+          if (!entry.members.includes(id)) continue;
+          for (const clones of entry.pieces) {
+            const copy = clones.get(id);
+            if (copy) roots.push(copy);
+          }
+        }
+      }
+    }
     const acc = new THREE.Vector3();
     let total = 0;
     const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
@@ -1298,7 +1403,43 @@ export class Viewer {
     // After the text and zones settle: copies mirror whatever the part
     // ended up being — cut geometry, extruded glyphs, painted zones.
     this.syncRepeats();
+    // Gradients LAST: engraving may just have swapped a part's geometry, and
+    // the vertex colours live on the geometry.
+    this.syncGradients(colours);
+    // A typed word may have grown or shrunk a per-letter run just now — the
+    // shadow plane and shadow camera must cover wherever it ends today.
+    this.fitShadowCatcher();
     this.highlight(this.highlighted);
+  }
+
+  /** Gradient swatches → vertex colours; solid swatches → plain material
+   * colour (and any stale gradient attribute cleaned away). */
+  private syncGradients(colours: Map<string, ResolvedColour>): void {
+    const AXIS = { x: 0, y: 1, z: 2 } as const;
+    for (const part of this.manifest.parts) {
+      const mesh = this.meshes.get(part.id);
+      const material = this.materials.get(part.id);
+      if (!mesh || !material) continue;
+      const geom = mesh.geometry as THREE.BufferGeometry;
+      const colour = colours.get(part.id);
+      if (colour?.hex2) {
+        const axis = AXIS[colour.gradientAxis ?? 'y'];
+        const sig = `${colour.hex}>${colour.hex2}@${axis}#${geom.uuid}`;
+        if (this.gradientSig.get(part.id) !== sig) {
+          paintGradient(geom, colour.hex, colour.hex2, axis);
+          this.gradientSig.set(part.id, sig);
+        }
+        if (!material.vertexColors) { material.vertexColors = true; material.needsUpdate = true; }
+        // The blend carries ALL the colour; a tinted base would double-dye it.
+        material.color.set('#FFFFFF');
+      } else if (this.gradientSig.has(part.id)) {
+        this.gradientSig.delete(part.id);
+        geom.deleteAttribute('color');
+        material.vertexColors = false;
+        material.needsUpdate = true;
+        if (colour) material.color.set(colour.hex);
+      }
+    }
   }
 
   /**
@@ -2074,6 +2215,57 @@ export class Viewer {
         }
       });
     }
+
+    // Parts ATTACHED to this run follow its LAST piece: the static layout
+    // glued them against the template (piece #1), so a charm on the end of a
+    // clicker walks outward one pitch per typed letter — and walks back in
+    // as letters are deleted.
+    this.placeRunFollowers(option, entry, mode, axis, gap, stepDeg);
+  }
+
+  /** Move every part attached to this run's template so it hangs off the
+   * run's last piece rather than its first. Base pose comes from the layout
+   * each time, so the shift never compounds. */
+  private placeRunFollowers(
+    option: TextOption, entry: PerCharEntry,
+    mode: 'line' | 'circle', axis: number, gap: number, stepDeg: number,
+  ): void {
+    const count = entry.pieces.length;
+    const base = new THREE.Vector3();
+    for (const part of this.manifest.parts) {
+      if (!part.attach) continue;
+      const targets = attachTargetParts(this.manifest, part.attach.to);
+      if (!targets.some((id) => entry.members.includes(id))) continue;
+      const mesh = this.meshes.get(part.id);
+      if (!mesh || !this.layoutPosition(part.id, base)) continue;
+      const authored = this.layout.get(part.id);
+      mesh.position.copy(base);
+      if (authored) {
+        mesh.rotation.set(
+          authored.rotation[0] * Math.PI / 180,
+          authored.rotation[1] * Math.PI / 180,
+          authored.rotation[2] * Math.PI / 180);
+      }
+      if (mode === 'line') {
+        const carrierQ = this.meshes.get(entry.part)?.quaternion ?? new THREE.Quaternion();
+        // The same centring shift the members wear (customiser), then the
+        // whole run's length along its own marching direction.
+        if (this.centreTextRuns && entry.offset) {
+          mesh.position.setComponent(axis, mesh.position.getComponent(axis) + entry.offset.current);
+        }
+        if (count > 0) {
+          mesh.position.addScaledVector(axisDir(axis, carrierQ), this.perCharPitch(entry.members, axis, gap, carrierQ) * count);
+        }
+      } else if (count > 0) {
+        // Ring: ride round to the last piece exactly as the pieces did.
+        const carrierQ = this.meshes.get(entry.part)?.quaternion ?? new THREE.Quaternion();
+        const q = new THREE.Quaternion()
+          .setFromAxisAngle(new THREE.Vector3(0, 1, 0), -(count * stepDeg) * Math.PI / 180)
+          .premultiply(carrierQ).multiply(carrierQ.clone().invert());
+        mesh.position.applyQuaternion(q);
+        mesh.quaternion.premultiply(q);
+      }
+    }
   }
 
   private dropTextMesh(optionId: string): void {
@@ -2106,6 +2298,26 @@ export class Viewer {
       if (base && mesh) mesh.geometry = base.clone();
     }
     for (const g of entry.ownGeometries ?? []) g.dispose();
+    // A follower glued to this run returns to its authored seat (the next
+    // apply() will not reposition it if the run is gone for good).
+    {
+      const base = new THREE.Vector3();
+      for (const part of this.manifest.parts) {
+        if (!part.attach) continue;
+        const targets = attachTargetParts(this.manifest, part.attach.to);
+        if (!targets.some((id) => entry.members.includes(id))) continue;
+        const mesh = this.meshes.get(part.id);
+        if (!mesh || !this.layoutPosition(part.id, base)) continue;
+        mesh.position.copy(base);
+        const authored = this.layout.get(part.id);
+        if (authored) {
+          mesh.rotation.set(
+            authored.rotation[0] * Math.PI / 180,
+            authored.rotation[1] * Math.PI / 180,
+            authored.rotation[2] * Math.PI / 180);
+        }
+      }
+    }
     // …and a centred run puts its members back where the layout says.
     if (entry.offset && this.centreTextRuns) {
       const base = new THREE.Vector3();

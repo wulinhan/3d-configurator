@@ -120,7 +120,64 @@ export function resolveLayout(manifest: Manifest, boxes: Map<string, Box>): Map<
   };
 
   for (const part of manifest.parts) resolve(part.id, new Set());
+
+  // ── attachments ──────────────────────────────────────────────────────────
+  // A part glued to a body's face: its own translate is overridden so its
+  // opposite face sits gapMm off the target's face, centred on the other two
+  // axes, plus any offset. Targets may be assemblies or variant sets (their
+  // union box), so this runs AFTER every box exists; three passes let a
+  // charm hang off a part that itself hangs off something (cycles are
+  // refused at validation).
+  const followers = manifest.parts.filter((p) => p.attach && out.has(p.id));
+  for (let pass = 0; pass < 3 && followers.length; pass++) {
+    for (const part of followers) {
+      const a = part.attach!;
+      const t = out.get(part.id)!;
+      const ids = attachTargetParts(manifest, a.to).filter((id) => id !== part.id);
+      const union: Box = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+      for (const id of ids) {
+        const ref = out.get(id);
+        if (!ref) continue;
+        for (let ax = 0; ax < 3; ax++) {
+          if (ref.box.min[ax] < union.min[ax]) union.min[ax] = ref.box.min[ax];
+          if (ref.box.max[ax] > union.max[ax]) union.max[ax] = ref.box.max[ax];
+        }
+      }
+      if (!Number.isFinite(union.min[0])) continue;
+
+      const axis = { x: 0, y: 1, z: 2 }[a.face[0] as 'x' | 'y' | 'z'];
+      const sign = a.face[1] === '+' ? 1 : -1;
+      const gap = a.gapMm ?? 0;
+      const off = a.offsetMm ?? [0, 0, 0];
+      for (let ax = 0; ax < 3; ax++) {
+        const ownCentre = (t.box.min[ax] + t.box.max[ax]) / 2;
+        const want = ax === axis
+          ? (sign > 0 ? union.max[ax] : union.min[ax]) + sign * (gap + t.size[ax] / 2) + off[ax]
+          : (union.min[ax] + union.max[ax]) / 2 + off[ax];
+        const delta = want - ownCentre;
+        if (Math.abs(delta) < 1e-9) continue;
+        t.translate[ax] += delta;
+        t.box.min[ax] += delta;
+        t.box.max[ax] += delta;
+      }
+    }
+  }
   return out;
+}
+
+/** The parts a body id names: itself, an assembly's members, or a variant
+ * set's choices. Shared with the runtime, which uses it to spot attachments
+ * whose target carries a per-letter run. */
+export function attachTargetParts(manifest: Manifest, id: string): string[] {
+  if (manifest.parts.some((p) => p.id === id)) return [id];
+  const g = manifest.groups?.find((x) => x.id === id);
+  if (g) return [...g.parts];
+  const o = manifest.options.find((x) => x.id === id);
+  if (o && o.type === 'choice' && (o as { role?: string }).role === 'variant') {
+    return (o as { choices: Array<{ id: string }> }).choices
+      .map((c) => c.id).filter((pid) => manifest.parts.some((p) => p.id === pid));
+  }
+  return [];
 }
 
 /** Union of every visible part — what the camera frames and the floor sits under. */

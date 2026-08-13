@@ -3,10 +3,28 @@
 // option — the edit op reports which, and the panel says so.
 
 import { useState } from 'react';
-import type { Manifest } from '../../../embed/src/manifest/types.ts';
-import { addSwatch, removeSwatch, setSwatchPrice } from '../lib/manifest-edit.ts';
+import type { Manifest, Swatch } from '../../../embed/src/manifest/types.ts';
+import { addSwatch, removeSwatch, setSwatchPrice, setSwatchGradient } from '../lib/manifest-edit.ts';
 import type { Project } from '../App.tsx';
 import { NumberField } from './fields.tsx';
+import { Select } from './controls.tsx';
+
+// The chip previews the blend the way the part will wear it: across for a
+// width gradient, upward for a height one, diagonally for depth (the screen
+// has no third axis to offer).
+export function swatchCss(s: Pick<Swatch, 'hex' | 'hex2' | 'gradientAxis'>): string {
+  if (!s.hex2) return s.hex;
+  const dir = { x: 'to right', y: 'to top', z: '135deg' }[s.gradientAxis ?? 'y'];
+  return `linear-gradient(${dir}, ${s.hex}, ${s.hex2})`;
+}
+
+// The panel speaks Studio Z-up: X across, Y deep, Z tall — mapped onto the
+// manifest's internal axes ('x' width, 'z' depth, 'y' height).
+const GRAD_DIRS = [
+  { value: 'x', label: 'X' },
+  { value: 'z', label: 'Y' },
+  { value: 'y', label: 'Z' },
+];
 
 export function PalettePanel(props: { project: Project; onChange: (m: Manifest) => void }) {
   const { manifest } = props.project;
@@ -25,9 +43,38 @@ export function PalettePanel(props: { project: Project; onChange: (m: Manifest) 
       <div className="swatch-list">
         {palette.swatches.map((s) => (
           <div className="swatch-row" key={s.id} data-testid={`swatch-${s.id}`}>
-            <span className="chip" style={{ background: s.hex }} />
+            <span className="chip" style={{ background: swatchCss(s) }} />
             <span className="swatch-name">{s.name}</span>
-            <code>{s.hex}</code>
+            <code>{s.hex}{s.hex2 ? `→${s.hex2}` : ''}</code>
+            {s.hex2 ? (
+              <span className="grad-controls">
+                <input
+                  type="color" value={s.hex2} aria-label={`${s.name} gradient end`}
+                  data-testid={`swatch-grad-hex-${s.id}`}
+                  onChange={(e) => props.onChange(setSwatchGradient(manifest, palette.id, s.id,
+                    { hex2: e.target.value.toUpperCase(), axis: s.gradientAxis ?? 'y' }))}
+                />
+                <Select
+                  ariaLabel={`${s.name} gradient direction`} testId={`swatch-grad-axis-${s.id}`} compact
+                  value={s.gradientAxis ?? 'y'}
+                  options={GRAD_DIRS}
+                  onChange={(v) => props.onChange(setSwatchGradient(manifest, palette.id, s.id,
+                    { hex2: s.hex2!, axis: v as 'x' | 'y' | 'z' }))}
+                />
+                <button
+                  className="mini" data-testid={`swatch-grad-off-${s.id}`}
+                  title="Back to a solid colour"
+                  onClick={() => props.onChange(setSwatchGradient(manifest, palette.id, s.id, undefined))}
+                >Solid</button>
+              </span>
+            ) : (
+              <button
+                className="mini" data-testid={`swatch-grad-${s.id}`}
+                title="Blend this colour into a second one across the part — the stand-in for colour-shift filament"
+                onClick={() => props.onChange(setSwatchGradient(manifest, palette.id, s.id,
+                  { hex2: s.hex.toUpperCase() === '#FFFFFF' || s.hex.toUpperCase() === '#FEFEFE' ? '#1A1A1A' : '#FFFFFF' }))}
+              >Gradient</button>
+            )}
             <NumberField
               label="" value={s.priceDelta ?? 0} suffix={`+${manifest.pricing.currency}`} step={1}
               testId={`swatch-price-${s.id}`}

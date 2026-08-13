@@ -16,7 +16,7 @@ import type { Selections } from '../../../embed/src/runtime/state.ts';
 import { Viewer, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
 import type { TextOption } from '../../../embed/src/manifest/types.ts';
 import { openCurveSegments, curvePoint, type Pt } from '../../../embed/src/runtime/text-path.ts';
-import { applyGizmoPose, setCameraView, setTextPath, snapFaces, nudgeGroup, nudgeVariant, rotateEntry, scaleEntryBy, type GizmoPose } from '../lib/manifest-edit.ts';
+import { applyGizmoPose, setCameraView, setTextPath, snapFaces, nudgeEntry, rotateEntry, scaleEntryBy, type GizmoPose } from '../lib/manifest-edit.ts';
 import { Gizmo, type GizmoMode, type CommitPhase } from './gizmo.ts';
 import { ViewCube } from './view-cube.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
@@ -32,7 +32,7 @@ export function ViewerPane(props: {
   hiddenParts: Set<string>;
   /** An open assembly / variant set editor: its parts move as one via a
    * translate gizmo parked at the set's centre of mass. */
-  editingEntity: { kind: 'group' | 'variant'; id: string; parts: string[] } | null;
+  editingEntity: { kind: 'group' | 'variant' | 'part'; id: string; parts: string[] } | null;
   /** Non-null arms surface placement: the next click on a face of THIS part
    * becomes a text slot's or image zone's sketch plane. */
   surfacePick: { kind: 'text' | 'image'; partId: string } | null;
@@ -182,11 +182,7 @@ export function ViewerPane(props: {
           let m = project.manifest;
           if (turn.some((d) => Math.abs(d) > 1e-6)) m = rotateEntry(m, editingEntity.id, turn, project.raw, pivot);
           if (Math.abs(factor - 1) > 1e-6) m = scaleEntryBy(m, editingEntity.id, factor, project.raw, pivot);
-          if (move.some((d) => Math.abs(d) > 1e-9)) {
-            m = editingEntity.kind === 'group'
-              ? nudgeGroup(m, editingEntity.id, move)
-              : nudgeVariant(m, editingEntity.id, move);
-          }
+          if (move.some((d) => Math.abs(d) > 1e-9)) m = nudgeEntry(m, editingEntity.id, move);
           if (m !== project.manifest) onChange(m, { transient });
           return;
         }

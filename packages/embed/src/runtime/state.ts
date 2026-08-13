@@ -97,6 +97,10 @@ export interface ResolvedColour {
   /** Swatch name, or the hex itself for a custom colour — goes on the order. */
   name: string;
   custom: boolean;
+  /** Present on gradient swatches: blend `hex` → `hex2` along `gradientAxis`
+   * of the painted part's own bounds. */
+  hex2?: Hex;
+  gradientAxis?: 'x' | 'y' | 'z';
 }
 
 export function resolveColour(manifest: Manifest, selections: Selections, option: ColourOption): ResolvedColour | undefined {
@@ -108,7 +112,12 @@ export function resolveColour(manifest: Manifest, selections: Selections, option
   // its value is still a swatch id — every palette is searched, not just its own.
   for (const palette of manifest.palettes ?? []) {
     const swatch = palette.swatches.find((s) => s.id === value);
-    if (swatch) return { hex: swatch.hex, name: swatch.name, custom: false };
+    if (swatch) {
+      return {
+        hex: swatch.hex, name: swatch.name, custom: false,
+        ...(swatch.hex2 ? { hex2: swatch.hex2, gradientAxis: swatch.gradientAxis ?? 'y' } : {}),
+      };
+    }
   }
   return undefined;
 }
