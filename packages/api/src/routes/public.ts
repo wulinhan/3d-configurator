@@ -170,14 +170,27 @@ export function publicRoutes(deps: Deps): Route[] {
         const html = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#ffffff">
 <title>${esc(name)} — preview</title>
 <link rel="stylesheet" href="${config.publicBase}/embed.css">
 <style>
-  body { margin: 0; background: #fff; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
-  h1 { font-size: 20px; margin: 6px 0 16px; color: #1a1a1a; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #fff;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden; /* a stray pixel must not give a phone a sideways page */
+  }
+  main {
+    max-width: 1100px; margin: 0 auto;
+    padding: clamp(10px, 3vw, 20px);
+    padding-left: max(clamp(10px, 3vw, 20px), env(safe-area-inset-left));
+    padding-right: max(clamp(10px, 3vw, 20px), env(safe-area-inset-right));
+    padding-bottom: max(48px, env(safe-area-inset-bottom));
+  }
+  h1 { font-size: clamp(17px, 4.5vw, 20px); margin: 6px 0 14px; color: #1a1a1a; }
   .pv-note { font-size: 12px; color: #9c9480; margin: 16px 0 0; }
 </style>
 </head><body>

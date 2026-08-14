@@ -213,6 +213,15 @@ export interface ViewerOptions {
    */
   centreTextRuns?: boolean;
   /**
+   * On TOUCH screens, leave vertical swipes to the page instead of trapping
+   * them in the orbit. A full-width canvas with `touch-action: none` (what
+   * OrbitControls forces) makes a phone page unscrollable wherever the
+   * product is — the customiser sets this so one finger orbits sideways,
+   * a vertical swipe scrolls on past, and two fingers pinch-zoom. Off in
+   * the Studio, where the canvas IS the whole workspace.
+   */
+  touchScroll?: boolean;
+  /**
    * Customiser mode: park the whole product's centre on the world origin so
    * it orbits around itself and opens fully in frame — whatever coordinates
    * the merchant authored it at. Off in the Studio, where the merchant works
@@ -326,6 +335,10 @@ export class Viewer {
     this.controls.maxPolarAngle = (cam.maxPolarAngle ?? 162) * (Math.PI / 180);
     this.controls.target.set(...(cam.target ?? [0, 0, 0]));
     this.controls.autoRotate = cam.autoRotate ?? false;
+    if (opts.touchScroll && typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) {
+      // AFTER construction — OrbitControls just wrote `none` on the element.
+      opts.canvas.style.touchAction = 'pan-y';
+    }
     this.controls.update();
     this.controls.addEventListener('start', () => cancelAnimationFrame(this.viewTween));
 

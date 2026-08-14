@@ -66,10 +66,13 @@
 /* On a narrow host the rail stacks above the controls. */
 @container (max-width: 560px) {
   .cfg-config { grid-template-columns: minmax(0, 1fr); }
-  .cfg-rail { border-right: none; border-bottom: 1.5px solid var(--cfg-line); }
+  .cfg-rail { border-right: none; border-bottom: 1.5px solid var(--cfg-line); padding: 12px; }
+  .cfg-editor { padding: 12px 12px 16px; }
   .cfg-tabs { flex-direction: row; flex-wrap: wrap; }
   .cfg-tab { width: auto; }
+  .cfg-stage { min-height: 260px; }
 }
+
 
 .cfg-tabs { display: flex; flex-direction: column; gap: 6px; }
 .cfg-tab {
@@ -239,3 +242,18 @@
 }
 .cfg-summary-value { color: var(--cfg-ink); font-weight: 600; white-space: nowrap; }
 .cfg-summary-delta .cfg-summary-value { color: var(--cfg-accent); }
+
+/* LAST on purpose — these override same-specificity base rules above.
+ * Touch screens: fingers need room, and iOS zooms the whole page when a
+ * focused input's font is under 16px — and that zoom STICKS. 16px on every
+ * text-entry control stops it; buttons grow to comfortable targets. */
+@media (pointer: coarse) {
+  .cfg-text-input, .cfg-hex, .cfg-size-value { font-size: 16px; }
+  .cfg-text-input { height: 40px; }
+  .cfg-size-value { height: 40px; width: 72px; }
+  .cfg-size-btn, .cfg-arrow { width: 40px; height: 40px; }
+  .cfg-arrows { grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 40px); }
+  .cfg-tab { min-height: 44px; }
+  .cfg-choice { min-height: 44px; }
+  .cfg-upload-btn { height: 44px; }
+}
