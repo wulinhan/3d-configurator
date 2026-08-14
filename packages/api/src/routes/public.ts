@@ -17,7 +17,7 @@ import { sha256 } from '../ids.ts';
 import { assetKey } from '../storage.ts';
 import {
   getPublication, livePublication, getAsset, putAsset, createUpload, getUpload,
-  originsForPublication, listOrigins,
+  originsForPublication, listOrigins, projectByPreviewToken,
 } from '../store.ts';
 import type { Manifest, UploadOption } from '../../../embed/src/manifest/types.ts';
 import { defaultSelections, applySelection, priceDeltas } from '../../../embed/src/runtime/state.ts';
@@ -137,7 +137,99 @@ export function publicRoutes(deps: Deps): Route[] {
     return new Raw(new TextEncoder().encode(JSON.stringify(manifest)), 'application/json; charset=utf-8');
   }
 
+  // Preview links are shared in chats and scanned by link unfurlers; a
+  // modest bucket keeps a scripted crawl from turning drafts into load.
+  const previewLimit = rateLimiter(300, 60_000);
+
+  /** The living draft a preview token names, or 404 — one door for all
+   * three /pv routes so archived projects and junk tokens fail the same. */
+  async function draftFor(ctx: Ctx) {
+    if (!previewLimit(clientIp(ctx.req))) {
+      throw new ApiError(429, 'rate_limited', 'too many preview requests — slow down');
+    }
+    const row = await projectByPreviewToken(sql, ctx.params.token);
+    if (!row) throw notFound('preview');
+    return row;
+  }
+
   return [
+    // ── the freely shareable customiser preview ───────────────────────────
+    //
+    // /pv/<token> is a page ANYONE can open: the customiser running the
+    // project's CURRENT draft. No session, no origin allowlist — the token
+    // is the whole credential. The manifest is never cached (the draft moves
+    // under it); the model may be, briefly, keyed by its own asset id.
+    {
+      method: 'GET',
+      pattern: '/pv/:token',
+      async handler(ctx) {
+        const row = await draftFor(ctx);
+        const name = String((row.manifest as Manifest).name ?? 'Product preview');
+        const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        addHeaders(ctx, { 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
+        const html = `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${esc(name)} — preview</title>
+<link rel="stylesheet" href="${config.publicBase}/embed.css">
+<style>
+  body { margin: 0; background: #fff; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 20px; margin: 6px 0 16px; color: #1a1a1a; }
+  .pv-note { font-size: 12px; color: #9c9480; margin: 16px 0 0; }
+</style>
+</head><body>
+<main>
+  <h1>${esc(name)}</h1>
+  <div data-configurator="${config.publicBase}/pv/${ctx.params.token}/manifest.json"></div>
+  <p class="pv-note">A live preview — what you configure here is not an order.</p>
+</main>
+<script type="module" src="${config.publicBase}/embed.js"></script>
+</body></html>`;
+        return new Raw(new TextEncoder().encode(html), 'text/html; charset=utf-8');
+      },
+    },
+    {
+      method: 'GET',
+      pattern: '/pv/:token/manifest.json',
+      async handler(ctx) {
+        const row = await draftFor(ctx);
+        addHeaders(ctx, { 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+        // No uploads block: a preview has no publication to file artwork
+        // under, so the embed inlines images — exactly the self-hosted path.
+        const manifest = row.manifest as Manifest;
+        const models = row.model_asset_id && manifest.models?.length
+          ? manifest.models.map((m, i) => (i === 0 ? { ...m, url: 'model.glb' } : m))
+          : manifest.models;
+        return new Raw(new TextEncoder().encode(JSON.stringify({ ...manifest, models })),
+          'application/json; charset=utf-8');
+      },
+    },
+    {
+      method: 'GET',
+      pattern: '/pv/:token/model.glb',
+      async handler(ctx) {
+        const row = await draftFor(ctx);
+        if (!row.model_asset_id) throw notFound('model');
+        const asset = await getAsset(sql, row.model_asset_id);
+        if (!asset) throw notFound('model');
+        // Re-uploads mint a new asset id, so a short cache can never serve a
+        // STALE model for long — and the ETag is exact.
+        addHeaders(ctx, {
+          'cache-control': 'max-age=300',
+          etag: `"${asset.id}"`,
+          'access-control-allow-origin': '*',
+        });
+        const direct = deps.store.publicUrl(asset.storage_key);
+        if (direct) return new Redirect(direct);
+        const object = await deps.store.get(asset.storage_key);
+        if (!object) throw notFound('model');
+        return new Raw(object.bytes, 'model/gltf-binary');
+      },
+    },
+
     // ── is this instance actually serving? ────────────────────────────────
     //
     // The platform's health check, so it has to answer the question the

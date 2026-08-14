@@ -13,7 +13,7 @@ import { signInEmail, shareEmail } from '../mail.ts';
 import {
   type Role, roleAtLeast, findUserByEmail, createUser, createOrg, addMember, removeMember,
   membershipsOf, membersOf, roleIn, createLoginToken, consumeLoginToken, createSession,
-  deleteSession, putAsset, getAsset, createProject, projectFor, listProjects, saveProject,
+  deleteSession, putAsset, getAsset, createProject, projectFor, ensurePreviewToken, listProjects, saveProject,
   pruneRevisions, setProjectModel, setProjectThumb, renameProject, renameProjectEverywhere,
   archiveProject, createPublication, setShare, removeShare, listShares, sharedProjectsFor,
   type ShareRole,
@@ -415,6 +415,21 @@ export function studioRoutes(deps: Deps): Route[] {
         if (name.length > 120) throw badRequest('that name is too long');
         const revision = await renameProjectEverywhere(sql, p.id, name, clock.now());
         return { name, revision };
+      },
+    },
+
+    // ── the freely shareable preview link ─────────────────────────────────
+    //
+    // Anyone holding the link sees the CURRENT draft in the customiser — no
+    // account, no origin allowlist. Viewer access suffices to fetch it: a
+    // person who can open the preview can share what they are looking at.
+    {
+      method: 'POST',
+      pattern: '/v1/projects/:id/preview-link',
+      async handler(ctx) {
+        const { project: p } = await project(ctx, 'viewer');
+        const token = await ensurePreviewToken(sql, p.id, newToken());
+        return { url: `${config.publicBase}/pv/${token}` };
       },
     },
 

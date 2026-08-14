@@ -167,6 +167,11 @@ export const api = {
   renameProject: (id: string, name: string) =>
     request<{ name: string; revision: number }>(`/v1/projects/${id}/rename`, { method: 'POST', ...json({ name }) }),
 
+  /** The freely shareable customiser link for a project's CURRENT draft —
+   * anyone holding it can open the preview, no account needed. */
+  previewLink: (id: string) =>
+    request<{ url: string }>(`/v1/projects/${id}/preview-link`, { method: 'POST' }).then((r) => r.url),
+
   sharedWithMe: () => request<{ projects: SharedProject[] }>('/v1/me/shared').then((r) => r.projects),
   listShares: (id: string) => request<{ shares: Share[] }>(`/v1/projects/${id}/shares`).then((r) => r.shares),
   share: (id: string, email: string, role: 'editor' | 'viewer') =>

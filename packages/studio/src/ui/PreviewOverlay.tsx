@@ -10,11 +10,38 @@ import '../../../embed/src/embed.css';
 import type { Manifest, SelectionPayload } from '../../../embed/src/manifest/types.ts';
 import { frameCamera } from '../lib/manifest-edit.ts';
 import type { Project } from '../App.tsx';
+import { api } from '../lib/api.ts';
 
-export function PreviewOverlay(props: { project: Project; onClose: () => void }) {
+export function PreviewOverlay(props: {
+  project: Project;
+  /** Hosted project id — enables the shareable public link. Local-only
+   * projects have no server to serve one from, so the button stays away. */
+  cloudProjectId?: string | null;
+  onClose: () => void;
+}) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [total, setTotal] = useState<SelectionPayload | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [shareState, setShareState] = useState<'idle' | 'copied' | 'shown'>('idle');
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+
+  // Mint (or fetch) the public link and put it on the clipboard. When the
+  // clipboard is unavailable (permissions, http), the URL is shown instead —
+  // a share button that silently does nothing is worse than a visible URL.
+  const sharePreview = async () => {
+    try {
+      const url = shareUrl ?? await api.previewLink(props.cloudProjectId!);
+      setShareUrl(url);
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareState('copied');
+      } catch {
+        setShareState('shown');
+      }
+    } catch (err) {
+      setFailure(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   useEffect(() => {
     const root = rootRef.current!;
@@ -71,8 +98,19 @@ export function PreviewOverlay(props: { project: Project; onClose: () => void })
         {total && total.deltaTotal > 0 && (
           <span className="preview-total" data-testid="preview-total">+{money(total.deltaTotal)} configured</span>
         )}
+        {props.cloudProjectId && (
+          <button
+            className="ghost" data-testid="preview-share" onClick={() => void sharePreview()}
+            title="A public page anyone can open — it always shows this product's latest saved state"
+          >{shareState === 'copied' ? 'Link copied ✓' : 'Copy public link'}</button>
+        )}
         <button className="ghost" data-testid="preview-close" onClick={props.onClose}>Close preview</button>
       </div>
+      {shareState === 'shown' && shareUrl && (
+        <p className="hint preview-share-url" data-testid="preview-share-url">
+          Share this link: <code>{shareUrl}</code>
+        </p>
+      )}
       {failure && <p className="error preview-error" role="alert">Preview failed: {failure}</p>}
       <div className="preview-embed" ref={rootRef} />
     </div>

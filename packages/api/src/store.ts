@@ -213,6 +213,28 @@ export async function createProject(
  * and an org viewer handed an editor share genuinely gets to edit that one
  * project. A user with neither simply gets no rows.
  */
+/** The project's shareable preview token, minting one on first ask. The
+ * token is the WHOLE credential — long, random, and unique — so the row it
+ * names must still exist and be unarchived when redeemed. */
+export async function ensurePreviewToken(sql: Sql, projectId: string, token: string): Promise<string> {
+  const { rows } = await sql.query<{ preview_token: string }>(
+    `update projects set preview_token = coalesce(preview_token, $2)
+      where id = $1 and archived_at is null
+      returning preview_token`,
+    [projectId, token]);
+  if (!rows[0]) throw new Error('project not found');
+  return rows[0].preview_token;
+}
+
+/** Redeem a preview token: the CURRENT draft of a living project, or null. */
+export async function projectByPreviewToken(sql: Sql, token: string): Promise<ProjectRow | null> {
+  if (!token) return null;
+  const { rows } = await sql.query<ProjectRow>(
+    'select * from projects where preview_token = $1 and archived_at is null',
+    [token]);
+  return rows[0] ?? null;
+}
+
 export async function projectFor(sql: Sql, projectId: string, userId: string): Promise<(ProjectRow & { role: Role }) | null> {
   const { rows } = await sql.query<ProjectRow & { role: Role }>(
     `select p.*,

@@ -112,7 +112,7 @@ npm run test:unit -w @allin/api
 
 See `DEPLOY.md` at the repository root for Neon + Fly + R2.
 
-40 tests, against **real Postgres** — PGlite is Postgres compiled to WASM, so
+41 tests, against **real Postgres** — PGlite is Postgres compiled to WASM, so
 the cascades, unique indexes, `returning` and transactions under test are the
 ones that ship. A hand-written fake store would have passed every one of them
 while proving nothing about `001_init.sql`, which is where the guarantees
@@ -135,7 +135,7 @@ test/store.test.ts  14 — the data layer: an email is one account however it
                     artwork is kept, deleting an org really deletes
                     everything it owns, and a pasted DATABASE_URL is
                     recovered from its label, quotes and line breaks
-test/api.test.ts    26 — the service through its own front door, on a real
+test/api.test.ts    27 — the service through its own front door, on a real
                     socket with fetch: a magic link signs you in once and
                     gives you a workshop, an unknown address is answered
                     exactly like a known one, a cookie is not enough for a
@@ -163,7 +163,10 @@ test/api.test.ts    26 — the service through its own front door, on a real
                     so open tabs conflict instead of clobbering, and a
                     project shared by email reaches an account that does
                     not exist yet — read-only for a viewer, writable after
-                    an editor upgrade, gone the moment it is revoked
+                    an editor upgrade, gone the moment it is revoked, and a
+                    preview link lets anyone open the CURRENT draft with no
+                    account — minted once per project, refused to strangers,
+                    reflecting every autosave, dead once the project goes
 
 ```
 

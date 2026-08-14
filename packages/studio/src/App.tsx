@@ -734,7 +734,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
           </div>
         </div>
       </div>
-      {previewing && <PreviewOverlay project={project} onClose={() => setPreviewing(false)} />}
+      {previewing && <PreviewOverlay project={project} cloudProjectId={cloudProjectId} onClose={() => setPreviewing(false)} />}
       {publishing && (
         <div className="dialog-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) setPublishing(false); }}>
           <div className="publish-modal" role="dialog" aria-modal="true" aria-label="Publish">

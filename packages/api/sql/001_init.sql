@@ -179,3 +179,11 @@ create table if not exists project_shares (
 );
 
 create index if not exists project_shares_user_idx on project_shares (user_id);
+
+-- A freely shareable customiser preview: anyone holding the token may load
+-- the project's CURRENT draft, read-only, with no account. Minted lazily the
+-- first time someone asks for the link; unguessable (256-bit), and clearing
+-- the column is how a leaked link gets cut off.
+alter table projects add column if not exists preview_token text;
+create unique index if not exists projects_preview_token_idx
+  on projects (preview_token) where preview_token is not null;

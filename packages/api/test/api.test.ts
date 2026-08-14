@@ -856,3 +856,58 @@ test('a zone that allows 400 kB does not allow a megabyte', async () => {
   assert.equal(res.status, 413);
   await r.stop();
 });
+
+test('the preview link lets ANYONE open the current draft — and only the link', async () => {
+  const r = await rig();
+  const ada = await signedIn(r, 'ada@example.com');
+  const org = await orgOf(ada);
+  const project = await newProject(ada, org.id);
+  await ada.json(`/v1/projects/${project.id}/model`, { method: 'POST', body: GLB });
+
+  // Minting is idempotent: one token per project, however many times the
+  // button is pressed — a link already shared must not stop working.
+  const { url } = await ada.json<{ url: string }>(`/v1/projects/${project.id}/preview-link`, { method: 'POST' });
+  const again = await ada.json<{ url: string }>(`/v1/projects/${project.id}/preview-link`, { method: 'POST' });
+  assert.equal(url, again.url);
+  assert.match(url, /^http:\/\/api\.test\/pv\/[A-Za-z0-9_-]{20,}$/);
+  const token = url.split('/').pop()!;
+
+  // A stranger with an account still cannot MINT one — reading the project
+  // is what shares it, and strangers cannot read it.
+  const mallory = await signedIn(r, 'mallory@example.com');
+  const denied = await mallory.fetch(`/v1/projects/${project.id}/preview-link`, { method: 'POST' });
+  assert.equal(denied.status, 404);
+
+  // The link itself needs no session, no origin: page, manifest and model.
+  const anon = r.client();
+  const page = await anon.fetch(`/pv/${token}`);
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /data-configurator="http:\/\/api\.test\/pv\/.*\/manifest\.json"/);
+  assert.match(html, /noindex/, 'a shared draft is not for search engines');
+
+  const served = await (await anon.fetch(`/pv/${token}/manifest.json`)).json() as {
+    name: string; models: Array<{ url: string }>; uploads?: unknown;
+  };
+  assert.equal(served.models[0].url, 'model.glb', 'relative, resolving beside the manifest');
+  assert.equal(served.uploads, undefined, 'no publication to file artwork under — the embed inlines it');
+  const model = await anon.fetch(`/pv/${token}/model.glb`);
+  assert.equal(model.status, 200);
+  assert.deepEqual(new Uint8Array(await model.arrayBuffer()), new Uint8Array(GLB));
+
+  // It is the DRAFT: an autosave shows up on the very next fetch.
+  const draft = structuredClone(MANIFEST) as { name: string };
+  draft.name = 'Renamed live';
+  await ada.json(`/v1/projects/${project.id}`, {
+    method: 'PUT', body: JSON.stringify({ manifest: draft, baseRevision: project.revision }),
+    headers: { 'content-type': 'application/json' },
+  });
+  const after = await (await anon.fetch(`/pv/${token}/manifest.json`)).json() as { name: string };
+  assert.equal(after.name, 'Renamed live');
+
+  // Junk tokens 404; an archived project takes its link down with it.
+  assert.equal((await anon.fetch('/pv/not-a-real-token')).status, 404);
+  await ada.fetch(`/v1/projects/${project.id}`, { method: 'DELETE' });
+  assert.equal((await anon.fetch(`/pv/${token}`)).status, 404);
+  await r.stop();
+});
