@@ -25,7 +25,14 @@
 }
 
 .cfg-stage {
-  position: relative;
+  /* Pinned to the top of whatever scrolls the page — the product stays in
+   * view while the part list and controls scroll past UNDER it. The opaque
+   * surface colour is what hides them; the canvas itself keeps every touch
+   * (OrbitControls' touch-action: none), so scrolling happens on the panel,
+   * never by swiping the product. */
+  position: sticky;
+  top: 0;
+  z-index: 10;
   min-height: 300px;
   max-height: 540px;
   aspect-ratio: 16 / 10;

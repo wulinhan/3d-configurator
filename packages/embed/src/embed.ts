@@ -143,8 +143,6 @@ export async function mount(opts: MountOptions) {
     // Unless the merchant saved a view, the product opens centred on the
     // origin and fully in frame, whatever coordinates it was authored at.
     centreOnOrigin: true,
-    // A phone must be able to scroll PAST the product, not get stuck on it.
-    touchScroll: true,
     resolveUrl: (u) => (opts.baseUrl ? new URL(u, opts.baseUrl).href : u),
     onSelectPart: (partId) => {
       // A part whose visibility hangs on a choice (a variant, an add-on) opens

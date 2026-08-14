@@ -1,11 +1,14 @@
 // The customiser on a PHONE — emulated touch, 390px wide, pointer: coarse.
 //
-// Three failure modes this guards, each of which reads as "works on my
-// desktop": a page you cannot scroll because the full-width canvas eats
-// every vertical swipe; iOS zooming the whole page (and sticking) because a
-// focused input's font is under 16px; and a stray pixel of horizontal
-// overflow giving the page a sideways wobble. Plus the narrow-container
-// layout: the parts rail must stack above the controls, not crush them.
+// The contract under test: the CANVAS owns every touch (one finger orbits,
+// it never scrolls the page), and in exchange the stage is STICKY at the
+// viewport top so the part list and controls scroll past underneath it —
+// the product never scrolls out of view. Plus the classic mobile traps
+// that each read as "works on my desktop": iOS zooming the whole page (and
+// sticking) because a focused input's font is under 16px; a stray pixel of
+// horizontal overflow giving the page a sideways wobble; and the
+// narrow-container layout, where the parts rail must stack above the
+// controls rather than crush them.
 //
 //   node test/mobile-check.mjs
 
@@ -60,11 +63,42 @@ const browser = await chromium.launch({
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
     await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, inner: window.innerWidth })));
 
-  // A vertical swipe on the product must be allowed to SCROLL — the classic
-  // embedded-3D trap is touch-action:none across a full-width stage.
-  check('the canvas leaves vertical swipes to the page (touch-action: pan-y)',
-    await page.evaluate(() => getComputedStyle(document.querySelector('.cfg-stage canvas')).touchAction === 'pan-y'),
+  // A touch on the product ORBITS it — it must never scroll the page.
+  // (Scrolling belongs to the panel below; the sticky stage keeps the
+  // product in view while that happens.)
+  check('the canvas keeps every touch for the orbit (touch-action: none)',
+    await page.evaluate(() => getComputedStyle(document.querySelector('.cfg-stage canvas')).touchAction === 'none'),
     await page.evaluate(() => getComputedStyle(document.querySelector('.cfg-stage canvas')).touchAction));
+
+  // The stage pins to the top of the viewport…
+  check('the stage is sticky at the viewport top',
+    await page.evaluate(() => {
+      const s = getComputedStyle(document.querySelector('.cfg-stage'));
+      return s.position === 'sticky' && parseFloat(s.top) === 0;
+    }),
+    await page.evaluate(() => {
+      const s = getComputedStyle(document.querySelector('.cfg-stage'));
+      return { position: s.position, top: s.top };
+    }));
+
+  // …and holds there while the panel scrolls under it. Scroll far enough
+  // that the stage would have left the viewport if it were in normal flow.
+  check('scrolling slides the panel under the stage, not the stage away',
+    await page.evaluate(async () => {
+      const stage = document.querySelector('.cfg-stage');
+      const flowTop = stage.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo(0, flowTop + stage.getBoundingClientRect().height);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const rect = stage.getBoundingClientRect();
+      const stuck = window.scrollY > flowTop && Math.abs(rect.top) <= 1;
+      window.scrollTo(0, 0);
+      return stuck;
+    }),
+    await page.evaluate(() => ({
+      scrollHeight: document.documentElement.scrollHeight,
+      innerHeight: window.innerHeight,
+      stageTop: document.querySelector('.cfg-stage').getBoundingClientRect().top,
+    })));
 
   check('the parts rail stacks above the controls (single-column config box)',
     await page.evaluate(() => getComputedStyle(document.querySelector('.cfg-config'))
