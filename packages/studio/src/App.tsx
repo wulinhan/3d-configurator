@@ -162,8 +162,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   const [exporting, setExporting] = useState(false);
   /** The explorer's ☑-ticked part ids, mirrored up — Export's exact scope. */
   const [checkedParts, setCheckedParts] = useState<string[]>([]);
-  /** Part id the Delete key is asking about — second press confirms. */
-  const [deleteAsk, setDeleteAsk] = useState<string | null>(null);
+  /** Part ids the Delete key is asking about — pressing it again confirms. */
+  const [deleteAsk, setDeleteAsk] = useState<string[] | null>(null);
   const [publishing, setPublishing] = useState(false);
   // Armed "click a face to place …" tool: what lands there and on which part.
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
@@ -532,35 +532,46 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     setSelectedPart(manifest.parts[manifest.parts.length - incoming.length]?.id ?? null);
   }, []);
 
-  // Delete / Backspace with a part selected: the first press opens the
-  // confirm dialog, the second press confirms it — the modal is the safety,
-  // the key is the speed. Typing fields and open dialogs are left alone.
-  const confirmDeleteAsk = useCallback((id: string) => {
+  // Delete / Backspace: the ☑-ticked parts if any, else the selected part —
+  // the first press opens the confirm dialog, the same key pressed again
+  // confirms it (the dialog handles that itself). Ctrl+A ticks every part,
+  // so select-all → Delete clears a whole project in three keystrokes.
+  // Typing fields, open dialogs and the customer preview are left alone.
+  const confirmDeleteAsk = useCallback((ids: string[]) => {
     const old = projectRef.current;
     setDeleteAsk(null);
     if (!old) return;
     try {
-      setManifest(removePart(old.manifest, id, old.raw));
+      setManifest(ids.reduce((m, id) => removePart(m, id, old.raw), old.manifest));
       setSelectedPart(null);
+      setCheckedParts((c) => c.filter((id) => !ids.includes(id)));
     } catch { /* removal refused by the edit layer — nothing changes */ }
   }, [setManifest]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (deleteAsk) {
-        e.preventDefault();
-        confirmDeleteAsk(deleteAsk);
-      } else if (selectedPart && !previewing && !document.querySelector('.dialog-backdrop')) {
-        e.preventDefault();
-        setDeleteAsk(selectedPart);
+      if (previewing || document.querySelector('.dialog-backdrop')) return;
+      if ((e.key === 'a' || e.key === 'A') && (e.ctrlKey || e.metaKey)) {
+        const all = projectRef.current?.manifest.parts.map((p) => p.id) ?? [];
+        if (all.length) { e.preventDefault(); setCheckedParts(all); }
+        return;
       }
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const ids = checkedParts.length ? checkedParts : selectedPart ? [selectedPart] : [];
+      if (ids.length) { e.preventDefault(); setDeleteAsk(ids); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deleteAsk, selectedPart, previewing, confirmDeleteAsk]);
+  }, [checkedParts, selectedPart, previewing]);
+
+  // Ticks must never outlive their parts (deletes, new project, undo).
+  useEffect(() => {
+    if (!project) return;
+    const alive = new Set(project.manifest.parts.map((p) => p.id));
+    setCheckedParts((c) => (c.every((id) => alive.has(id)) ? c : c.filter((id) => alive.has(id))));
+  }, [project?.manifest]);
 
   // A placement click in the viewport lands here: the picked face's sketch
   // plane becomes a text slot or image zone via the tested edit op.
@@ -817,6 +828,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
               axes={axes}
               onAxesChange={setAxes}
               onSetHidden={setHidden}
+              checked={checkedParts}
               onCheckedChange={setCheckedParts}
               onSolo={soloPart}
               onHideAll={(hide) => { setSolo(null); setHiddenParts(hide ? new Set(project.manifest.parts.map((p) => p.id)) : new Set()); }}
@@ -863,14 +875,15 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         <ExportDialog manifest={project.manifest} target={exportTarget} onClose={() => setExporting(false)} />
       )}
       {deleteAsk && (() => {
-        const part = project.manifest.parts.find((p) => p.id === deleteAsk);
-        if (!part) return null;
+        const parts = project.manifest.parts.filter((p) => deleteAsk.includes(p.id));
+        if (!parts.length) return null;
         return (
           <ConfirmDialog
             testId="confirm-delete-key"
-            title={`Delete ${part.label}?`}
-            body={<p>Press Delete again to confirm. Colour options and pricing tied to this part are removed; Ctrl+Z brings everything back.</p>}
-            confirmLabel="Delete part"
+            title={parts.length === 1 ? `Delete ${parts[0].label}?` : `Delete ${parts.length} parts?`}
+            body={<p>Press Delete again to confirm. Colour options and pricing tied to {parts.length === 1 ? 'this part' : 'these parts'} are removed; Ctrl+Z brings everything back.</p>}
+            confirmLabel={parts.length === 1 ? 'Delete part' : `Delete ${parts.length} parts`}
+            confirmKeys={['Delete', 'Backspace']}
             onCancel={() => setDeleteAsk(null)}
             onConfirm={() => confirmDeleteAsk(deleteAsk)}
           />

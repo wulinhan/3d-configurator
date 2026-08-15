@@ -573,6 +573,25 @@ input, select { font: inherit; }
 }
 .trace-note { margin: 6px 0 0; font-size: 11.5px; color: var(--ink2); }
 
+/* the image-import dialog: rectangular, preview LEFT, controls RIGHT */
+.image-dialog { width: min(900px, 96vw); }
+.image-dialog-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.image-dialog-head h3 { margin: 0; }
+.image-dialog-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px;
+  align-items: start;
+}
+.image-dialog-preview .trace-preview { margin-top: 0; max-height: 62vh; }
+.image-dialog-side {
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: 62vh; overflow-y: auto; padding-right: 2px;
+}
+.image-dialog-side .dialog-actions { margin-top: 10px; }
+@media (max-width: 760px) {
+  .image-dialog-grid { grid-template-columns: minmax(0, 1fr); }
+  .image-dialog-side { max-height: none; }
+}
+
 /* detected artwork colours → parts, with their palette mapping */
 .colour-map { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; border-top: 1.5px solid var(--line); }
 .colour-map-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

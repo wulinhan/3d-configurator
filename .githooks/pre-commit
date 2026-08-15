@@ -1,0 +1,10 @@
+#!/bin/sh
+# An embed-only commit must still redeploy the Studio — it compiles the
+# embed's viewer straight from source — but Vercel's root-directory skip
+# ignores commits that don't touch packages/studio (it fires before
+# vercel.json's ignoreCommand is ever evaluated). So: any staged embed
+# change without a studio change stamps the studio, and the deploy runs.
+if git diff --cached --quiet -- packages/embed; then exit 0; fi
+if ! git diff --cached --quiet -- packages/studio; then exit 0; fi
+date -u +%Y-%m-%dT%H:%M:%SZ > packages/studio/.embed-stamp
+git add packages/studio/.embed-stamp

@@ -209,6 +209,31 @@ test('a three-colour artwork becomes three colour parts, named and hexed', async
   assert.equal(colourName('#1A1A1A'), 'black');
 });
 
+test('loose pieces split into their own parts; the cap keeps patterns whole', async () => {
+  const w = 80, h = 60;
+  // one big blob and one small far-away speck, same colour
+  const img = raster(w, h, (x, y) =>
+    (Math.hypot(x - 25, y - 30) < 14) || (x >= 62 && x < 68 && y >= 10 && y < 16));
+
+  const split = await templateFromRaster(img, { ...TEMPLATE_DEFAULTS, widthMm: 80 });
+  assert.equal(split.parts.length, 3, 'base + blob + speck');
+  assert.deepEqual(split.parts.map((p) => p.name), ['base', 'outlines', 'outlines-2']);
+  assert.equal(split.hexes[1], split.hexes[2], 'both pieces wear the group colour');
+
+  const whole = await templateFromRaster(img, { ...TEMPLATE_DEFAULTS, widthMm: 80, splitParts: false });
+  assert.equal(whole.parts.length, 2, 'splitting off keeps one part per colour');
+
+  // dictating ONE colour flattens a multi-colour artwork into line-art mode
+  const data = new Uint8ClampedArray(w * h * 4);
+  data.fill(255);
+  for (let y = 20; y < 40; y++) {
+    for (let x = 10; x < 30; x++) { const p = (y * w + x) * 4; data[p] = 200; data[p + 1] = 30; data[p + 2] = 30; }
+    for (let x = 40; x < 60; x++) { const p = (y * w + x) * 4; data[p] = 20; data[p + 1] = 20; data[p + 2] = 20; }
+  }
+  const masks = templateMasks({ data, width: w, height: h }, { widthMm: 80, widenMm: 0, baseGrowMm: 0, maxColours: 1 });
+  assert.equal(masks.groups.length, 1, 'one colour cap merges everything');
+});
+
 test('the base is optional — lines-only lands one part, on the ground', async () => {
   const w = 60, h = 60;
   const img = raster(w, h, (x, y) => {

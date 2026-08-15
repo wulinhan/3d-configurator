@@ -101,7 +101,8 @@ export function PartsPanel(props: {
   axes: string;
   onAxesChange: (axes: string) => void;
   onSetHidden: (ids: string[], hidden: boolean) => void;
-  /** The ☑-ticked parts, reported live — what Export exports. */
+  /** The ☑-ticked parts — owned by the App (Ctrl+A, Delete, Export). */
+  checked: string[];
   onCheckedChange: (ids: string[]) => void;
   onSolo: (id: string | null) => void;
   onHideAll: (hide: boolean) => void;
@@ -111,7 +112,6 @@ export function PartsPanel(props: {
   const { manifest } = props.project;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [checked, setChecked] = useState<Set<string>>(new Set());
   const [pending, setPending] = useState<null | 'group' | 'variant'>(null);
   const [structureLabel, setStructureLabel] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -128,11 +128,10 @@ export function PartsPanel(props: {
 
   const entries = entriesOf(manifest);
 
-  // Mirror the tick-set up to the App (Export exports exactly these); on
-  // unmount — tab switch, project change — the ticks are gone, so say so.
-  const { onCheckedChange } = props;
-  useEffect(() => { onCheckedChange([...checked]); }, [checked, onCheckedChange]);
-  useEffect(() => () => onCheckedChange([]), [onCheckedChange]);
+  // The tick-set lives in the App (Ctrl+A and the Delete key act on it from
+  // anywhere, Export exports it); this panel renders and edits it.
+  const checked = new Set(props.checked);
+  const setChecked = (next: Set<string>) => props.onCheckedChange([...next]);
 
   const act = (fn: () => Manifest) => {
     try { props.onChange(fn()); setError(null); }
@@ -140,11 +139,11 @@ export function PartsPanel(props: {
   };
 
   const isHidden = (id: string) => (props.solo ? props.solo !== id : props.hiddenParts.has(id));
-  const toggleChecked = (id: string) => setChecked((old) => {
-    const next = new Set(old);
+  const toggleChecked = (id: string) => {
+    const next = new Set(checked);
     if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
+    setChecked(next);
+  };
 
   // ── drag machinery ─────────────────────────────────────────────────────────
 
@@ -615,16 +614,13 @@ export function PartsPanel(props: {
             : `Delete ${confirmDelete.length} parts?`}
           body={<p>Parts anchored to deleted ones keep their position. Colour options and pricing tied to them are removed. This can be undone with Ctrl+Z.</p>}
           confirmLabel={confirmDelete.length === 1 ? 'Delete part' : `Delete ${confirmDelete.length} parts`}
+          confirmKeys={['Delete', 'Backspace']}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={() => {
             const ids = confirmDelete;
             setConfirmDelete(null);
             act(() => ids.reduce((mm, id) => removePart(mm, id, props.project.raw), manifest));
-            setChecked((old) => {
-              const next = new Set(old);
-              for (const id of ids) next.delete(id);
-              return next;
-            });
+            setChecked(new Set([...checked].filter((id) => !ids.includes(id))));
             if (props.selectedPart && ids.includes(props.selectedPart)) props.onSelectPart(null);
           }}
         />

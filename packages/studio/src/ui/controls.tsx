@@ -135,14 +135,26 @@ export function ConfirmDialog(props: {
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Extra keys that CONFIRM — a delete dialog passes Delete/Backspace so
+   * the key that opened it, pressed again, completes it. Escape always
+   * cancels; Enter keeps its focus-driven default (the safe action). */
+  confirmKeys?: string[];
   testId?: string;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     cancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onCancel(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { props.onCancel(); return; }
+      if (props.confirmKeys?.includes(e.key)) {
+        e.preventDefault();
+        e.stopImmediatePropagation(); // no other handler re-opens on this press
+        props.onConfirm();
+      }
+    };
+    // capture phase: the dialog owns the keyboard while it is up
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

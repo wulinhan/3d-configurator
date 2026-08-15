@@ -46,11 +46,14 @@ await page.setInputFiles('[data-testid="image-template-input"]', {
 });
 await page.waitForSelector('[data-testid="template-add"]:not([disabled])', { timeout: 20000 });
 await page.click('[data-testid="template-add"]');
-await page.waitForFunction(() => window.__studio?.manifest?.parts?.length === 2, { timeout: 30000 });
+// splitting is on by default, so the SVG's loose pieces land as their own
+// parts — at least the plate plus one piece, exact count is the tracer's
+await page.waitForFunction(() => (window.__studio?.manifest?.parts?.length ?? 0) >= 2, { timeout: 30000 });
 await page.waitForFunction(() => window.__studioViewerReady === true, { timeout: 30000 });
 
 const m = await page.evaluate(() => window.__studio.manifest);
-check('template arrived as plate + outlines', m.parts.length === 2, m.parts.map((p) => p.id));
+check('template arrived as plate + pieces',
+  m.parts.length >= 2 && m.parts.some((p) => p.id.includes('base')), m.parts.map((p) => p.id));
 check('the Manifold-built meshes are bound and non-empty',
   await page.evaluate(() => window.__studio.manifest.parts.every((p) => {
     const mesh = window.__studioViewer.meshOf(p.id);

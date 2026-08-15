@@ -38,11 +38,21 @@ export interface TemplateOpts {
   ridgeMm: number;
   /** Extra thickness added to every line (0 = as drawn). */
   widenMm: number;
+  /** The MOST colours to detect (1 forces line-art mode). */
+  maxColours: number;
+  /** Loose pieces of one colour become their own parts, so a stray speck
+   * can be deleted afterwards. Dense patterns (a QR code) stay whole. */
+  splitParts: boolean;
 }
 
 export const TEMPLATE_DEFAULTS: TemplateOpts = {
   widthMm: 100, withBase: true, baseMm: 3, baseGrowMm: 0, ridgeMm: 1.5, widenMm: 0,
+  maxColours: 6, splitParts: true,
 };
+
+/** Above this many loose pieces a colour is a PATTERN, not stray solids —
+ * splitting a QR code into hundreds of parts helps nobody. */
+export const SPLIT_LIMIT = 24;
 
 /** RGBA pixels — what ctx.getImageData returns, but structural so tests can
  * synthesise it without a DOM. */
@@ -215,6 +225,33 @@ const despeckle = (ink: Uint8Array, w: number, h: number, minArea: number): Uint
   return out;
 };
 
+/** Split a mask into its connected pieces (4-neighbour), largest first —
+ * how one colour's stray solids become their own deletable parts. */
+export const components = (mask: Uint8Array, w: number, h: number): Uint8Array[] => {
+  const seen = new Uint8Array(w * h);
+  const out: Array<{ mask: Uint8Array; area: number }> = [];
+  const queue: number[] = [];
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || seen[start]) continue;
+    const piece = new Uint8Array(w * h);
+    let area = 0;
+    queue.length = 0;
+    queue.push(start);
+    seen[start] = 1;
+    while (queue.length) {
+      const i = queue.pop()!;
+      piece[i] = 1;
+      area++;
+      const x = i % w, y = (i / w) | 0;
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) {
+        if (j >= 0 && mask[j] && !seen[j]) { seen[j] = 1; queue.push(j); }
+      }
+    }
+    out.push({ mask: piece, area });
+  }
+  return out.sort((a, b) => b.area - a.area).map((p) => p.mask);
+};
+
 /** Everything NOT reachable from the border without crossing ink: the ink
  * itself plus every region it encloses. This is what makes the butterfly's
  * body part of the plate rather than a hole through it. */
@@ -357,6 +394,8 @@ export interface MaskOpts {
   widenMm: number;
   /** Grow the plate outward along its outline, in mm past the artwork. */
   baseGrowMm: number;
+  /** The most colours to detect; 1 forces everything into line-art mode. */
+  maxColours?: number;
 }
 
 /** One detected artwork colour and the pixels that wear it. */
@@ -378,7 +417,8 @@ export function templateMasks(img: Raster, opts: MaskOpts): TemplatePreview {
   const { width: w, height: h } = img;
   const n = w * h;
   const d = img.data;
-  const MERGE_DE = 18, MIN_FRAC = 0.005, MAX_COLOURS = 6;
+  const MERGE_DE = 18, MIN_FRAC = 0.005;
+  const MAX_COLOURS = Math.max(1, Math.min(8, Math.round(opts.maxColours ?? 6)));
 
   // composite onto white (transparent art must read as white background),
   // Lab per pixel, and the content mask in one pass
@@ -504,6 +544,9 @@ export async function templateFromRaster(img: Raster, opts: TemplateOpts): Promi
 
   // Without a base the lines ARE the part, sat straight on the ground.
   // One colour keeps the classic name; several get named for their colour.
+  // With splitting on, a colour's loose pieces land as separate parts
+  // (largest first) so a stray solid can simply be deleted — unless the
+  // colour is a dense pattern, which stays whole.
   const lift = opts.withBase ? opts.baseMm : 0;
   const usedNames = new Set<string>();
   const parts: ImportedPart[] = [];
@@ -513,11 +556,16 @@ export async function templateFromRaster(img: Raster, opts: TemplateOpts): Promi
     hexes.push(null);
   }
   for (const group of groups) {
-    let name = groups.length === 1 ? 'outlines' : colourName(group.hex);
-    for (let k = 2; usedNames.has(name); k++) name = `${groups.length === 1 ? 'outlines' : colourName(group.hex)}-${k}`;
-    usedNames.add(name);
-    parts.push(await extrudeRings(name, trace(group.ink), scale, opts.ridgeMm, lift));
-    hexes.push(group.hex);
+    const base = groups.length === 1 ? 'outlines' : colourName(group.hex);
+    const pieces = opts.splitParts ? components(group.ink, masks.width, masks.height) : [group.ink];
+    const masksToBuild = pieces.length > 1 && pieces.length <= SPLIT_LIMIT ? pieces : [group.ink];
+    for (const mask of masksToBuild) {
+      let name = base;
+      for (let k = 2; usedNames.has(name); k++) name = `${base}-${k}`;
+      usedNames.add(name);
+      parts.push(await extrudeRings(name, trace(mask), scale, opts.ridgeMm, lift));
+      hexes.push(group.hex);
+    }
   }
 
   // one shared offset so ridges stay registered on their plate: centre on

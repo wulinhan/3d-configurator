@@ -15,7 +15,7 @@ import {
   templateFromRaster, templateMasks, TEMPLATE_DEFAULTS, colourName, hexDistance, type Raster,
 } from '../lib/trace-image.ts';
 import type { PartColour } from '../App.tsx';
-import { Select } from './controls.tsx';
+import { ConfirmDialog, Select } from './controls.tsx';
 import { NumberField } from './fields.tsx';
 
 const KINDS: Array<{ value: PrimitiveKind; label: string }> = [
@@ -143,6 +143,10 @@ export function ImageTemplateDialog(props: {
   const [mapToPalette, setMapToPalette] = useState(false);
   /** Per-group override: 'art' keeps the artwork colour, else a swatch id. */
   const [choices, setChoices] = useState<Record<number, string>>({});
+  /** Closing is guarded: X, backdrop and Escape all ask before aborting. */
+  const [confirmAbort, setConfirmAbort] = useState(false);
+  const abortRef = useRef(false);
+  abortRef.current = confirmAbort;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const set = (patch: Partial<typeof opts>) => setOpts((o) => ({ ...o, ...patch }));
 
@@ -155,7 +159,10 @@ export function ImageTemplateDialog(props: {
   }, [props.file]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      // while the abort dialog is up, IT owns Escape
+      if (e.key === 'Escape' && !abortRef.current) setConfirmAbort(true);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -166,7 +173,8 @@ export function ImageTemplateDialog(props: {
     widthMm: opts.widthMm,
     widenMm: opts.widenMm,
     baseGrowMm: opts.withBase ? opts.baseGrowMm : 0,
-  }) : null), [raster, opts.widenMm, opts.widthMm, opts.baseGrowMm, opts.withBase]);
+    maxColours: opts.maxColours,
+  }) : null), [raster, opts.widenMm, opts.widthMm, opts.baseGrowMm, opts.withBase, opts.maxColours]);
 
   const nearestSwatch = (hex: string): string =>
     props.palette.reduce((best, s) =>
@@ -216,12 +224,13 @@ export function ImageTemplateDialog(props: {
           .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'template';
         const result = await templateFromRaster(raster, opts);
         const parts = result.parts.map((p) => ({ ...p, name: `${stem}-${p.name}` }));
-        // group order in the result matches the mask groups the rows showed
-        let group = -1;
+        // a split colour yields SEVERAL parts wearing one group's hex, so
+        // map each part back to its group by the hex itself
         const colours = result.hexes.map((hex) => {
           if (hex === null) return null;
-          group++;
-          const pick = choices[group] ?? (mapToPalette && props.palette.length ? nearestSwatch(hex) : 'art');
+          const group = masks?.groups.findIndex((g) => g.hex === hex) ?? -1;
+          const pick = (group >= 0 ? choices[group] : undefined)
+            ?? (mapToPalette && props.palette.length ? nearestSwatch(hex) : 'art');
           return pick === 'art'
             ? { hex, label: `Artwork ${colourName(hex)}` }
             : { swatchId: pick };
@@ -238,105 +247,131 @@ export function ImageTemplateDialog(props: {
   const artHeightMm = raster ? Math.round(opts.widthMm * (raster.height / raster.width)) : null;
   const grow = opts.withBase ? opts.baseGrowMm : 0;
   return (
-    <div className="dialog-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
-      <div className="dialog-card shape-dialog" role="dialog" aria-modal="true" aria-label="Colouring template from image" data-testid="image-template-dialog">
-        <h3>Template from image</h3>
-        <div className="dialog-body">
-          <p>
-            The drawn lines become raised ridges; with a base plate on, the
-            artwork's outer shape becomes the plate they stand on and each part
-            arrives with its own colour.
-          </p>
+    <div className="dialog-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) setConfirmAbort(true); }}>
+      <div className="dialog-card image-dialog" role="dialog" aria-modal="true" aria-label="Colouring template from image" data-testid="image-template-dialog">
+        <div className="image-dialog-head">
+          <h3>Template from image</h3>
+          <button
+            className="mini icon" data-testid="template-close" aria-label="Close" title="Close"
+            onClick={() => setConfirmAbort(true)}
+          >✕</button>
         </div>
-        <canvas ref={canvasRef} className="trace-preview" data-testid="trace-preview" aria-label="Traced template preview" />
-        {!raster && !error && <p className="trace-note">Reading the image…</p>}
-        {raster && artHeightMm !== null && (
-          <p className="trace-note">
-            {opts.withBase
-              ? `Plate: ${opts.widthMm + 2 * grow} × ${artHeightMm + 2 * grow} mm`
-              : `Artwork: ${opts.widthMm} × ${artHeightMm} mm — lines only, no base`}
-          </p>
-        )}
-        <div className="dialog-fields">
-          <div className="field-row">
-            <NumberField
-              label="Width" value={opts.widthMm} suffix="mm" step={5}
-              testId="template-width" onCommit={(v) => set({ widthMm: v })}
-            />
-            <NumberField
-              label="Line height" value={opts.ridgeMm} suffix="mm" step={0.25}
-              testId="template-ridge" onCommit={(v) => set({ ridgeMm: v })}
-            />
-            <NumberField
-              label="Thicken lines" value={opts.widenMm} suffix="mm" step={0.2}
-              testId="template-widen" onCommit={(v) => set({ widenMm: Math.max(0, v) })}
-            />
+        <div className="image-dialog-grid">
+          <div className="image-dialog-preview">
+            <canvas ref={canvasRef} className="trace-preview" data-testid="trace-preview" aria-label="Traced template preview" />
+            {!raster && !error && <p className="trace-note">Reading the image…</p>}
+            {raster && artHeightMm !== null && (
+              <p className="trace-note">
+                {opts.withBase
+                  ? `Plate: ${opts.widthMm + 2 * grow} × ${artHeightMm + 2 * grow} mm`
+                  : `Artwork: ${opts.widthMm} × ${artHeightMm} mm — lines only, no base`}
+              </p>
+            )}
           </div>
-          <label className="lock">
-            <input
-              type="checkbox" checked={opts.withBase} data-testid="template-with-base"
-              onChange={(e) => set({ withBase: e.target.checked })}
-            />
-            Base plate under the lines (the artwork's silhouette)
-          </label>
-          {opts.withBase && (
+          <div className="image-dialog-side">
             <div className="field-row">
               <NumberField
-                label="Base" value={opts.baseMm} suffix="mm" step={0.5}
-                testId="template-base" onCommit={(v) => set({ baseMm: v })}
+                label="Width" value={opts.widthMm} suffix="mm" step={5}
+                testId="template-width" onCommit={(v) => set({ widthMm: v })}
               />
               <NumberField
-                label="Grow base" value={opts.baseGrowMm} suffix="mm" step={0.5}
-                testId="template-grow" onCommit={(v) => set({ baseGrowMm: Math.max(0, v) })}
+                label="Colours" value={opts.maxColours} step={1}
+                testId="template-max-colours"
+                onCommit={(v) => set({ maxColours: Math.max(1, Math.min(8, Math.round(v))) })}
               />
             </div>
-          )}
-
-          {masks && masks.groups.length > 0 && (
-            <div className="colour-map" data-testid="template-colours">
-              <div className="colour-map-head">
-                <span className="field-label">
-                  {masks.groups.length === 1 ? '1 colour detected' : `${masks.groups.length} colours detected`}
-                  {' '}— each becomes its own part
-                </span>
-                {props.palette.length > 0 && (
-                  <label className="lock">
-                    <input
-                      type="checkbox" checked={mapToPalette} data-testid="template-map-palette"
-                      onChange={(e) => { setMapToPalette(e.target.checked); setChoices({}); }}
-                    />
-                    Map to my palette
-                  </label>
-                )}
-              </div>
-              {masks.groups.map((group, i) => (
-                <div className="colour-row" key={i}>
-                  <span className="colour-chip" style={{ background: chosen(i) }} aria-hidden="true" />
-                  <span className="colour-row-label">
-                    {colourName(group.hex)} · {Math.max(1, Math.round(group.coverage * 100))}%
-                  </span>
-                  <Select
-                    ariaLabel={`Colour for ${colourName(group.hex)}`} testId={`template-colour-${i}`}
-                    value={choices[i] ?? (mapToPalette && props.palette.length ? nearestSwatch(group.hex) : 'art')}
-                    options={[
-                      { value: 'art', label: `Artwork — ${group.hex}`, chip: group.hex },
-                      ...props.palette.map((s) => ({ value: s.id, label: s.name, chip: s.hex })),
-                    ]}
-                    onChange={(v) => setChoices((c) => ({ ...c, [i]: v }))}
-                  />
-                </div>
-              ))}
+            <div className="field-row">
+              <NumberField
+                label="Line height" value={opts.ridgeMm} suffix="mm" step={0.25}
+                testId="template-ridge" onCommit={(v) => set({ ridgeMm: v })}
+              />
+              <NumberField
+                label="Thicken lines" value={opts.widenMm} suffix="mm" step={0.2}
+                testId="template-widen" onCommit={(v) => set({ widenMm: Math.max(0, v) })}
+              />
             </div>
-          )}
-        </div>
-        {error && <p className="field-error" role="alert">{error}</p>}
-        <div className="dialog-actions">
-          <button className="ghost" onClick={props.onClose}>Cancel</button>
-          <button className="cta" data-testid="template-add" disabled={!raster || busy} onClick={add}>
-            {busy ? 'Tracing…' : 'Add template'}
-          </button>
+            <label className="lock">
+              <input
+                type="checkbox" checked={opts.withBase} data-testid="template-with-base"
+                onChange={(e) => set({ withBase: e.target.checked })}
+              />
+              Base plate under the lines (the artwork's silhouette)
+            </label>
+            {opts.withBase && (
+              <div className="field-row">
+                <NumberField
+                  label="Base" value={opts.baseMm} suffix="mm" step={0.5}
+                  testId="template-base" onCommit={(v) => set({ baseMm: v })}
+                />
+                <NumberField
+                  label="Grow base" value={opts.baseGrowMm} suffix="mm" step={0.5}
+                  testId="template-grow" onCommit={(v) => set({ baseGrowMm: Math.max(0, v) })}
+                />
+              </div>
+            )}
+            <label className="lock" title="Dense patterns (a QR code) stay whole either way">
+              <input
+                type="checkbox" checked={opts.splitParts} data-testid="template-split"
+                onChange={(e) => set({ splitParts: e.target.checked })}
+              />
+              Loose pieces become their own parts
+            </label>
+
+            {masks && masks.groups.length > 0 && (
+              <div className="colour-map" data-testid="template-colours">
+                <div className="colour-map-head">
+                  <span className="field-label">
+                    {masks.groups.length === 1 ? '1 colour detected' : `${masks.groups.length} colours detected`}
+                  </span>
+                  {props.palette.length > 0 && (
+                    <label className="lock">
+                      <input
+                        type="checkbox" checked={mapToPalette} data-testid="template-map-palette"
+                        onChange={(e) => { setMapToPalette(e.target.checked); setChoices({}); }}
+                      />
+                      Map to my palette
+                    </label>
+                  )}
+                </div>
+                {masks.groups.map((group, i) => (
+                  <div className="colour-row" key={i}>
+                    <span className="colour-chip" style={{ background: chosen(i) }} aria-hidden="true" />
+                    <span className="colour-row-label">
+                      {colourName(group.hex)} · {Math.max(1, Math.round(group.coverage * 100))}%
+                    </span>
+                    <Select
+                      ariaLabel={`Colour for ${colourName(group.hex)}`} testId={`template-colour-${i}`}
+                      value={choices[i] ?? (mapToPalette && props.palette.length ? nearestSwatch(group.hex) : 'art')}
+                      options={[
+                        { value: 'art', label: `Artwork — ${group.hex}`, chip: group.hex },
+                        ...props.palette.map((s) => ({ value: s.id, label: s.name, chip: s.hex })),
+                      ]}
+                      onChange={(v) => setChoices((c) => ({ ...c, [i]: v }))}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            {error && <p className="field-error" role="alert">{error}</p>}
+            <div className="dialog-actions">
+              <button className="ghost" onClick={() => setConfirmAbort(true)}>Cancel</button>
+              <button className="cta" data-testid="template-add" disabled={!raster || busy} onClick={add}>
+                {busy ? 'Tracing…' : 'Add template'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
+      {confirmAbort && (
+        <ConfirmDialog
+          testId="template-abort"
+          title="Abort importing this image?"
+          body={<p>The traced setup and colour mapping will be lost.</p>}
+          confirmLabel="Abort import"
+          onCancel={() => setConfirmAbort(false)}
+          onConfirm={props.onClose}
+        />
+      )}
     </div>
   );
 }
