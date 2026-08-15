@@ -1470,6 +1470,12 @@ export class Viewer {
     // Gradients LAST: engraving may just have swapped a part's geometry, and
     // the vertex colours live on the geometry.
     this.syncGradients(colours);
+    // apply() just repainted every material with its TRUE colour — drop the
+    // emphasis stashes (they are stale) and re-dim from the fresh paint.
+    for (const material of this.materials.values()) {
+      delete (material.userData as { trueColour?: THREE.Color }).trueColour;
+    }
+    this.syncEmphasisColours();
     // A typed word may have grown or shrunk a per-letter run just now — the
     // shadow plane and shadow camera must cover wherever it ends today.
     this.fitShadowCatcher();
@@ -2482,18 +2488,15 @@ export class Viewer {
    * selected one wears a thin white rim (its own geometry re-rendered
    * slightly inflated, back faces only — the classic silhouette outline,
    * no post-processing). The embed never calls this.
+   *
+   * The fade is a COLOUR blend toward the page background, not opacity:
+   * transparency on double-sided meshes renders back faces through front
+   * faces in draw order and the whole part shimmers — opaque paint cannot
+   * flicker.
    */
   setSelectionEmphasis(partId: string | null): void {
     this.emphasis = partId;
-    for (const [id, material] of this.materials) {
-      const dim = !!partId && id !== partId && !!this.meshes.get(partId);
-      const opacity = dim ? 0.25 : 1;
-      if (material.transparent !== dim) {
-        material.transparent = dim;
-        material.needsUpdate = true; // the transparency switch recompiles
-      }
-      material.opacity = opacity;
-    }
+    this.syncEmphasisColours();
     if (this.outlineMesh) {
       this.scene.remove(this.outlineMesh);
       this.outlineMesh = undefined;
@@ -2508,6 +2511,25 @@ export class Viewer {
       hull.raycast = () => {}; // never intercept picking
       this.outlineMesh = hull;
       this.scene.add(hull);
+    }
+  }
+
+  /** Paint unselected parts toward the background; restore on deselect.
+   * The TRUE colour is stashed per material so apply() and this stay out
+   * of each other's way — apply() clears the stash after it repaints. */
+  private syncEmphasisColours(): void {
+    const active = this.emphasis && this.meshes.get(this.emphasis) ? this.emphasis : null;
+    const bg = new THREE.Color();
+    this.renderer.getClearColor(bg);
+    for (const [id, material] of this.materials) {
+      const store = material.userData as { trueColour?: THREE.Color };
+      if (active && id !== active) {
+        store.trueColour ??= material.color.clone();
+        material.color.copy(store.trueColour).lerp(bg, 0.82);
+      } else if (store.trueColour) {
+        material.color.copy(store.trueColour);
+        delete store.trueColour;
+      }
     }
   }
 

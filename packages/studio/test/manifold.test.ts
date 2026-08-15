@@ -94,7 +94,8 @@ test('3MF objects are watertight too — each part welded through Manifold', asy
   const { parts } = await templateFromRaster(checkerboard(), { ...TEMPLATE_DEFAULTS, widthMm: 40 });
   const { unzipSync, strFromU8 } = await import('fflate');
   const model = strFromU8(unzipSync(await exportModel(parts as ExportMesh[], '3mf', 'x'))['3D/3dmodel.model']);
-  const objects = model.match(/<object [\s\S]*?<\/object>/g) ?? [];
+  // mesh-bearing objects only — the assembly object composes, it carries no mesh
+  const objects = (model.match(/<object [\s\S]*?<\/object>/g) ?? []).filter((o) => o.includes('<mesh>'));
   assert.equal(objects.length, 2);
   for (const obj of objects) {
     const verts: number[] = [];

@@ -61,16 +61,25 @@ test('OBJ: one o-group per part, faces numbered across the whole file', () => {
   assert.ok(text.includes('f 4 5 6'), 'second mesh offsets past the first');
 });
 
-test('3MF: a zip package, objects kept separate, resources closed before build', () => {
+test('3MF: parts as components of ONE assembly, so slicers keep the arrangement', () => {
   const bytes = write3mf([tri('base'), tri('a<b', 20)], 'Test & Thing');
   const files = unzipSync(bytes);
   assert.ok(files['[Content_Types].xml'] && files['_rels/.rels'], 'package plumbing present');
   const model = strFromU8(files['3D/3dmodel.model']);
-  assert.equal((model.match(/<object /g) ?? []).length, 2);
+  assert.equal((model.match(/<object /g) ?? []).length, 3, 'two parts + one assembly');
+  assert.ok(model.includes('<component objectid="1"/>') && model.includes('<component objectid="2"/>'),
+    'the assembly composes both parts');
+  assert.equal((model.match(/<item /g) ?? []).length, 1, 'the build places only the assembly');
+  assert.ok(model.includes('<item objectid="3"/>'), 'and it is the assembly');
   assert.ok(model.indexOf('</resources>') < model.indexOf('<build>'), 'valid element order');
   assert.ok(model.includes('name="a&lt;b"'), 'names are XML-escaped');
   assert.ok(model.includes('Test &amp; Thing'), 'title is XML-escaped');
   assert.ok(model.includes('unit="millimeter"'));
+
+  // a single part needs no assembly wrapper
+  const solo = strFromU8(unzipSync(write3mf([tri('only')], 'x'))['3D/3dmodel.model']);
+  assert.equal((solo.match(/<object /g) ?? []).length, 1);
+  assert.ok(solo.includes('<item objectid="1"/>'));
 });
 
 test('exportModel: GLB magic, and an empty scene is refused', async () => {

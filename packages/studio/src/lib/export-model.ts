@@ -191,7 +191,14 @@ export function writeObj(meshes: ExportMesh[]): string {
 const xmlSafe = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** A minimal, slicer-friendly 3MF package: one object per part, all built. */
+/**
+ * A minimal, slicer-friendly 3MF package: one object per part, and — when
+ * there are several — ONE assembly object composing them as components,
+ * with the build referencing only the assembly. Slicers import separate
+ * build items as separate objects and helpfully auto-arrange them across
+ * the plate; components of one object stay exactly where they were
+ * modelled, which is the whole point of exporting an arrangement.
+ */
 export function write3mf(meshes: ExportMesh[], title: string): Uint8Array {
   let res = ' <resources>\n';
   meshes.forEach((mesh, i) => {
@@ -206,10 +213,14 @@ export function write3mf(meshes: ExportMesh[], title: string): Uint8Array {
     }
     res += `  <object id="${i + 1}" type="model" name="${xmlSafe(mesh.name)}">\n   <mesh>\n    <vertices>\n${v.join('\n')}\n    </vertices>\n    <triangles>\n${t.join('\n')}\n    </triangles>\n   </mesh>\n  </object>\n`;
   });
+  const assemblyId = meshes.length + 1;
+  if (meshes.length > 1) {
+    res += `  <object id="${assemblyId}" type="model" name="${xmlSafe(title)}">\n   <components>\n`;
+    meshes.forEach((_, i) => { res += `    <component objectid="${i + 1}"/>\n`; });
+    res += '   </components>\n  </object>\n';
+  }
   res += ' </resources>\n';
-  let build = ' <build>\n';
-  meshes.forEach((_, i) => { build += `  <item objectid="${i + 1}"/>\n`; });
-  build += ' </build>\n';
+  const build = ` <build>\n  <item objectid="${meshes.length > 1 ? assemblyId : 1}"/>\n </build>\n`;
   const model = `<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
  <metadata name="Title">${xmlSafe(title)}</metadata>
