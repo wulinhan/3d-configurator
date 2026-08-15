@@ -22,6 +22,8 @@ import {
 import type { Project, SetManifestOptions } from '../App.tsx';
 import { AXIS_PRESETS } from '../lib/import-model.ts';
 import { ConfirmDialog, Select } from './controls.tsx';
+import { PrimitiveDialog, ImageTemplateDialog } from './AddShapeDialog.tsx';
+import type { ImportedPart } from '../lib/types.ts';
 
 const EYE = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>;
 const EYE_OFF = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
@@ -67,6 +69,9 @@ export function PartsPanel(props: {
   onEditGroup: (id: string | null) => void;
   onEditVariant: (id: string | null) => void;
   onAddModel: (file: File) => Promise<void>;
+  /** Parts the Studio generated (primitives, traced templates) — already in
+   * canonical space, so they skip importModel's re-orientation. */
+  onAddParts: (parts: ImportedPart[]) => void;
   /** Which way imported files are up — applies to the NEXT file added. */
   axes: string;
   onAxesChange: (axes: string) => void;
@@ -89,6 +94,9 @@ export function PartsPanel(props: {
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [shapeDialog, setShapeDialog] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
 
   const entries = entriesOf(manifest);
 
@@ -413,12 +421,27 @@ export function PartsPanel(props: {
           title="Add parts from another 3MF / STL / GLB — or drop the file anywhere on this panel"
           onClick={() => addInputRef.current?.click()}
         >＋ Add parts</button>
+        <button
+          className="mini" data-testid="new-shape"
+          title="A ready-made solid: cuboid, cylinder, n-sided prism or torus"
+          onClick={() => setShapeDialog(true)}
+        >＋ Shape</button>
+        <button
+          className="mini" data-testid="new-from-image"
+          title="Trace an SVG / PNG / JPG into a colouring template: raised lines on a plate shaped like the artwork"
+          onClick={() => imageInputRef.current?.click()}
+        >＋ Image</button>
         <button className="mini" data-testid="show-all" onClick={() => { props.onHideAll(false); props.onSolo(null); }}>Show all</button>
         <button className="mini" data-testid="hide-all" onClick={() => props.onHideAll(true)}>Hide all</button>
         <input
           ref={addInputRef} type="file" hidden data-testid="add-model-input"
           accept=".3mf,.stl,.glb,model/gltf-binary"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) addFromFile(f); e.target.value = ''; }}
+        />
+        <input
+          ref={imageInputRef} type="file" hidden data-testid="image-template-input"
+          accept=".svg,.png,.jpg,.jpeg,.webp"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) setImageFile(f); e.target.value = ''; }}
         />
       </div>
       <div className="axes-row">
@@ -549,6 +572,20 @@ export function PartsPanel(props: {
             });
             if (props.selectedPart && ids.includes(props.selectedPart)) props.onSelectPart(null);
           }}
+        />
+      )}
+
+      {shapeDialog && (
+        <PrimitiveDialog
+          onAdd={(parts) => props.onAddParts(parts)}
+          onClose={() => setShapeDialog(false)}
+        />
+      )}
+      {imageFile && (
+        <ImageTemplateDialog
+          file={imageFile}
+          onAdd={(parts) => props.onAddParts(parts)}
+          onClose={() => setImageFile(null)}
         />
       )}
     </div>

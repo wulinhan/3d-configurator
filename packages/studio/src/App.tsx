@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 import type { Manifest, ChoiceOption } from '../../embed/src/manifest/types.ts';
 import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
+import type { ImportedPart } from './lib/types.ts';
 import { writeGlb } from './lib/write-glb.ts';
 import {
   boundsOf, boundsByPartId, mergeModel, emptyManifest, EMPTY_BOUNDS, type PartBounds,
@@ -457,6 +458,41 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     if (firstAdd) setSelectedPart(manifest.parts[0]?.id ?? null);
   }, [axes]);
 
+  // Parts the Studio GENERATED — a primitive, a traced template — join the
+  // project through the same merge as an uploaded file, minus importModel:
+  // they are born in canonical space, and re-orienting them would be wrong.
+  const addGeneratedParts = useCallback((incoming: ImportedPart[]) => {
+    const old = projectRef.current;
+    if (!old || !incoming.length) return;
+    const firstAdd = old.manifest.parts.length === 0;
+    const merged = mergeModel({ parts: old.model.parts, manifest: old.manifest }, incoming);
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    for (const part of incoming) {
+      for (let i = 0; i < part.positions.length; i += 3) {
+        for (let a = 0; a < 3; a++) {
+          const v = part.positions[i + a];
+          if (v < min[a]) min[a] = v;
+          if (v > max[a]) max[a] = v;
+        }
+      }
+    }
+    const bounds = firstAdd ? { min, max } : {
+      min: old.model.bounds.min.map((v, i) => Math.min(v, min[i])),
+      max: old.model.bounds.max.map((v, i) => Math.max(v, max[i])),
+    };
+    const model = { ...old.model, parts: merged.parts, bounds };
+    const raw = boundsByPartId(merged.manifest, boundsOf(merged.parts));
+    let manifest = merged.manifest;
+    if (firstAdd) manifest = frameCamera(manifest, raw);
+    pastRef.current.push(old.manifest);
+    if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
+    futureRef.current = [];
+    URL.revokeObjectURL(old.modelUrl);
+    const modelUrl = URL.createObjectURL(new Blob([writeGlb(merged.parts)], { type: 'model/gltf-binary' }));
+    setProject({ ...old, model, manifest, raw, modelUrl });
+    setSelectedPart(manifest.parts[manifest.parts.length - incoming.length]?.id ?? null);
+  }, []);
+
   // A placement click in the viewport lands here: the picked face's sketch
   // plane becomes a text slot or image zone via the tested edit op.
   // setManifest records the history step; nothing needs a viewer remount.
@@ -691,6 +727,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
               onEditGroup={(id) => { setEditingGroup(id); if (id) setEditingVariant(null); }}
               onEditVariant={(id) => { setEditingVariant(id); if (id) { setEditingGroup(null); setSelectedPart(null); } }}
               onAddModel={addModelParts}
+              onAddParts={addGeneratedParts}
               axes={axes}
               onAxesChange={setAxes}
               onSetHidden={setHidden}

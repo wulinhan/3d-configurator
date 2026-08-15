@@ -1632,6 +1632,43 @@ check('material has the studio environment (dull-gloss plastic)',
 check('parts render double-sided — stray winding cannot look transparent',
   await page.evaluate(() => window.__studioViewer.meshOf('base')?.material.side === 2 /* THREE.DoubleSide */), '');
 
+// ── 14b. parts born without a file: primitives + traced templates ──────────
+{
+  const before = (await manifest()).parts.length;
+
+  // A parametric shape lands as an ordinary part with its own colour option.
+  await page.click('[data-testid="new-shape"]');
+  check('the shape dialog opens', await page.isVisible('[data-testid="shape-dialog"]'), '');
+  await page.click('[data-testid="shape-kind"]');
+  await page.click('[data-testid="shape-kind-opt-torus"]');
+  await page.click('[data-testid="shape-add"]');
+  await page.waitForFunction((n) => (window).__studio?.manifest?.parts?.length === n + 1, before, { timeout: 20000 });
+  m = await manifest();
+  const torus = m.parts[m.parts.length - 1];
+  check('the torus arrived as an ordinary part', torus.id.startsWith('torus'), torus.id);
+  check('…with its own colour option',
+    m.options.some((o) => o.type === 'colour' && o.parts.includes(torus.id)), '');
+
+  // Artwork in, colouring template out: an SVG ring becomes a plate shaped
+  // like the artwork with the drawn line standing proud on top.
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">'
+    + '<circle cx="100" cy="100" r="60" fill="none" stroke="#000" stroke-width="10"/></svg>';
+  await page.setInputFiles('[data-testid="image-template-input"]', {
+    name: 'pendant.svg', mimeType: 'image/svg+xml', buffer: Buffer.from(svg),
+  });
+  await page.waitForSelector('[data-testid="template-add"]:not([disabled])', { timeout: 20000 });
+  check('the template dialog previews the traced masks',
+    await page.isVisible('[data-testid="trace-preview"]'), '');
+  await page.click('[data-testid="template-add"]');
+  await page.waitForFunction((n) => (window).__studio?.manifest?.parts?.length === n + 3, before, { timeout: 30000 });
+  m = await manifest();
+  const ids = m.parts.slice(-2).map((p) => p.id);
+  check('plate and outlines arrive as two parts',
+    ids[0].includes('base') && ids[1].includes('outlines'), ids);
+  await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  check('the viewer took every generated part without complaint', errors.length === 0, errors.join(' | '));
+}
+
 // ── 15. new project resets to the empty viewport ───────────────────────────
 {
   await page.click('[data-testid="new-project"]');
