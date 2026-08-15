@@ -180,6 +180,28 @@ input, select { font: inherit; }
 /* mini buttons that carry a glyph beside their label */
 .mini.ico-label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .mini.ico-label svg { flex: none; }
+.mini:disabled { opacity: .45; cursor: default; }
+.mini:disabled:hover { border-color: var(--line); color: var(--ink2); }
+/* thin divider between button groups in a panel head */
+.head-sep { width: 1.5px; height: 18px; background: var(--line); flex: none; margin: 0 2px; }
+
+/* the import dialog's dropzone — lights up while a file hovers over it */
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  margin-top: 12px; padding: 30px 16px;
+  border: 2px dashed var(--line); border-radius: 12px;
+  background: var(--surface); color: var(--ink2);
+  font-size: 13px; text-align: center; cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, transform .12s ease;
+}
+.dropzone strong { color: var(--ink); font-size: 13.5px; }
+.dropzone span { font-size: 12px; }
+.dropzone:hover { border-color: #c5c2bb; }
+.dropzone.is-over {
+  border-color: var(--accent); background: #efede6;
+  transform: scale(1.015);
+}
+.dropzone.is-over strong { color: var(--accent); }
 .mini.icon {
   width: 26px; height: 26px; flex: none; padding: 0; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;

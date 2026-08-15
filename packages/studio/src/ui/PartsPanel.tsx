@@ -20,9 +20,9 @@ import {
   type ExplorerEntry,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
-import { AXIS_PRESETS } from '../lib/import-model.ts';
-import { ConfirmDialog, Select } from './controls.tsx';
+import { ConfirmDialog } from './controls.tsx';
 import { PrimitiveDialog, ImageTemplateDialog } from './AddShapeDialog.tsx';
+import { ImportDialog } from './ImportDialog.tsx';
 import type { ImportedPart } from '../lib/types.ts';
 
 const EYE = <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>;
@@ -120,6 +120,7 @@ export function PartsPanel(props: {
   const addInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [shapeDialog, setShapeDialog] = useState(false);
+  const [importDialog, setImportDialog] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
 
   const entries = entriesOf(manifest);
@@ -443,7 +444,7 @@ export function PartsPanel(props: {
         <button
           className="mini ico-label" data-testid="add-model"
           title="Add parts from another 3MF / STL / GLB — or drop the file anywhere on this panel"
-          onClick={() => addInputRef.current?.click()}
+          onClick={() => setImportDialog(true)}
         >{ICO_IMPORT} Import</button>
         <button
           className="mini ico-label" data-testid="new-shape"
@@ -455,25 +456,24 @@ export function PartsPanel(props: {
           title="Trace an SVG / PNG / JPG into a colouring template: raised lines on a plate shaped like the artwork"
           onClick={() => imageInputRef.current?.click()}
         >{ICO_IMAGE} Image</button>
-        <button className="mini" data-testid="show-all" onClick={() => { props.onHideAll(false); props.onSolo(null); }}>Show all</button>
-        <button className="mini" data-testid="hide-all" onClick={() => props.onHideAll(true)}>Hide all</button>
+        <span className="head-sep" aria-hidden="true" />
+        <button
+          className="mini icon" data-testid="show-all" title="Show all parts" aria-label="Show all parts"
+          onClick={() => { props.onHideAll(false); props.onSolo(null); }}
+        >{EYE}</button>
+        <button
+          className="mini icon" data-testid="hide-all" title="Hide all parts" aria-label="Hide all parts"
+          onClick={() => props.onHideAll(true)}
+        >{EYE_OFF}</button>
         <input
           ref={addInputRef} type="file" hidden data-testid="add-model-input"
           accept=".3mf,.stl,.glb,model/gltf-binary"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) addFromFile(f); e.target.value = ''; }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) addFromFile(f); setImportDialog(false); e.target.value = ''; }}
         />
         <input
           ref={imageInputRef} type="file" hidden data-testid="image-template-input"
           accept=".svg,.png,.jpg,.jpeg,.webp"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) setImageFile(f); e.target.value = ''; }}
-        />
-      </div>
-      <div className="axes-row">
-        <span className="hint">Import orientation</span>
-        <Select
-          value={props.axes} ariaLabel="Import orientation" testId="axes-preset" compact
-          options={AXIS_PRESETS.map((p) => ({ value: p.axes, label: p.label }))}
-          onChange={props.onAxesChange}
         />
       </div>
       {!manifest.parts.length && (
@@ -503,13 +503,17 @@ export function PartsPanel(props: {
       </div>
       {manifest.parts.length > 0 && <div className="structure-new">
         <button
-          className="mini" data-testid="new-variant"
-          title="Customers pick exactly one of the chosen parts"
+          className="mini" data-testid="new-variant" disabled={checked.size < 2}
+          title={checked.size < 2
+            ? 'Tick the ☐ boxes on two or more parts first'
+            : 'Customers pick exactly one of the chosen parts'}
           onClick={() => setPending('variant')}
         >＋ Variant set</button>
         <button
-          className="mini" data-testid="new-group"
-          title="The chosen parts move and colour as one"
+          className="mini" data-testid="new-group" disabled={checked.size < 2}
+          title={checked.size < 2
+            ? 'Tick the ☐ boxes on two or more parts first'
+            : 'The chosen parts move and colour as one'}
           onClick={() => setPending('group')}
         >＋ Assembly</button>
       </div>}
@@ -600,6 +604,15 @@ export function PartsPanel(props: {
         />
       )}
 
+      {importDialog && (
+        <ImportDialog
+          axes={props.axes}
+          onAxesChange={props.onAxesChange}
+          onFile={(file) => { addFromFile(file); setImportDialog(false); }}
+          onBrowse={() => addInputRef.current?.click()}
+          onClose={() => setImportDialog(false)}
+        />
+      )}
       {shapeDialog && (
         <PrimitiveDialog
           onAdd={(parts) => props.onAddParts(parts)}

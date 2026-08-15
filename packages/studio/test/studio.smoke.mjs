@@ -105,7 +105,12 @@ await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'networkidle' });
 await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
 check('Studio opens into the 3D viewport with no model', await page.isVisible('.stage canvas'), '');
 check('empty explorer points at ＋ Add parts', await page.isVisible('[data-testid="empty-parts"]'), '');
-check('orientation preset lives in the explorer', await page.isVisible('[data-testid="axes-preset"]'), '');
+// The Import button opens a dialog: dropzone + the orientation preset.
+await page.click('[data-testid="add-model"]');
+check('the import dialog opens with a dropzone', await page.isVisible('[data-testid="import-dropzone"]'), '');
+check('orientation preset lives in the import dialog', await page.isVisible('[data-testid="axes-preset"]'), '');
+await page.keyboard.press('Escape');
+await page.waitForTimeout(150);
 let m = await manifest();
 check('empty project is a valid manifest with no parts or models',
   m?.parts?.length === 0 && m?.models?.length === 0, { parts: m?.parts?.length, models: m?.models?.length });
@@ -946,18 +951,15 @@ check('3MF export is a zip package with the parts kept separate',
   m = await manifest();
   check('dragging back above restores the order', m.parts.map((p) => p.id).join(',') === 'base,cap', m.parts.map((p) => p.id));
 
-  // 11c. variant set via the up-front button (no checkboxes ticked yet): the
-  // flow guides the merchant to tick parts. The cap is still an optional
-  // add-on from section 9 — creating the set must absorb that, not silently
-  // refuse (the exact failure a real merchant hit).
-  check('creating a variant set is offered up-front, before anything is selected',
-    await page.isVisible('[data-testid="new-variant"]'), '');
-  await page.click('[data-testid="new-variant"]');
-  check('the flow guides: tick parts first, confirm disabled until two',
-    (await page.isVisible('[data-testid="structure-guide"]'))
-    && await page.evaluate(() => document.querySelector('[data-testid="structure-confirm"]')?.disabled === true), '');
+  // 11c. variant set: the button waits until two parts are ticked, then the
+  // flow names the set. The cap is still an optional add-on from section 9 —
+  // creating the set must absorb that, not silently refuse (the exact
+  // failure a real merchant hit).
+  check('the variant-set button waits for a selection (disabled until parts are ticked)',
+    await page.evaluate(() => document.querySelector('[data-testid="new-variant"]')?.disabled === true), '');
   await page.check('[data-testid="pick-base"]');
   await page.check('[data-testid="pick-cap"]');
+  await page.click('[data-testid="new-variant"]');
   await page.fill('[data-testid="structure-label"]', 'Body style');
   await page.click('[data-testid="structure-confirm"]');
   await page.waitForTimeout(300);

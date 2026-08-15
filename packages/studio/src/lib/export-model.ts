@@ -26,11 +26,29 @@ export const EXPORT_FORMATS = [
 ] as const;
 export type ExportFormat = typeof EXPORT_FORMATS[number]['id'];
 
+/**
+ * The Studio works Y-up (glTF's convention); slicers work Z-up. Print
+ * formats get rotated +90° about X on the way out — (x, y, z) → (x, −z, y)
+ * — so the model lands on a Bambu/Prusa build plate the right way up
+ * instead of face-down. A rotation, not a mirror: winding survives.
+ */
+const zUp = (meshes: ExportMesh[]): ExportMesh[] => meshes.map((mesh) => {
+  const p = mesh.positions;
+  const out = new Float32Array(p.length);
+  for (let i = 0; i < p.length; i += 3) {
+    out[i] = p[i];
+    out[i + 1] = -p[i + 2];
+    out[i + 2] = p[i + 1];
+  }
+  return { ...mesh, positions: out };
+});
+
 export function exportModel(meshes: ExportMesh[], format: ExportFormat, title: string): Uint8Array {
   if (!meshes.length) throw new Error('nothing visible to export');
   switch (format) {
-    case 'stl': return writeStl(meshes);
-    case '3mf': return write3mf(meshes, title);
+    case 'stl': return writeStl(zUp(meshes));
+    case '3mf': return write3mf(zUp(meshes), title);
+    // Web and DCC formats stay Y-up, which is their own convention.
     case 'obj': return strToU8(writeObj(meshes));
     case 'glb': return writeGlb(meshes);
   }
