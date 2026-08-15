@@ -2458,7 +2458,18 @@ export class Viewer {
       // panel ignores it.
       this.onSelectPart?.(pick(e));
     });
+    let lastCursor = 0;
     canvas.addEventListener('pointermove', (e) => {
+      // While ANY button is held the camera owns the pointer — a drag must
+      // never pay for hover raycasts. (Right-drag panning stuttered over
+      // heavy models: pointermove fires at up to pointer rate, and every
+      // event walked every triangle in the scene just to choose a cursor.)
+      if (e.buttons !== 0) return;
+      // And the idle affordance doesn't need pointer-rate sampling — a
+      // cursor swap at ~14Hz is imperceptible.
+      const now = performance.now();
+      if (now - lastCursor < 70) return;
+      lastCursor = now;
       canvas.style.cursor = pick(e) ? 'pointer' : 'grab';
     });
   }
