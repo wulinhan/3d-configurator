@@ -11,6 +11,7 @@
 
 import { zipSync, strToU8 } from 'fflate';
 import { writeGlb } from './write-glb.ts';
+import { manifold } from './manifold.ts';
 
 export interface ExportMesh {
   name: string;
@@ -43,10 +44,47 @@ const zUp = (meshes: ExportMesh[]): ExportMesh[] => meshes.map((mesh) => {
   return { ...mesh, positions: out };
 });
 
-export function exportModel(meshes: ExportMesh[], format: ExportFormat, title: string): Uint8Array {
+/**
+ * STL has no part concept, so touching parts (template ridges sitting flush
+ * on their plate) become coplanar faces inside one soup — technically
+ * self-intersecting, and slicers "repair" that. When every part converts
+ * cleanly into a Manifold solid, union them into ONE watertight body
+ * first; when any part is not manifold (an imported mesh can be anything),
+ * fall back to the plain soup rather than refuse.
+ */
+async function unionedForStl(meshes: ExportMesh[]): Promise<ExportMesh[]> {
+  const wasm = await manifold();
+  const solids: Array<{ delete: () => void }> = [];
+  try {
+    const parts = meshes.map((m) => {
+      const solid = new wasm.Manifold(new wasm.Mesh({
+        numProp: 3,
+        vertProperties: m.positions,
+        triVerts: m.indices,
+      }));
+      solids.push(solid);
+      return solid;
+    });
+    const merged = wasm.Manifold.union(parts as Parameters<typeof wasm.Manifold.union>[0]);
+    solids.push(merged);
+    if (merged.isEmpty()) return meshes;
+    const mesh = merged.getMesh();
+    return [{
+      name: 'model',
+      positions: new Float32Array(mesh.vertProperties),
+      indices: Uint32Array.from(mesh.triVerts),
+    }];
+  } catch {
+    return meshes; // not everything was manifold — the soup is still valid STL
+  } finally {
+    for (const s of solids) s.delete();
+  }
+}
+
+export async function exportModel(meshes: ExportMesh[], format: ExportFormat, title: string): Promise<Uint8Array> {
   if (!meshes.length) throw new Error('nothing visible to export');
   switch (format) {
-    case 'stl': return writeStl(zUp(meshes));
+    case 'stl': return writeStl(await unionedForStl(zUp(meshes)));
     case '3mf': return write3mf(zUp(meshes), title);
     // Web and DCC formats stay Y-up, which is their own convention.
     case 'obj': return strToU8(writeObj(meshes));

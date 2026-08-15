@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Merchant-facing authoring app \u2014 import a model, position parts in mm, set palettes and pricing, publish a manifest",
+  "description": "Merchant-facing authoring app — import a model, position parts in mm, set palettes and pricing, publish a manifest",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,14 +12,15 @@
     "test:browser": "node test/studio.smoke.mjs"
   },
   "dependencies": {
-    "fflate": "^0.8.2",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "three": "^0.185.1",
     "@gltf-transform/core": "^4.4.2",
     "@gltf-transform/extensions": "^4.4.2",
     "@gltf-transform/functions": "^4.4.2",
+    "fflate": "^0.8.2",
+    "manifold-3d": "^3.5.1",
     "meshoptimizer": "^1.2.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "three": "^0.185.1",
     "three-bvh-csg": "^0.0.18",
     "three-mesh-bvh": "^0.9.14"
   },

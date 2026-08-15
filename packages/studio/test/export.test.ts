@@ -24,25 +24,25 @@ test('binary STL: header, count, 50 bytes a triangle, unit normal', () => {
   assert.ok(Math.abs(Math.abs(nz) - 1) < 1e-5, 'normal along Z');
 });
 
-test('print formats leave Z-up: Studio +Y becomes the build plate\'s +Z', () => {
+test('print formats leave Z-up: Studio +Y becomes the build plate\'s +Z', async () => {
   // a vertex 5mm ABOVE the ground (y=5), 2mm towards the camera (z=2)
   const mesh: ExportMesh = {
     name: 'plate',
     positions: Float32Array.from([0, 5, 2, 10, 5, 2, 0, 15, 2]),
     indices: Uint32Array.from([0, 1, 2]),
   };
-  const stl = exportModel([mesh], 'stl', 'x');
+  const stl = await exportModel([mesh], 'stl', 'x');
   const view = new DataView(stl.buffer, stl.byteOffset);
   // first vertex sits after header+count+normal: (x, −z, y) = (0, −2, 5)
   assert.equal(view.getFloat32(96, true), 0);
   assert.equal(view.getFloat32(100, true), -2);
   assert.equal(view.getFloat32(104, true), 5);
 
-  const mf = strFromU8(unzipSync(exportModel([mesh], '3mf', 'x'))['3D/3dmodel.model']);
+  const mf = strFromU8(unzipSync(await exportModel([mesh], '3mf', 'x'))['3D/3dmodel.model']);
   assert.ok(mf.includes('<vertex x="0.0000" y="-2.0000" z="5.0000"/>'), '3MF rotated too');
 
   // web and DCC formats stay Y-up, untouched
-  const obj = new TextDecoder().decode(exportModel([mesh], 'obj', 'x'));
+  const obj = new TextDecoder().decode(await exportModel([mesh], 'obj', 'x'));
   assert.ok(obj.includes('v 0.0000 5.0000 2.0000'), 'OBJ keeps Y-up');
 });
 
@@ -66,8 +66,8 @@ test('3MF: a zip package, objects kept separate, resources closed before build',
   assert.ok(model.includes('unit="millimeter"'));
 });
 
-test('exportModel: GLB magic, and an empty scene is refused', () => {
-  const glb = exportModel([tri('a')], 'glb', 'x');
+test('exportModel: GLB magic, and an empty scene is refused', async () => {
+  const glb = await exportModel([tri('a')], 'glb', 'x');
   assert.equal(new DataView(glb.buffer, glb.byteOffset).getUint32(0, true), 0x46546c67);
-  assert.throws(() => exportModel([], 'stl', 'x'), /nothing visible/);
+  await assert.rejects(() => exportModel([], 'stl', 'x'), /nothing visible/);
 });

@@ -12,9 +12,16 @@
 //
 // Both output parts are generated straight into canonical space (mm, Y-up,
 // grounded, centred on X/Z) and merge through mergeModel like any import.
+//
+// Solids are built by Manifold, not by a rendering triangulator: traced
+// rings become an even-odd CrossSection, get a 5-micron inset so regions
+// that touch only at a corner (every other cell of a QR code) separate
+// into their own solids instead of sharing a non-manifold edge, and
+// extrude into meshes that are watertight by construction — nothing for a
+// slicer's auto-repair to "fix".
 
-import * as THREE from 'three';
 import type { ImportedPart } from './types.ts';
+import { manifold } from './manifold.ts';
 
 export interface TemplateOpts {
   /** Overall plate width (the artwork's X span). */
@@ -223,82 +230,42 @@ export const simplifyRing = (ring: Ring, eps: number): Ring => {
 
 // ─────────────────────────────────────────────────── rings → solid meshes ──
 
-const ringArea = (r: Ring): number => {
-  let a = 0;
-  for (let i = 0; i < r.length; i++) {
-    const [x1, y1] = r[i], [x2, y2] = r[(i + 1) % r.length];
-    a += x1 * y2 - x2 * y1;
+/**
+ * Extrude rings (px, y-down) into a canonical-space part: lying flat,
+ * grounded at `liftMm`, `scale` px→mm, centred later by the caller.
+ *
+ * Manifold does the geometric heavy lifting: the rings form an even-odd
+ * CrossSection (Clipper2 underneath, so orientation and self-intersections
+ * from simplification are resolved exactly), then a 5-micron inset pulls
+ * corner-touching regions apart — without it, every other cell of a QR
+ * code shares a single lattice corner with its neighbour and the extruded
+ * pair shares an EDGE, which is the non-manifold contact a slicer's
+ * auto-repair mangles. The extrusion is watertight by construction.
+ */
+const extrudeRings = async (name: string, rings: Ring[], scale: number, thickMm: number, liftMm: number): Promise<ImportedPart> => {
+  const wasm = await manifold();
+  const polys = rings.map((r) => r.map(([x, y]) => [x * scale, -y * scale] as [number, number]));
+  const section = new wasm.CrossSection(polys, 'EvenOdd');
+  const inset = section.offset(-5e-3, 'Miter');
+  const solid = inset.extrude(thickMm);
+  try {
+    if (solid.isEmpty()) throw new Error('the traced shape vanished — the lines may be too thin to print');
+    const mesh = solid.getMesh();
+    // Manifold extrudes along +Z from the XY plane (image y already
+    // flipped); canonical space lies flat with +Y up: (x, y, z) → (x, z, −y).
+    const vp = mesh.vertProperties;
+    const positions = new Float32Array(vp.length);
+    for (let i = 0; i < vp.length; i += 3) {
+      positions[i] = vp[i];
+      positions[i + 1] = vp[i + 2] + liftMm;
+      positions[i + 2] = -vp[i + 1];
+    }
+    return { name, positions, indices: Uint32Array.from(mesh.triVerts) };
+  } finally {
+    section.delete();
+    inset.delete();
+    solid.delete();
   }
-  return a / 2;
-};
-
-const inside = (x: number, y: number, r: Ring): boolean => {
-  let odd = false;
-  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
-    const [xi, yi] = r[i], [xj, yj] = r[j];
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) odd = !odd;
-  }
-  return odd;
-};
-
-/** Group loops into filled shapes with holes by containment depth: even
- * depth is an outline, odd depth is a hole in the outline one level up, a
- * depth-2 island is its own shape again — even-odd, exactly how the SVG
- * these loops could have been would fill. */
-export const ringsToShapes = (rings: Ring[]): THREE.Shape[] => {
-  const sample: Array<[number, number]> = rings.map((r) => {
-    // midpoint of an edge is strictly off the lattice corners of any other
-    // ring, so containment tests never sit exactly on a boundary
-    const [x1, y1] = r[0], [x2, y2] = r[1 % r.length];
-    return [(x1 + x2) / 2, (y1 + y2) / 2];
-  });
-  const areas = rings.map((r) => Math.abs(ringArea(r)));
-  const depth = rings.map((_, i) =>
-    rings.reduce((n, other, j) => (j !== i && inside(sample[i][0], sample[i][1], other) ? n + 1 : n), 0));
-
-  const shapes = new Map<number, THREE.Shape>();
-  rings.forEach((ring, i) => {
-    if (depth[i] % 2) return;
-    const shape = new THREE.Shape();
-    ring.forEach(([x, y], k) => (k ? shape.lineTo(x, y) : shape.moveTo(x, y)));
-    shape.closePath();
-    shapes.set(i, shape);
-  });
-  rings.forEach((ring, i) => {
-    if (depth[i] % 2 === 0) return;
-    // parent: the smallest even-depth ring that contains this hole
-    let parent = -1;
-    rings.forEach((_, j) => {
-      if (depth[j] % 2 || !inside(sample[i][0], sample[i][1], rings[j])) return;
-      if (parent < 0 || areas[j] < areas[parent]) parent = j;
-    });
-    const owner = shapes.get(parent);
-    if (!owner) return;
-    const hole = new THREE.Path();
-    ring.forEach(([x, y], k) => (k ? hole.lineTo(x, y) : hole.moveTo(x, y)));
-    hole.closePath();
-    owner.holes.push(hole);
-  });
-  return [...shapes.values()];
-};
-
-/** Extrude rings (px, y-down) into a canonical-space part: lying flat,
- * grounded at `liftMm`, `scale` px→mm, centred later by the caller. */
-const extrudeRings = (name: string, rings: Ring[], scale: number, thickMm: number, liftMm: number): ImportedPart => {
-  const mm: Ring[] = rings.map((r) => r.map(([x, y]) => [x * scale, -y * scale]));
-  const geo = new THREE.ExtrudeGeometry(ringsToShapes(mm), { depth: thickMm, bevelEnabled: false });
-  // shape plane XY (image y already flipped) → lying in XZ with the
-  // extrusion pointing up; rotateX(-90°) sends +Z to +Y.
-  geo.rotateX(-Math.PI / 2);
-  geo.translate(0, liftMm, 0);
-  const pos = geo.getAttribute('position');
-  const positions = new Float32Array(pos.array as ArrayLike<number>);
-  const index = geo.getIndex();
-  const indices = index
-    ? Uint32Array.from(index.array as ArrayLike<number>)
-    : Uint32Array.from({ length: pos.count }, (_, i) => i);
-  geo.dispose();
-  return { name, positions, indices };
 };
 
 // ───────────────────────────────────────────────────────────── the recipe ──
@@ -348,7 +315,7 @@ export function templateMasks(img: Raster, opts: MaskOpts): TemplatePreview {
   };
 }
 
-export function templateFromRaster(img: Raster, opts: TemplateOpts): ImportedPart[] {
+export async function templateFromRaster(img: Raster, opts: TemplateOpts): Promise<ImportedPart[]> {
   const { width: w } = img;
   if (opts.widthMm <= 0 || opts.ridgeMm <= 0 || (opts.withBase && opts.baseMm <= 0)) {
     throw new Error('width, base and line height must all be positive');
@@ -365,9 +332,9 @@ export function templateFromRaster(img: Raster, opts: TemplateOpts): ImportedPar
 
   // Without a base the lines ARE the part, sat straight on the ground.
   const lift = opts.withBase ? opts.baseMm : 0;
-  const ridges = extrudeRings('outlines', trace(ink), scale, opts.ridgeMm, lift);
+  const ridges = await extrudeRings('outlines', trace(ink), scale, opts.ridgeMm, lift);
   const parts = opts.withBase
-    ? [extrudeRings('base', trace(silhouette), scale, opts.baseMm, 0), ridges]
+    ? [await extrudeRings('base', trace(silhouette), scale, opts.baseMm, 0), ridges]
     : [ridges];
 
   // one shared offset so ridges stay registered on their plate: centre on

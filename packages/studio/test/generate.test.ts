@@ -125,14 +125,14 @@ test('fillEnclosed keeps what an outline surrounds', () => {
   assert.equal(sil[15 * w + 15 - 9], 1, 'the ink itself is plate');
 });
 
-test('a traced ring becomes a plate with ridges standing proud', () => {
+test('a traced ring becomes a plate with ridges standing proud', async () => {
   const w = 60, h = 60;
   const img = raster(w, h, (x, y) => {
     const r = Math.hypot(x - 30, y - 30);
     return r >= 16 && r <= 20;
   });
   const opts = { ...TEMPLATE_DEFAULTS, widthMm: 60, baseMm: 3, ridgeMm: 1.5, widenMm: 0 };
-  const parts = templateFromRaster(img, opts);
+  const parts = await templateFromRaster(img, opts);
   assert.equal(parts.length, 2);
   const [base, ridges] = parts;
   sane(base); sane(ridges);
@@ -150,7 +150,7 @@ test('a traced ring becomes a plate with ridges standing proud', () => {
   assert.ok(rb.min[0] >= bb.min[0] - 0.5 && rb.max[0] <= bb.max[0] + 0.5, 'ridges stay on the plate');
 });
 
-test('thickened lines grow the ink mask, and a blank image is refused', () => {
+test('thickened lines grow the ink mask, and a blank image is refused', async () => {
   const w = 60, h = 60;
   const img = raster(w, h, (x, y) => y === 30 && x >= 10 && x < 50);
   const thin = templateMasks(img, { widenMm: 0, widthMm: 60, baseGrowMm: 0 });
@@ -158,19 +158,19 @@ test('thickened lines grow the ink mask, and a blank image is refused', () => {
   const count = (m: Uint8Array) => m.reduce((a, b) => a + b, 0);
   assert.ok(count(thick.ink) > count(thin.ink) * 2, 'widen widens');
 
-  assert.throws(
+  await assert.rejects(
     () => templateFromRaster(raster(20, 20, () => false), TEMPLATE_DEFAULTS),
     /blank or too faint/,
   );
 });
 
-test('the base is optional — lines-only lands one part, on the ground', () => {
+test('the base is optional — lines-only lands one part, on the ground', async () => {
   const w = 60, h = 60;
   const img = raster(w, h, (x, y) => {
     const r = Math.hypot(x - 30, y - 30);
     return r >= 16 && r <= 20;
   });
-  const parts = templateFromRaster(img, { ...TEMPLATE_DEFAULTS, withBase: false, baseMm: 0 });
+  const parts = await templateFromRaster(img, { ...TEMPLATE_DEFAULTS, withBase: false, baseMm: 0 });
   assert.equal(parts.length, 1);
   assert.equal(parts[0].name, 'outlines');
   const { min, max } = boundsOf(parts[0]);
@@ -179,7 +179,7 @@ test('the base is optional — lines-only lands one part, on the ground', () => 
   near((min[0] + max[0]) / 2, 0, 0.5);            // still centred
 });
 
-test('grow base pushes the plate outward along its outline', () => {
+test('grow base pushes the plate outward along its outline', async () => {
   const w = 60, h = 60;
   const dark = (x: number, y: number) => {
     const r = Math.hypot(x - 30, y - 30);
@@ -193,7 +193,7 @@ test('grow base pushes the plate outward along its outline', () => {
   assert.ok(count(grown.silhouette) > count(plain.silhouette) * 1.3, 'the plate grew');
 
   const opts = { ...TEMPLATE_DEFAULTS, widthMm: 60, baseGrowMm: 5 };
-  const [base, ridges] = templateFromRaster(img, opts);
+  const [base, ridges] = await templateFromRaster(img, opts);
   const bb = boundsOf(base), rb = boundsOf(ridges);
   // ring artwork spans 40px = 40mm; a 5mm border adds 10mm across
   near(bb.max[0] - bb.min[0], 50, 3);

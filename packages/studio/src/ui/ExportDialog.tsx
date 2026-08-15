@@ -36,11 +36,11 @@ export function ExportDialog(props: { manifest: Manifest; onClose: () => void })
     return () => window.removeEventListener('keydown', onKey);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = () => {
+  const save = async () => {
     try {
       if (!meshes?.length) throw new Error('nothing visible to export');
       const spec = EXPORT_FORMATS.find((f) => f.id === format)!;
-      const bytes = exportModel(meshes, format, name.trim() || props.manifest.name);
+      const bytes = await exportModel(meshes, format, name.trim() || props.manifest.name);
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: spec.mime }));
       a.download = `${slug(name.trim() || props.manifest.name)}.${spec.ext}`;
