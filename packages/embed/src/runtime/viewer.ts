@@ -2514,18 +2514,24 @@ export class Viewer {
     }
   }
 
-  /** Paint unselected parts toward the background; restore on deselect.
-   * The TRUE colour is stashed per material so apply() and this stay out
-   * of each other's way — apply() clears the stash after it repaints. */
+  /** Unselected parts step back into GREYSCALE — each keeps its own
+   * light-or-dark identity (a black QR stays dark, a white plate stays
+   * white) but loses its colour, the way CAD tools mute everything the
+   * selection isn't. Blending toward the page background instead washed
+   * every part white, which read as the parts disappearing. The TRUE
+   * colour is stashed per material so apply() and this stay out of each
+   * other's way — apply() clears the stash after it repaints. */
   private syncEmphasisColours(): void {
     const active = this.emphasis && this.meshes.get(this.emphasis) ? this.emphasis : null;
-    const bg = new THREE.Color();
-    this.renderer.getClearColor(bg);
     for (const [id, material] of this.materials) {
       const store = material.userData as { trueColour?: THREE.Color };
       if (active && id !== active) {
         store.trueColour ??= material.color.clone();
-        material.color.copy(store.trueColour).lerp(bg, 0.82);
+        const t = store.trueColour;
+        // luminance, lifted slightly so even pure black reads as "muted",
+        // never as a second kind of emphasis
+        const grey = Math.min(1, (0.299 * t.r + 0.587 * t.g + 0.114 * t.b) * 0.75 + 0.22);
+        material.color.setRGB(grey, grey, grey);
       } else if (store.trueColour) {
         material.color.copy(store.trueColour);
         delete store.trueColour;
