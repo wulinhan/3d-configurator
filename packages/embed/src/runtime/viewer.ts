@@ -1470,12 +1470,9 @@ export class Viewer {
     // Gradients LAST: engraving may just have swapped a part's geometry, and
     // the vertex colours live on the geometry.
     this.syncGradients(colours);
-    // apply() just repainted every material with its TRUE colour — drop the
-    // emphasis stashes (they are stale) and re-dim from the fresh paint.
-    for (const material of this.materials.values()) {
-      delete (material.userData as { trueColour?: THREE.Color }).trueColour;
-    }
-    this.syncEmphasisColours();
+    // re-ghost after the repaint — apply() rebuilt shadows and materials
+    // for whatever changed, and the emphasis must survive it
+    this.syncEmphasisMaterials();
     // A typed word may have grown or shrunk a per-letter run just now — the
     // shadow plane and shadow camera must cover wherever it ends today.
     this.fitShadowCatcher();
@@ -2489,14 +2486,16 @@ export class Viewer {
    * slightly inflated, back faces only — the classic silhouette outline,
    * no post-processing). The embed never calls this.
    *
-   * The fade is a COLOUR blend toward the page background, not opacity:
-   * transparency on double-sided meshes renders back faces through front
-   * faces in draw order and the whole part shimmers — opaque paint cannot
-   * flicker.
+   * Ghosts are TRANSPARENT, done so they cannot shimmer: while dimmed a
+   * part renders front faces only with the depth buffer on, so exactly one
+   * stable surface blends with the page — the flicker of the naive version
+   * was double-sided transparency showing back faces through front faces
+   * in draw order. Ghosts also stop casting shadows; a see-through part
+   * with a solid black shadow reads as a bug.
    */
   setSelectionEmphasis(partId: string | null): void {
     this.emphasis = partId;
-    this.syncEmphasisColours();
+    this.syncEmphasisMaterials();
     if (this.outlineMesh) {
       this.scene.remove(this.outlineMesh);
       this.outlineMesh = undefined;
@@ -2514,28 +2513,27 @@ export class Viewer {
     }
   }
 
-  /** Unselected parts step back into GREYSCALE — each keeps its own
-   * light-or-dark identity (a black QR stays dark, a white plate stays
-   * white) but loses its colour, the way CAD tools mute everything the
-   * selection isn't. Blending toward the page background instead washed
-   * every part white, which read as the parts disappearing. The TRUE
-   * colour is stashed per material so apply() and this stay out of each
-   * other's way — apply() clears the stash after it repaints. */
-  private syncEmphasisColours(): void {
+  /** Ghost the unselected: see-through at their own colour, one stable
+   * front surface each, no shadow. Everything restores on deselect. */
+  private syncEmphasisMaterials(): void {
     const active = this.emphasis && this.meshes.get(this.emphasis) ? this.emphasis : null;
     for (const [id, material] of this.materials) {
-      const store = material.userData as { trueColour?: THREE.Color };
-      if (active && id !== active) {
-        store.trueColour ??= material.color.clone();
-        const t = store.trueColour;
-        // luminance, lifted slightly so even pure black reads as "muted",
-        // never as a second kind of emphasis
-        const grey = Math.min(1, (0.299 * t.r + 0.587 * t.g + 0.114 * t.b) * 0.75 + 0.22);
-        material.color.setRGB(grey, grey, grey);
-      } else if (store.trueColour) {
-        material.color.copy(store.trueColour);
-        delete store.trueColour;
+      const dim = !!active && id !== active;
+      if (material.transparent !== dim) {
+        material.transparent = dim;
+        material.needsUpdate = true; // the transparency switch recompiles
       }
+      material.opacity = dim ? 0.25 : 1;
+      // FrontSide while ghosted: no back faces to bleed through the front;
+      // DoubleSide again when solid (stray winding must not read as holes).
+      material.side = dim ? THREE.FrontSide : THREE.DoubleSide;
+    }
+    for (const [id, mesh] of this.meshes) {
+      const dim = !!active && id !== active;
+      mesh.castShadow = !dim;
+      this.repeatCopies.get(id)?.meshes.forEach((copy) => copy.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = !dim;
+      }));
     }
   }
 
