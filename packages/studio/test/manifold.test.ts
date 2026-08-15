@@ -90,6 +90,45 @@ test('STL export unions touching parts into one watertight solid', async () => {
   watertight(audit(positions, indices), 'unioned STL');
 });
 
+test('3MF objects are watertight too — each part welded through Manifold', async () => {
+  const parts = await templateFromRaster(checkerboard(), { ...TEMPLATE_DEFAULTS, widthMm: 40 });
+  const { unzipSync, strFromU8 } = await import('fflate');
+  const model = strFromU8(unzipSync(await exportModel(parts as ExportMesh[], '3mf', 'x'))['3D/3dmodel.model']);
+  const objects = model.match(/<object [\s\S]*?<\/object>/g) ?? [];
+  assert.equal(objects.length, 2);
+  for (const obj of objects) {
+    const verts: number[] = [];
+    for (const m of obj.matchAll(/<vertex x="([-\d.]+)" y="([-\d.]+)" z="([-\d.]+)"/g)) {
+      verts.push(+m[1], +m[2], +m[3]);
+    }
+    const tris: number[] = [];
+    for (const m of obj.matchAll(/<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"/g)) {
+      tris.push(+m[1], +m[2], +m[3]);
+    }
+    watertight(audit(new Float32Array(verts), Uint32Array.from(tris)), '3MF object');
+  }
+});
+
+test('a welded-soup part is repaired on export, not passed through broken', async () => {
+  // a cube as 12 unwelded triangles with duplicated coordinates — the shape
+  // of every part this Studio generated before the Manifold port
+  const v = [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0, 0, 10], [10, 0, 10], [10, 10, 10], [0, 10, 10]];
+  const pos: number[] = [];
+  const quad = (a: number, b: number, c: number, d: number) => {
+    pos.push(...v[a], ...v[b], ...v[c], ...v[a], ...v[c], ...v[d]);
+  };
+  quad(0, 3, 2, 1); quad(4, 5, 6, 7); quad(0, 1, 5, 4); quad(2, 3, 7, 6); quad(1, 2, 6, 5); quad(0, 4, 7, 3);
+  const soup: ExportMesh = {
+    name: 'soup-cube',
+    positions: Float32Array.from(pos),
+    indices: Uint32Array.from({ length: 36 }, (_, i) => i),
+  };
+  const { unzipSync, strFromU8 } = await import('fflate');
+  const model = strFromU8(unzipSync(await exportModel([soup], '3mf', 'x'))['3D/3dmodel.model']);
+  const vertCount = (model.match(/<vertex /g) ?? []).length;
+  assert.equal(vertCount, 8, 'the 36 duplicated corners welded back to 8');
+});
+
 test('a mesh that is not manifold still exports as a plain soup (no refusal)', async () => {
   const open: ExportMesh = {
     name: 'open-tri',

@@ -61,8 +61,9 @@ export function ExportDialog(props: { manifest: Manifest; onClose: () => void })
         <div className="dialog-body">
           <p>
             Exactly as laid out on the stage — repeat copies included, hidden
-            parts left out, millimetres throughout. STL and 3MF leave Z-up,
-            ready for the build plate.
+            parts left out, millimetres throughout, Z-up and ready for the
+            build plate. Parts are welded watertight wherever the geometry
+            allows.
           </p>
         </div>
         {meshes && (

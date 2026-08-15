@@ -28,10 +28,11 @@ export const EXPORT_FORMATS = [
 export type ExportFormat = typeof EXPORT_FORMATS[number]['id'];
 
 /**
- * The Studio works Y-up (glTF's convention); slicers work Z-up. Print
- * formats get rotated +90° about X on the way out — (x, y, z) → (x, −z, y)
- * — so the model lands on a Bambu/Prusa build plate the right way up
- * instead of face-down. A rotation, not a mirror: winding survives.
+ * The Studio works Y-up (glTF's convention); everything downstream works
+ * Z-up. Exports rotate +90° about X on the way out — (x, y, z) →
+ * (x, −z, y) — so the model lands on a build plate (or in Rhino) the
+ * right way up instead of face-down. A rotation, not a mirror: winding
+ * survives.
  */
 const zUp = (meshes: ExportMesh[]): ExportMesh[] => meshes.map((mesh) => {
   const p = mesh.positions;
@@ -44,51 +45,94 @@ const zUp = (meshes: ExportMesh[]): ExportMesh[] => meshes.map((mesh) => {
   return { ...mesh, positions: out };
 });
 
+type Wasm = Awaited<ReturnType<typeof manifold>>;
+type Solid = InstanceType<Wasm['Manifold']>;
+
+/**
+ * Best-effort conversion of a part into a Manifold solid: weld duplicate
+ * vertices first (`Mesh.merge` — a triangle soup with matching coordinates
+ * closes into a real surface), then validate. Genuinely broken geometry
+ * (self-intersecting, corner-touching relics from before the Manifold
+ * port) returns null rather than throwing.
+ */
+const toSolid = (wasm: Wasm, m: ExportMesh): Solid | null => {
+  try {
+    const mesh = new wasm.Mesh({ numProp: 3, vertProperties: m.positions, triVerts: m.indices });
+    mesh.merge();
+    const solid = new wasm.Manifold(mesh);
+    if (solid.isEmpty()) { solid.delete(); return null; }
+    return solid;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Every part welded and re-validated through Manifold, whatever the
+ * format: a part that converts comes back watertight and consistently
+ * oriented; one that does not passes through untouched — a soup is still
+ * better than a refusal for arbitrary imported meshes.
+ */
+async function cleanedParts(meshes: ExportMesh[]): Promise<ExportMesh[]> {
+  const wasm = await manifold();
+  return meshes.map((m) => {
+    const solid = toSolid(wasm, m);
+    if (!solid) return m;
+    try {
+      const mesh = solid.getMesh();
+      return {
+        name: m.name,
+        positions: new Float32Array(mesh.vertProperties),
+        indices: Uint32Array.from(mesh.triVerts),
+      };
+    } finally {
+      solid.delete();
+    }
+  });
+}
+
 /**
  * STL has no part concept, so touching parts (template ridges sitting flush
  * on their plate) become coplanar faces inside one soup — technically
  * self-intersecting, and slicers "repair" that. When every part converts
- * cleanly into a Manifold solid, union them into ONE watertight body
- * first; when any part is not manifold (an imported mesh can be anything),
- * fall back to the plain soup rather than refuse.
+ * cleanly into a Manifold solid, union them into ONE watertight body;
+ * otherwise fall back to the per-part cleaned soup.
  */
-async function unionedForStl(meshes: ExportMesh[]): Promise<ExportMesh[]> {
+async function unionedForStl(meshes: ExportMesh[]): Promise<ExportMesh[] | null> {
   const wasm = await manifold();
-  const solids: Array<{ delete: () => void }> = [];
+  const solids = meshes.map((m) => toSolid(wasm, m));
   try {
-    const parts = meshes.map((m) => {
-      const solid = new wasm.Manifold(new wasm.Mesh({
-        numProp: 3,
-        vertProperties: m.positions,
-        triVerts: m.indices,
-      }));
-      solids.push(solid);
-      return solid;
-    });
-    const merged = wasm.Manifold.union(parts as Parameters<typeof wasm.Manifold.union>[0]);
-    solids.push(merged);
-    if (merged.isEmpty()) return meshes;
-    const mesh = merged.getMesh();
-    return [{
-      name: 'model',
-      positions: new Float32Array(mesh.vertProperties),
-      indices: Uint32Array.from(mesh.triVerts),
-    }];
+    if (solids.some((s) => !s)) return null;
+    const merged = wasm.Manifold.union(solids as Parameters<Wasm['Manifold']['union']>[0]);
+    try {
+      if (merged.isEmpty()) return null;
+      const mesh = merged.getMesh();
+      return [{
+        name: 'model',
+        positions: new Float32Array(mesh.vertProperties),
+        indices: Uint32Array.from(mesh.triVerts),
+      }];
+    } finally {
+      merged.delete();
+    }
   } catch {
-    return meshes; // not everything was manifold — the soup is still valid STL
+    return null;
   } finally {
-    for (const s of solids) s.delete();
+    for (const s of solids) s?.delete();
   }
 }
 
 export async function exportModel(meshes: ExportMesh[], format: ExportFormat, title: string): Promise<Uint8Array> {
   if (!meshes.length) throw new Error('nothing visible to export');
+  // EVERY format leaves Z-up: the tools on the receiving end — slicers,
+  // Rhino, CAD — live in Z-up worlds, and hand-rotating each import was
+  // the first thing users did.
+  const rotated = zUp(meshes);
   switch (format) {
-    case 'stl': return writeStl(await unionedForStl(zUp(meshes)));
-    case '3mf': return write3mf(zUp(meshes), title);
-    // Web and DCC formats stay Y-up, which is their own convention.
-    case 'obj': return strToU8(writeObj(meshes));
-    case 'glb': return writeGlb(meshes);
+    case 'stl': return writeStl(await unionedForStl(rotated) ?? await cleanedParts(rotated));
+    case '3mf': return write3mf(await cleanedParts(rotated), title);
+    case 'obj': return strToU8(writeObj(await cleanedParts(rotated)));
+    case 'glb': return writeGlb(await cleanedParts(rotated));
   }
 }
 
