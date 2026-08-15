@@ -19,7 +19,7 @@ import {
   addPartToGroup, removePartFromGroup, addPartToChoice, removePartFromChoice,
   type ExplorerEntry,
 } from '../lib/manifest-edit.ts';
-import type { Project, SetManifestOptions } from '../App.tsx';
+import type { PartColour, Project, SetManifestOptions } from '../App.tsx';
 import { ConfirmDialog } from './controls.tsx';
 import { PrimitiveDialog, ImageTemplateDialog } from './AddShapeDialog.tsx';
 import { ImportDialog } from './ImportDialog.tsx';
@@ -94,8 +94,9 @@ export function PartsPanel(props: {
   onEditVariant: (id: string | null) => void;
   onAddModel: (file: File) => Promise<void>;
   /** Parts the Studio generated (primitives, traced templates) — already in
-   * canonical space, so they skip importModel's re-orientation. */
-  onAddParts: (parts: ImportedPart[]) => void;
+   * canonical space, so they skip importModel's re-orientation. Colours ride
+   * along for traced artwork. */
+  onAddParts: (parts: ImportedPart[], colours?: (PartColour | null)[]) => void;
   /** Which way imported files are up — applies to the NEXT file added. */
   axes: string;
   onAxesChange: (axes: string) => void;
@@ -477,12 +478,29 @@ export function PartsPanel(props: {
         />
       </div>
       {!manifest.parts.length && (
-        <p className="empty" data-testid="empty-parts">
-          No parts yet — click <strong>Import</strong> (or drop a 3MF / STL / GLB file
-          anywhere on this panel), add a ready-made <strong>Shape</strong>, or trace
-          an <strong>Image</strong> into a colouring template. Parts arrive as
-          separate pieces from 3MF and GLB; STL imports as a single part.
-        </p>
+        <div className="start-cards" data-testid="empty-parts">
+          <button className="start-card" data-testid="start-import" onClick={() => setImportDialog(true)}>
+            <span className="start-ico">{ICO_IMPORT}</span>
+            <span>
+              <strong>Import a model</strong>
+              <small>3MF, STL or GLB — or drop the file anywhere on this panel</small>
+            </span>
+          </button>
+          <button className="start-card" data-testid="start-shape" onClick={() => setShapeDialog(true)}>
+            <span className="start-ico">{ICO_SHAPES}</span>
+            <span>
+              <strong>Start from a shape</strong>
+              <small>Cuboid, cylinder, n-sided prism or torus, sized in millimetres</small>
+            </span>
+          </button>
+          <button className="start-card" data-testid="start-image" onClick={() => imageInputRef.current?.click()}>
+            <span className="start-ico">{ICO_IMAGE}</span>
+            <span>
+              <strong>Trace an image</strong>
+              <small>SVG, PNG or JPG — colours become parts, lines become raised ridges</small>
+            </span>
+          </button>
+        </div>
       )}
       <div
         className={`part-rows${drag ? ' is-drag-live' : ''}`} role="listbox" aria-label="Parts"
@@ -622,7 +640,8 @@ export function PartsPanel(props: {
       {imageFile && (
         <ImageTemplateDialog
           file={imageFile}
-          onAdd={(parts) => props.onAddParts(parts)}
+          palette={manifest.palettes?.[0]?.swatches ?? []}
+          onAdd={(parts, colours) => props.onAddParts(parts, colours)}
           onClose={() => setImageFile(null)}
         />
       )}

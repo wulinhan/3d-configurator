@@ -48,34 +48,114 @@ export const TEMPLATE_DEFAULTS: TemplateOpts = {
  * synthesise it without a DOM. */
 export interface Raster { data: Uint8ClampedArray; width: number; height: number }
 
-// ────────────────────────────────────────────────── pixels → binary masks ──
+// ─────────────────────────────────────────────────── pixels → colour groups ──
 
-const toGray = (d: Uint8ClampedArray, n: number): Float32Array => {
-  const g = new Float32Array(n);
-  for (let i = 0, p = 0; i < n; i++, p += 4) {
-    // composite onto white first — transparent line art must read as
-    // "white background", not "black everywhere".
-    const a = d[p + 3] / 255;
-    g[i] = (0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2]) * a + 255 * (1 - a);
-  }
-  return g;
+/* sRGB → Lab in OpenCV's uint8 scaling (L·2.55, a+128, b+128) — the same
+   scaling the marketing site's pipeline tuned its thresholds in, so those
+   thresholds (background tolerance 24, merge distance 18) carry over. */
+const rgb2lab = (r: number, g: number, b: number): [number, number, number] => {
+  const f = (v: number) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const R = f(r), G = f(g), B = f(b);
+  let X = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047;
+  let Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  let Z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
+  const t = (v: number) => v > 0.008856 ? Math.cbrt(v) : 7.787 * v + 16 / 116;
+  X = t(X); Y = t(Y); Z = t(Z);
+  return [(116 * Y - 16) * 2.55, 500 * (X - Y) + 128, 200 * (Y - Z) + 128];
 };
 
-const otsu = (gray: Float32Array): number => {
-  const hist = new Float64Array(256);
-  for (let i = 0; i < gray.length; i++) hist[Math.max(0, Math.min(255, gray[i] | 0))]++;
-  let sum = 0;
-  for (let t = 0; t < 256; t++) sum += t * hist[t];
-  let sumB = 0, wB = 0, best = 0, thresh = 127;
-  for (let t = 0; t < 256; t++) {
-    wB += hist[t]; if (!wB) continue;
-    const wF = gray.length - wB; if (!wF) break;
-    sumB += t * hist[t];
-    const mB = sumB / wB, mF = (sum - sumB) / wF;
-    const between = wB * wF * (mB - mF) * (mB - mF);
-    if (between > best) { best = between; thresh = t; }
+const labDist = (a: [number, number, number], b: [number, number, number]): number =>
+  Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+/** Lab distance between two hex colours — the palette-mapping yardstick. */
+export const hexDistance = (h1: string, h2: string): number => {
+  const rgb = (h: string): [number, number, number] => {
+    const v = parseInt(h.replace('#', ''), 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  };
+  const [r1, g1, b1] = rgb(h1), [r2, g2, b2] = rgb(h2);
+  return labDist(rgb2lab(r1, g1, b1), rgb2lab(r2, g2, b2));
+};
+
+/** The page background: the median border colour — unless the border is
+ * mostly transparent, in which case alpha IS the background. */
+const detectBackground = (d: Uint8ClampedArray, w: number, h: number): [number, number, number] | null => {
+  const samp: Array<[number, number, number]> = [];
+  let trans = 0, n = 0;
+  const px = (x: number, y: number) => {
+    const p = (y * w + x) * 4;
+    samp.push([d[p], d[p + 1], d[p + 2]]);
+    if (d[p + 3] < 128) trans++;
+    n++;
+  };
+  for (let x = 0; x < w; x++) { px(x, 0); px(x, h - 1); }
+  for (let y = 1; y < h - 1; y++) { px(0, y); px(w - 1, y); }
+  if (trans / n > 0.5) return null;
+  const med = (i: 0 | 1 | 2) => samp.map((s) => s[i]).sort((a, b) => a - b)[samp.length >> 1];
+  return [med(0), med(1), med(2)];
+};
+
+/* deterministic LCG so colour clustering is reproducible run to run */
+const lcg = (seed: number) => { let s = seed >>> 0; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296; };
+
+const kmeans = (points: Array<[number, number, number]>, k: number, iters = 25): Array<[number, number, number]> => {
+  const rand = lcg(42);
+  const centres: Array<[number, number, number]> = [points[(rand() * points.length) | 0].slice() as [number, number, number]];
+  while (centres.length < k) { // kmeans++ seeding
+    const d2 = points.map((p) => Math.min(...centres.map((c) => labDist(p, c) ** 2)));
+    const total = d2.reduce((a, b) => a + b, 0);
+    if (!total) break;
+    let r = rand() * total, idx = 0;
+    while (r > d2[idx] && idx < d2.length - 1) r -= d2[idx++];
+    centres.push(points[idx].slice() as [number, number, number]);
   }
-  return thresh;
+  const assign = new Int32Array(points.length);
+  for (let it = 0; it < iters; it++) {
+    let changed = false;
+    for (let i = 0; i < points.length; i++) {
+      let best = 0, bd = Infinity;
+      for (let c = 0; c < centres.length; c++) {
+        const dist = labDist(points[i], centres[c]);
+        if (dist < bd) { bd = dist; best = c; }
+      }
+      if (assign[i] !== best) { assign[i] = best; changed = true; }
+    }
+    const sums = centres.map(() => [0, 0, 0, 0]);
+    for (let i = 0; i < points.length; i++) {
+      const s = sums[assign[i]];
+      const p = points[i];
+      s[0] += p[0]; s[1] += p[1]; s[2] += p[2]; s[3]++;
+    }
+    for (let c = 0; c < centres.length; c++) {
+      if (sums[c][3]) centres[c] = [sums[c][0] / sums[c][3], sums[c][1] / sums[c][3], sums[c][2] / sums[c][3]];
+    }
+    if (!changed) break;
+  }
+  return centres;
+};
+
+const toHex = (r: number, g: number, b: number): string =>
+  '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0').toUpperCase()).join('');
+
+/** A plain-words name for a colour, for part labels and swatch names. */
+export const colourName = (hex: string): string => {
+  const v = parseInt(hex.replace('#', ''), 16);
+  const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  if (mx - mn < 24) return l < 50 ? 'black' : l < 130 ? 'grey' : l < 225 ? 'silver' : 'white';
+  const d = mx - mn;
+  let hue = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  hue = (hue * 60 + 360) % 360;
+  if (hue < 15) return 'red';
+  if (hue < 40) return l < 100 ? 'brown' : 'orange';
+  if (hue < 70) return 'yellow';
+  if (hue < 160) return 'green';
+  if (hue < 200) return 'teal';
+  if (hue < 250) return 'blue';
+  if (hue < 290) return 'purple';
+  if (hue < 335) return 'pink';
+  return 'red';
 };
 
 /* summed-area table over a 0/1 mask, for O(1) box sums */
@@ -270,7 +350,7 @@ const extrudeRings = async (name: string, rings: Ring[], scale: number, thickMm:
 
 // ───────────────────────────────────────────────────────────── the recipe ──
 
-export interface TemplatePreview { width: number; height: number; silhouette: Uint8Array; ink: Uint8Array }
+export interface TemplatePreview { width: number; height: number; silhouette: Uint8Array; groups: ColourGroup[] }
 
 export interface MaskOpts {
   widthMm: number;
@@ -279,27 +359,112 @@ export interface MaskOpts {
   baseGrowMm: number;
 }
 
-/** The masks alone — cheap enough to re-run on every dialog keystroke, and
- * exactly what the dialog previews: what is filled here is what prints. */
+/** One detected artwork colour and the pixels that wear it. */
+export interface ColourGroup { hex: string; coverage: number; ink: Uint8Array }
+
+/**
+ * The masks — cheap enough to re-run on every dialog keystroke, and
+ * exactly what the dialog previews: what is filled here is what prints.
+ *
+ * Colour detection is the marketing site's logo pipeline: find the page
+ * background from the border, keep everything that isn't it, cluster the
+ * rest in Lab (k-means, capped at six), merge centres closer than a
+ * just-noticeable distance, drop dust, and assign every content pixel to
+ * its nearest surviving colour — the groups PARTITION the artwork, so
+ * parts never overlap. Plain black line art comes out as exactly one
+ * group, which is the old behaviour.
+ */
 export function templateMasks(img: Raster, opts: MaskOpts): TemplatePreview {
   const { width: w, height: h } = img;
   const n = w * h;
-  const gray = toGray(img.data, n);
-  // Line art is dark strokes on a light ground; Otsu finds the split. The
-  // cap at 200 stops a nearly-all-white image from calling faint grey
-  // JPEG noise "line".
-  // <= not <: on perfectly bimodal art (pure black on pure white) Otsu's
-  // maximum sits at t=0, and a strict compare would call the whole image
-  // blank.
-  const thresh = Math.min(otsu(gray), 200);
-  let ink = new Uint8Array(n);
-  for (let i = 0; i < n; i++) ink[i] = gray[i] <= thresh ? 1 : 0;
-  ink = despeckle(ink, w, h, Math.max(4, Math.round(n / 50_000)));
+  const d = img.data;
+  const MERGE_DE = 18, MIN_FRAC = 0.005, MAX_COLOURS = 6;
+
+  // composite onto white (transparent art must read as white background),
+  // Lab per pixel, and the content mask in one pass
+  const bg = detectBackground(d, w, h);
+  const bgLab = bg ? rgb2lab(bg[0], bg[1], bg[2]) : null;
+  const rgb = new Uint8ClampedArray(n * 3);
+  const labs = new Float32Array(n * 3);
+  const content = new Uint8Array(n);
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    const a = d[p + 3] / 255;
+    const r = d[p] * a + 255 * (1 - a), g = d[p + 1] * a + 255 * (1 - a), b = d[p + 2] * a + 255 * (1 - a);
+    rgb[i * 3] = r; rgb[i * 3 + 1] = g; rgb[i * 3 + 2] = b;
+    const lab = rgb2lab(r, g, b);
+    labs[i * 3] = lab[0]; labs[i * 3 + 1] = lab[1]; labs[i * 3 + 2] = lab[2];
+    content[i] = bgLab
+      ? (labDist(lab, bgLab) > 24 ? 1 : 0)
+      : (d[p + 3] >= 128 ? 1 : 0);
+  }
+
+  const contentIdx: number[] = [];
+  for (let i = 0; i < n; i++) if (content[i]) contentIdx.push(i);
+
+  let groups: ColourGroup[] = [];
+  if (contentIdx.length) {
+    // cluster a sample, then assign every pixel
+    const step = Math.max(1, Math.floor(contentIdx.length / 20_000));
+    const points: Array<[number, number, number]> = [];
+    for (let s = 0; s < contentIdx.length; s += step) {
+      const i = contentIdx[s];
+      points.push([labs[i * 3], labs[i * 3 + 1], labs[i * 3 + 2]]);
+    }
+    let centres = kmeans(points, Math.min(MAX_COLOURS, points.length));
+    // merge centres too close to tell apart on a print
+    const merged: typeof centres = [];
+    for (const c of centres) {
+      if (!merged.some((m) => labDist(m, c) < MERGE_DE)) merged.push(c);
+    }
+    centres = merged;
+
+    const assignAll = (cs: typeof centres) => {
+      const masks = cs.map(() => new Uint8Array(n));
+      const sums = cs.map(() => [0, 0, 0, 0]);
+      for (const i of contentIdx) {
+        const lab: [number, number, number] = [labs[i * 3], labs[i * 3 + 1], labs[i * 3 + 2]];
+        let best = 0, bd = Infinity;
+        for (let c = 0; c < cs.length; c++) {
+          const dist = labDist(lab, cs[c]);
+          if (dist < bd) { bd = dist; best = c; }
+        }
+        masks[best][i] = 1;
+        const s = sums[best];
+        s[0] += rgb[i * 3]; s[1] += rgb[i * 3 + 1]; s[2] += rgb[i * 3 + 2]; s[3]++;
+      }
+      return { masks, sums };
+    };
+
+    let { masks, sums } = assignAll(centres);
+    // dust colours dissolve into their nearest survivor
+    const keep = centres.filter((_, c) => sums[c][3] >= contentIdx.length * MIN_FRAC);
+    if (keep.length && keep.length < centres.length) ({ masks, sums } = assignAll(centres = keep));
+
+    const minArea = Math.max(4, Math.round(n / 50_000));
+    groups = centres.map((_, c) => ({
+      hex: toHex(sums[c][0] / (sums[c][3] || 1), sums[c][1] / (sums[c][3] || 1), sums[c][2] / (sums[c][3] || 1)),
+      coverage: sums[c][3] / contentIdx.length,
+      ink: despeckle(masks[c], w, h, minArea),
+    }))
+      .filter((g) => g.ink.some((v) => v))
+      .sort((a, b) => b.coverage - a.coverage);
+  }
+
   const mmPerPx = opts.widthMm / w;
+  // thickening is a LINE-art affordance: with several colour groups the
+  // regions tile the artwork edge to edge, and dilating them would overlap
   const widenPx = Math.round((opts.widenMm / 2) / mmPerPx);
-  if (widenPx > 0) ink = dilate(ink, w, h, widenPx);
+  if (widenPx > 0 && groups.length === 1) {
+    groups[0] = { ...groups[0], ink: dilate(groups[0].ink, w, h, widenPx) };
+  }
+
+  const union = new Uint8Array(n);
+  for (const g of groups) for (let i = 0; i < n; i++) if (g.ink[i]) union[i] = 1;
+
   const growPx = Math.round(opts.baseGrowMm / mmPerPx);
-  if (growPx <= 0) return { width: w, height: h, ink, silhouette: fillEnclosed(ink, w, h) };
+  if (growPx <= 0) {
+    return { width: w, height: h, groups, silhouette: fillEnclosed(union, w, h) };
+  }
   // The border grows OUTWARD, so pad the canvas by the growth radius first —
   // otherwise artwork near the edge would have its border clipped flat.
   const pw = w + growPx * 2, ph = h + growPx * 2;
@@ -310,19 +475,26 @@ export function templateMasks(img: Raster, opts: MaskOpts): TemplatePreview {
   };
   return {
     width: pw, height: ph,
-    ink: pad(ink),
-    silhouette: dilate(pad(fillEnclosed(ink, w, h)), pw, ph, growPx),
+    groups: groups.map((g) => ({ ...g, ink: pad(g.ink) })),
+    silhouette: dilate(pad(fillEnclosed(union, w, h)), pw, ph, growPx),
   };
 }
 
-export async function templateFromRaster(img: Raster, opts: TemplateOpts): Promise<ImportedPart[]> {
+export interface TemplateResult {
+  parts: ImportedPart[];
+  /** Aligned with `parts`: the artwork colour behind each one; null for
+   * the base plate, which has no artwork colour of its own. */
+  hexes: (string | null)[];
+}
+
+export async function templateFromRaster(img: Raster, opts: TemplateOpts): Promise<TemplateResult> {
   const { width: w } = img;
   if (opts.widthMm <= 0 || opts.ridgeMm <= 0 || (opts.withBase && opts.baseMm <= 0)) {
     throw new Error('width, base and line height must all be positive');
   }
   const masks = templateMasks(img, opts);
-  const { ink, silhouette } = masks;
-  if (!ink.some((v) => v)) throw new Error('no lines found — the image looks blank or too faint');
+  const { groups, silhouette } = masks;
+  if (!groups.length) throw new Error('no lines found — the image looks blank or too faint');
 
   // scale is anchored to the ARTWORK's width: growing the base makes the
   // plate larger than widthMm rather than shrinking the art inside it.
@@ -331,11 +503,22 @@ export async function templateFromRaster(img: Raster, opts: TemplateOpts): Promi
   const trace = (mask: Uint8Array) => traceLoops(mask, masks.width, masks.height).map((r) => simplifyRing(r, eps));
 
   // Without a base the lines ARE the part, sat straight on the ground.
+  // One colour keeps the classic name; several get named for their colour.
   const lift = opts.withBase ? opts.baseMm : 0;
-  const ridges = await extrudeRings('outlines', trace(ink), scale, opts.ridgeMm, lift);
-  const parts = opts.withBase
-    ? [await extrudeRings('base', trace(silhouette), scale, opts.baseMm, 0), ridges]
-    : [ridges];
+  const usedNames = new Set<string>();
+  const parts: ImportedPart[] = [];
+  const hexes: (string | null)[] = [];
+  if (opts.withBase) {
+    parts.push(await extrudeRings('base', trace(silhouette), scale, opts.baseMm, 0));
+    hexes.push(null);
+  }
+  for (const group of groups) {
+    let name = groups.length === 1 ? 'outlines' : colourName(group.hex);
+    for (let k = 2; usedNames.has(name); k++) name = `${groups.length === 1 ? 'outlines' : colourName(group.hex)}-${k}`;
+    usedNames.add(name);
+    parts.push(await extrudeRings(name, trace(group.ink), scale, opts.ridgeMm, lift));
+    hexes.push(group.hex);
+  }
 
   // one shared offset so ridges stay registered on their plate: centre on
   // X/Z from the LARGEST footprint (the base when there is one) — parts
@@ -356,5 +539,5 @@ export async function templateFromRaster(img: Raster, opts: TemplateOpts): Promi
       part.positions[i + 2] -= cz;
     }
   }
-  return parts;
+  return { parts, hexes };
 }

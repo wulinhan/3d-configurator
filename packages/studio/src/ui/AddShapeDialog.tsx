@@ -7,10 +7,14 @@
 // tested libs, and hand the parts to the App's generated-parts path; they
 // own no geometry logic of their own.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ImportedPart } from '../lib/types.ts';
+import type { Swatch } from '../../../embed/src/manifest/types.ts';
 import { primitivePart, PRIMITIVE_DEFAULTS, type PrimitiveSpec, type PrimitiveKind } from '../lib/primitives.ts';
-import { templateFromRaster, templateMasks, TEMPLATE_DEFAULTS, type Raster } from '../lib/trace-image.ts';
+import {
+  templateFromRaster, templateMasks, TEMPLATE_DEFAULTS, colourName, hexDistance, type Raster,
+} from '../lib/trace-image.ts';
+import type { PartColour } from '../App.tsx';
 import { Select } from './controls.tsx';
 import { NumberField } from './fields.tsx';
 
@@ -127,13 +131,18 @@ async function rasterize(file: File): Promise<Raster> {
 
 export function ImageTemplateDialog(props: {
   file: File;
-  onAdd: (parts: ImportedPart[]) => void;
+  onAdd: (parts: ImportedPart[], colours?: (PartColour | null)[]) => void;
+  /** The project's palette — what detected colours can be mapped onto. */
+  palette: Swatch[];
   onClose: () => void;
 }) {
   const [opts, setOpts] = useState(TEMPLATE_DEFAULTS);
   const [raster, setRaster] = useState<Raster | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [mapToPalette, setMapToPalette] = useState(false);
+  /** Per-group override: 'art' keeps the artwork colour, else a swatch id. */
+  const [choices, setChoices] = useState<Record<number, string>>({});
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const set = (patch: Partial<typeof opts>) => setOpts((o) => ({ ...o, ...patch }));
 
@@ -151,30 +160,49 @@ export function ImageTemplateDialog(props: {
     return () => window.removeEventListener('keydown', onKey);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The preview IS the two masks: plate in warm grey (with the grown border
-  // when one is asked for), ridges in ink. What you see filled is what gets
-  // printed — no base means lines on bare page.
+  // Masks once per knob change — the preview paints them and the colour
+  // rows describe them, so both always agree.
+  const masks = useMemo(() => (raster ? templateMasks(raster, {
+    widthMm: opts.widthMm,
+    widenMm: opts.widenMm,
+    baseGrowMm: opts.withBase ? opts.baseGrowMm : 0,
+  }) : null), [raster, opts.widenMm, opts.widthMm, opts.baseGrowMm, opts.withBase]);
+
+  const nearestSwatch = (hex: string): string =>
+    props.palette.reduce((best, s) =>
+      (hexDistance(hex, s.hex) < hexDistance(hex, best.hex) ? s : best), props.palette[0]).id;
+
+  /** The colour a group will actually wear, given the current mapping. */
+  const chosen = (i: number): string => {
+    const pick = choices[i] ?? (mapToPalette && props.palette.length ? nearestSwatch(masks!.groups[i].hex) : 'art');
+    if (pick === 'art') return masks!.groups[i].hex;
+    return props.palette.find((s) => s.id === pick)?.hex ?? masks!.groups[i].hex;
+  };
+
+  // The preview IS the masks, in the colours they will wear: plate in warm
+  // grey (with the grown border when asked for), each colour group painted
+  // with its mapped colour. What you see filled is what gets printed.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !raster) return;
-    const masks = templateMasks(raster, {
-      widthMm: opts.widthMm,
-      widenMm: opts.widenMm,
-      baseGrowMm: opts.withBase ? opts.baseGrowMm : 0,
-    });
+    if (!canvas || !masks) return;
     const { width: w, height: h } = masks;
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const shades = masks.groups.map((_, i) => {
+      const v = parseInt(chosen(i).replace('#', ''), 16);
+      return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+    });
     const out = ctx.createImageData(w, h);
     for (let i = 0, p = 0; i < w * h; i++, p += 4) {
-      const [r, g, b] = masks.ink[i] ? [45, 45, 45]
-        : opts.withBase && masks.silhouette[i] ? [229, 222, 208]
-          : [248, 246, 241];
-      out.data[p] = r; out.data[p + 1] = g; out.data[p + 2] = b; out.data[p + 3] = 255;
+      let shade = opts.withBase && masks.silhouette[i] ? [229, 222, 208] : [248, 246, 241];
+      for (let g = 0; g < masks.groups.length; g++) {
+        if (masks.groups[g].ink[i]) { shade = shades[g]; break; }
+      }
+      out.data[p] = shade[0]; out.data[p + 1] = shade[1]; out.data[p + 2] = shade[2]; out.data[p + 3] = 255;
     }
     ctx.putImageData(out, 0, 0);
-  }, [raster, opts.widenMm, opts.widthMm, opts.baseGrowMm, opts.withBase]);
+  }, [masks, opts.withBase, choices, mapToPalette]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const add = () => {
     if (!raster) return;
@@ -186,8 +214,19 @@ export function ImageTemplateDialog(props: {
         // sanitises spaced node names — hyphens survive everything.
         const stem = props.file.name.replace(/\.[^.]+$/, '').toLowerCase()
           .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'template';
-        const parts = (await templateFromRaster(raster, opts)).map((p) => ({ ...p, name: `${stem}-${p.name}` }));
-        props.onAdd(parts);
+        const result = await templateFromRaster(raster, opts);
+        const parts = result.parts.map((p) => ({ ...p, name: `${stem}-${p.name}` }));
+        // group order in the result matches the mask groups the rows showed
+        let group = -1;
+        const colours = result.hexes.map((hex) => {
+          if (hex === null) return null;
+          group++;
+          const pick = choices[group] ?? (mapToPalette && props.palette.length ? nearestSwatch(hex) : 'art');
+          return pick === 'art'
+            ? { hex, label: `Artwork ${colourName(hex)}` }
+            : { swatchId: pick };
+        });
+        props.onAdd(parts, colours);
         props.onClose();
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -250,6 +289,43 @@ export function ImageTemplateDialog(props: {
                 label="Grow base" value={opts.baseGrowMm} suffix="mm" step={0.5}
                 testId="template-grow" onCommit={(v) => set({ baseGrowMm: Math.max(0, v) })}
               />
+            </div>
+          )}
+
+          {masks && masks.groups.length > 0 && (
+            <div className="colour-map" data-testid="template-colours">
+              <div className="colour-map-head">
+                <span className="field-label">
+                  {masks.groups.length === 1 ? '1 colour detected' : `${masks.groups.length} colours detected`}
+                  {' '}— each becomes its own part
+                </span>
+                {props.palette.length > 0 && (
+                  <label className="lock">
+                    <input
+                      type="checkbox" checked={mapToPalette} data-testid="template-map-palette"
+                      onChange={(e) => { setMapToPalette(e.target.checked); setChoices({}); }}
+                    />
+                    Map to my palette
+                  </label>
+                )}
+              </div>
+              {masks.groups.map((group, i) => (
+                <div className="colour-row" key={i}>
+                  <span className="colour-chip" style={{ background: chosen(i) }} aria-hidden="true" />
+                  <span className="colour-row-label">
+                    {colourName(group.hex)} · {Math.max(1, Math.round(group.coverage * 100))}%
+                  </span>
+                  <Select
+                    ariaLabel={`Colour for ${colourName(group.hex)}`} testId={`template-colour-${i}`}
+                    value={choices[i] ?? (mapToPalette && props.palette.length ? nearestSwatch(group.hex) : 'art')}
+                    options={[
+                      { value: 'art', label: `Artwork — ${group.hex}`, chip: group.hex },
+                      ...props.palette.map((s) => ({ value: s.id, label: s.name, chip: s.hex })),
+                    ]}
+                    onChange={(v) => setChoices((c) => ({ ...c, [i]: v }))}
+                  />
+                </div>
+              ))}
             </div>
           )}
         </div>

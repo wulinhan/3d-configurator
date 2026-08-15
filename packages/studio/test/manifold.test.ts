@@ -68,13 +68,13 @@ const checkerboard = (): Raster => {
 };
 
 test('a QR-like template is watertight — corner-touching cells become separate solids', async () => {
-  const parts = await templateFromRaster(checkerboard(), { ...TEMPLATE_DEFAULTS, widthMm: 40 });
+  const { parts } = await templateFromRaster(checkerboard(), { ...TEMPLATE_DEFAULTS, widthMm: 40 });
   assert.equal(parts.length, 2);
   for (const part of parts) watertight(audit(part.positions, part.indices), part.name);
 });
 
 test('STL export unions touching parts into one watertight solid', async () => {
-  const parts = await templateFromRaster(checkerboard(), { ...TEMPLATE_DEFAULTS, widthMm: 40 });
+  const { parts } = await templateFromRaster(checkerboard(), { ...TEMPLATE_DEFAULTS, widthMm: 40 });
   const stl = await exportModel(parts as ExportMesh[], 'stl', 'x');
   const view = new DataView(stl.buffer, stl.byteOffset);
   const tris = view.getUint32(80, true);
@@ -91,7 +91,7 @@ test('STL export unions touching parts into one watertight solid', async () => {
 });
 
 test('3MF objects are watertight too — each part welded through Manifold', async () => {
-  const parts = await templateFromRaster(checkerboard(), { ...TEMPLATE_DEFAULTS, widthMm: 40 });
+  const { parts } = await templateFromRaster(checkerboard(), { ...TEMPLATE_DEFAULTS, widthMm: 40 });
   const { unzipSync, strFromU8 } = await import('fflate');
   const model = strFromU8(unzipSync(await exportModel(parts as ExportMesh[], '3mf', 'x'))['3D/3dmodel.model']);
   const objects = model.match(/<object [\s\S]*?<\/object>/g) ?? [];

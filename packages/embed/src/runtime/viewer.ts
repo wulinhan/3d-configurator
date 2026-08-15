@@ -1392,8 +1392,9 @@ export class Viewer {
    * you see); text runs, image zones and other customer-side previews stay
    * out — they belong to a customer's order, not the merchant's model.
    */
-  exportMeshes(): Array<{ name: string; positions: Float32Array; indices: Uint32Array }> {
+  exportMeshes(partIds?: string[]): Array<{ name: string; positions: Float32Array; indices: Uint32Array }> {
     this.scene.updateMatrixWorld(true);
+    const wanted = partIds ? new Set(partIds) : null;
     // Everything relative to the model group, so the customiser's
     // centre-on-origin shift never leaks into exported coordinates.
     const inverse = this.group.matrixWorld.clone().invert();
@@ -1416,8 +1417,11 @@ export class Viewer {
         : Uint32Array.from({ length: pos.count }, (_, i) => i);
       out.push({ name, positions, indices });
     };
-    for (const [partId, mesh] of this.meshes) bake(mesh, partId);
+    for (const [partId, mesh] of this.meshes) {
+      if (!wanted || wanted.has(partId)) bake(mesh, partId);
+    }
     for (const [partId, entry] of this.repeatCopies) {
+      if (wanted && !wanted.has(partId)) continue;
       entry.meshes.forEach((copy, i) => {
         const target = (copy as THREE.Mesh).isMesh
           ? copy

@@ -19,7 +19,7 @@ import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-mode
 import type { ImportedPart } from './lib/types.ts';
 import { writeGlb } from './lib/write-glb.ts';
 import {
-  boundsOf, boundsByPartId, mergeModel, emptyManifest, EMPTY_BOUNDS, type PartBounds,
+  boundsOf, boundsByPartId, mergeModel, emptyManifest, slug, EMPTY_BOUNDS, type PartBounds,
 } from './lib/manifest-init.ts';
 import {
   duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, addImageZone, refitImageZone, setTextPath, removePart, type Axis,
@@ -47,6 +47,14 @@ export interface Project {
   raw: Map<string, PartBounds>;
   /** Blob URL of the (uncompressed) GLB the preview loads. */
   modelUrl: string;
+}
+
+/** How a generated part wants to be coloured on arrival: an existing
+ * palette swatch by id, or the artwork's own hex (added to the palette). */
+export interface PartColour {
+  hex?: string;
+  swatchId?: string;
+  label?: string;
 }
 
 export interface SetManifestOptions {
@@ -466,11 +474,35 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   // Parts the Studio GENERATED — a primitive, a traced template — join the
   // project through the same merge as an uploaded file, minus importModel:
   // they are born in canonical space, and re-orienting them would be wrong.
-  const addGeneratedParts = useCallback((incoming: ImportedPart[]) => {
+  // A part may arrive with a COLOUR: either an existing palette swatch, or
+  // the artwork's own colour (which joins the palette as a new swatch).
+  const addGeneratedParts = useCallback((incoming: ImportedPart[], colours?: (PartColour | null)[]) => {
     const old = projectRef.current;
     if (!old || !incoming.length) return;
     const firstAdd = old.manifest.parts.length === 0;
     const merged = mergeModel({ parts: old.model.parts, manifest: old.manifest }, incoming);
+    if (colours) {
+      const palette = merged.manifest.palettes?.[0];
+      const appended = merged.manifest.parts.slice(-incoming.length);
+      appended.forEach((part, i) => {
+        const colour = colours[i];
+        if (!colour || !palette) return;
+        let swatchId = colour.swatchId;
+        if (!swatchId && colour.hex) {
+          const hex = colour.hex.toUpperCase();
+          let swatch = palette.swatches.find((s) => s.hex.toUpperCase() === hex && !s.hex2);
+          if (!swatch) {
+            let id = slug(colour.label ?? `art-${hex.slice(1)}`);
+            for (let k = 2; palette.swatches.some((s) => s.id === id); k++) id = `${slug(colour.label ?? `art-${hex.slice(1)}`)}-${k}`;
+            swatch = { id, name: colour.label ?? hex, hex };
+            palette.swatches.push(swatch);
+          }
+          swatchId = swatch.id;
+        }
+        const option = merged.manifest.options.find((o) => o.type === 'colour' && o.parts.includes(part.id));
+        if (option && swatchId) option.default = swatchId;
+      });
+    }
     const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
     for (const part of incoming) {
       for (let i = 0; i < part.positions.length; i += 3) {
@@ -653,6 +685,27 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     return null;
   }, [project?.manifest, editingGroup, editingVariant, selectedPart]);
 
+  // What Export would export: THE SELECTED OBJECT — a part, or the whole
+  // assembly / variant set being edited. Nothing selected, nothing to
+  // export; the topbar button greys out.
+  const exportTarget = useMemo(() => {
+    if (!project) return null;
+    if (selectedPart) {
+      const part = project.manifest.parts.find((p) => p.id === selectedPart);
+      return part ? { ids: [part.id], label: part.label } : null;
+    }
+    if (editingGroup) {
+      const group = project.manifest.groups?.find((g) => g.id === editingGroup);
+      return group ? { ids: [...group.parts], label: group.label ?? group.id } : null;
+    }
+    if (editingVariant) {
+      const ids = project.manifest.parts.filter((p) => p.visibleWhen?.option === editingVariant).map((p) => p.id);
+      const option = project.manifest.options.find((o) => o.id === editingVariant);
+      return ids.length ? { ids, label: option?.label ?? 'Variant set' } : null;
+    }
+    return null;
+  }, [project?.manifest, selectedPart, editingGroup, editingVariant]);
+
   // The floating properties panel: slides in when something is selected,
   // slides out (keeping its last content while it goes) when nothing is.
   const floatContent = project && tab === 'Parts'
@@ -734,7 +787,11 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
             New project
           </button>
         )}
-        <button className="ghost preview-btn" data-testid="export-open" onClick={() => setExporting(true)}>
+        <button
+          className="ghost preview-btn" data-testid="export-open" disabled={!exportTarget}
+          title={exportTarget ? `Export ${exportTarget.label}` : 'Select a part (or an assembly) to export'}
+          onClick={() => setExporting(true)}
+        >
           Export
         </button>
         <button className="cta" data-testid="publish-cta" onClick={() => setPublishing(true)}>
@@ -807,7 +864,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         </div>
       </div>
       {previewing && <PreviewOverlay project={project} cloudProjectId={cloudProjectId} onClose={() => setPreviewing(false)} />}
-      {exporting && <ExportDialog manifest={project.manifest} onClose={() => setExporting(false)} />}
+      {exporting && exportTarget && (
+        <ExportDialog manifest={project.manifest} target={exportTarget} onClose={() => setExporting(false)} />
+      )}
       {deleteAsk && (() => {
         const part = project.manifest.parts.find((p) => p.id === deleteAsk);
         if (!part) return null;

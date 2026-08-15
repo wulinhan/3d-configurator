@@ -69,7 +69,12 @@ const SECOND_3MF = zipSync({
 });
 
 // ── serve dist ──────────────────────────────────────────────────────────────
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+const TYPES = {
+  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
+  // without the right MIME, WebAssembly streaming compilation logs a
+  // console error while falling back — which trips the no-errors check
+  '.wasm': 'application/wasm',
+};
 const server = createServer((req, res) => {
   const rel = decodeURIComponent(req.url.split('?')[0]);
   const path = join(DIST, rel === '/' ? 'index.html' : rel);
@@ -822,10 +827,15 @@ await page.click('[data-testid="publish-close"]');
 await page.waitForTimeout(200);
 check('the publish modal closes', await page.evaluate(() => !document.querySelector('.publish-modal')), '');
 
-// Export: its own topbar dialog (where Preview used to live) — pick a
-// format, get the laid-out model straight from the scene. The dialog
-// closes itself after each save.
+// Export: its own topbar dialog (where Preview used to live) — it exports
+// THE SELECTED OBJECT, so select a part first; the dialog closes itself
+// after each save.
+await page.click('.part-name:has-text("Base")');
+await page.waitForTimeout(150);
 await page.click('[data-testid="export-open"]');
+check('the export dialog names what it exports',
+  /Base/.test(await page.textContent('[data-testid="export-parts"]') ?? ''),
+  await page.textContent('[data-testid="export-parts"]'));
 const [stlDl] = await Promise.all([
   page.waitForEvent('download'),
   page.click('[data-testid="export-download"]'),

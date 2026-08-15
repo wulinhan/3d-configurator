@@ -12,7 +12,12 @@ import { exportModel, EXPORT_FORMATS, type ExportFormat, type ExportMesh } from 
 import { slug } from '../lib/manifest-init.ts';
 import { Select } from './controls.tsx';
 
-export function ExportDialog(props: { manifest: Manifest; onClose: () => void }) {
+export function ExportDialog(props: {
+  manifest: Manifest;
+  /** THE SELECTED OBJECT — the only thing this dialog exports. */
+  target: { ids: string[]; label: string };
+  onClose: () => void;
+}) {
   const [format, setFormat] = useState<ExportFormat>('stl');
   const [name, setName] = useState('');
   const [meshes, setMeshes] = useState<ExportMesh[] | null>(null);
@@ -21,14 +26,14 @@ export function ExportDialog(props: { manifest: Manifest; onClose: () => void })
   // Bake once, when the dialog opens — the scene cannot change underneath a
   // modal, and the list doubles as the "what am I exporting" answer.
   useEffect(() => {
-    const viewer = (window as { __studioViewer?: { exportMeshes?: () => ExportMesh[] } }).__studioViewer;
-    const baked = viewer?.exportMeshes?.() ?? null;
+    const viewer = (window as { __studioViewer?: { exportMeshes?: (ids?: string[]) => ExportMesh[] } }).__studioViewer;
+    const baked = viewer?.exportMeshes?.(props.target.ids) ?? null;
     setMeshes(baked);
     if (!baked) return;
-    // One part on stage → the file inherits its name; several → the product's.
-    const labelled = labelsOf(baked, props.manifest);
-    setName(labelled.length === 1 ? labelled[0] : props.manifest.name);
-  }, [props.manifest]);
+    // The selection names the file: a lone part by its own label, an
+    // assembly or set by its name.
+    setName(props.target.label);
+  }, [props.manifest, props.target]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onClose(); };
@@ -69,8 +74,8 @@ export function ExportDialog(props: { manifest: Manifest; onClose: () => void })
         {meshes && (
           <p className="trace-note" data-testid="export-parts">
             {labels.length
-              ? `Exporting: ${labels.join(', ')}`
-              : 'Nothing visible to export — every part is hidden.'}
+              ? `Exporting ${props.target.label}: ${labels.join(', ')}`
+              : `Nothing to export — ${props.target.label} is hidden.`}
           </p>
         )}
         <div className="dialog-fields">

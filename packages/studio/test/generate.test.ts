@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { primitivePart, type PrimitiveSpec } from '../src/lib/primitives.ts';
 import {
   traceLoops, simplifyRing, fillEnclosed, templateMasks, templateFromRaster,
-  TEMPLATE_DEFAULTS, type Raster,
+  hexDistance, colourName, TEMPLATE_DEFAULTS, type Raster,
 } from '../src/lib/trace-image.ts';
 import type { ImportedPart } from '../src/lib/types.ts';
 
@@ -132,7 +132,7 @@ test('a traced ring becomes a plate with ridges standing proud', async () => {
     return r >= 16 && r <= 20;
   });
   const opts = { ...TEMPLATE_DEFAULTS, widthMm: 60, baseMm: 3, ridgeMm: 1.5, widenMm: 0 };
-  const parts = await templateFromRaster(img, opts);
+  const { parts } = await templateFromRaster(img, opts);
   assert.equal(parts.length, 2);
   const [base, ridges] = parts;
   sane(base); sane(ridges);
@@ -156,12 +156,57 @@ test('thickened lines grow the ink mask, and a blank image is refused', async ()
   const thin = templateMasks(img, { widenMm: 0, widthMm: 60, baseGrowMm: 0 });
   const thick = templateMasks(img, { widenMm: 4, widthMm: 60, baseGrowMm: 0 });
   const count = (m: Uint8Array) => m.reduce((a, b) => a + b, 0);
-  assert.ok(count(thick.ink) > count(thin.ink) * 2, 'widen widens');
+  assert.ok(count(thick.groups[0].ink) > count(thin.groups[0].ink) * 2, 'widen widens');
 
   await assert.rejects(
     () => templateFromRaster(raster(20, 20, () => false), TEMPLATE_DEFAULTS),
     /blank or too faint/,
   );
+});
+
+test('a three-colour artwork becomes three colour parts, named and hexed', async () => {
+  const w = 90, h = 60;
+  const data = new Uint8ClampedArray(w * h * 4);
+  data.fill(255); // white page
+  const paint = (x: number, y: number, r: number, g: number, b: number) => {
+    const p = (y * w + x) * 4;
+    data[p] = r; data[p + 1] = g; data[p + 2] = b; data[p + 3] = 255;
+  };
+  for (let y = 10; y < 50; y++) {
+    for (let x = 5; x < 30; x++) paint(x, y, 200, 30, 30);    // red block
+    for (let x = 32; x < 57; x++) paint(x, y, 30, 60, 190);   // blue block
+    for (let x = 59; x < 84; x++) paint(x, y, 20, 20, 20);    // black block
+  }
+  const img: Raster = { data, width: w, height: h };
+
+  const masks = templateMasks(img, { widthMm: 90, widenMm: 0, baseGrowMm: 0 });
+  assert.equal(masks.groups.length, 3, 'three colours detected');
+  const hexes = masks.groups.map((g) => g.hex);
+  assert.ok(hexes.some((x) => hexDistance(x, '#C81E1E') < 12), `a red group in ${hexes}`);
+  assert.ok(hexes.some((x) => hexDistance(x, '#1E3CBE') < 12), `a blue group in ${hexes}`);
+
+  const result = await templateFromRaster(img, { ...TEMPLATE_DEFAULTS, widthMm: 90 });
+  assert.equal(result.parts.length, 4); // base + three colours
+  assert.equal(result.hexes[0], null, 'the base carries no artwork colour');
+  const names = result.parts.slice(1).map((p) => p.name).sort();
+  assert.deepEqual(names, ['black', 'blue', 'red'].sort(), names.join(','));
+  // every colour part stands on the base at the same ridge height
+  for (const part of result.parts.slice(1)) {
+    const { min, max } = boundsOf(part);
+    near(min[1], TEMPLATE_DEFAULTS.baseMm, 0.01);
+    near(max[1], TEMPLATE_DEFAULTS.baseMm + TEMPLATE_DEFAULTS.ridgeMm, 0.01);
+  }
+
+  // the palette-mapping yardstick: nearest of a small palette
+  const palette = [
+    { id: 'white', hex: '#FEFEFE' }, { id: 'red', hex: '#C82020' }, { id: 'blue', hex: '#3C78D7' },
+  ];
+  const redGroup = hexes.find((x) => hexDistance(x, '#C81E1E') < 12)!;
+  const nearest = palette.reduce((best, s) =>
+    (hexDistance(redGroup, s.hex) < hexDistance(redGroup, best.hex) ? s : best), palette[0]);
+  assert.equal(nearest.id, 'red', 'nearest palette swatch found by Lab distance');
+  assert.equal(colourName('#C82020'), 'red');
+  assert.equal(colourName('#1A1A1A'), 'black');
 });
 
 test('the base is optional — lines-only lands one part, on the ground', async () => {
@@ -170,7 +215,7 @@ test('the base is optional — lines-only lands one part, on the ground', async 
     const r = Math.hypot(x - 30, y - 30);
     return r >= 16 && r <= 20;
   });
-  const parts = await templateFromRaster(img, { ...TEMPLATE_DEFAULTS, withBase: false, baseMm: 0 });
+  const { parts } = await templateFromRaster(img, { ...TEMPLATE_DEFAULTS, withBase: false, baseMm: 0 });
   assert.equal(parts.length, 1);
   assert.equal(parts[0].name, 'outlines');
   const { min, max } = boundsOf(parts[0]);
@@ -193,7 +238,7 @@ test('grow base pushes the plate outward along its outline', async () => {
   assert.ok(count(grown.silhouette) > count(plain.silhouette) * 1.3, 'the plate grew');
 
   const opts = { ...TEMPLATE_DEFAULTS, widthMm: 60, baseGrowMm: 5 };
-  const [base, ridges] = await templateFromRaster(img, opts);
+  const { parts: [base, ridges] } = await templateFromRaster(img, opts);
   const bb = boundsOf(base), rb = boundsOf(ridges);
   // ring artwork spans 40px = 40mm; a 5mm border adds 10mm across
   near(bb.max[0] - bb.min[0], 50, 3);
