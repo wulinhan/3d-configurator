@@ -810,6 +810,28 @@ check('downloaded GLB has the GLB magic and both parts',
 check('downloaded GLB is meshopt-compressed', glb.includes('EXT_meshopt_compression'), '');
 check('compression size note appears', /compressed, from/.test(await page.textContent('[data-testid="size-note"]') ?? ''),
   await page.textContent('[data-testid="size-note"]'));
+
+// Export: the laid-out model straight from the scene, in a slicer's format.
+const [stlDl] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('[data-testid="export-download"]'),
+]);
+const stl = readFileSync(await stlDl.path());
+const stlTris = stl.readUInt32LE(80);
+check('STL export is well-formed and carries real triangles',
+  stlDl.suggestedFilename().endsWith('.stl') && stlTris > 0 && stl.length === 84 + stlTris * 50,
+  { name: stlDl.suggestedFilename(), bytes: stl.length, tris: stlTris });
+await page.click('[data-testid="export-format"]');
+await page.click('[data-testid="export-format-opt-3mf"]');
+const [mfDl] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('[data-testid="export-download"]'),
+]);
+const mf = readFileSync(await mfDl.path());
+check('3MF export is a zip package with the parts kept separate',
+  mfDl.suggestedFilename().endsWith('.3mf') && mf[0] === 0x50 && mf[1] === 0x4b,
+  { name: mfDl.suggestedFilename(), bytes: mf.length });
+
 await shoot('4-publish.png');
 // Publish now lives in a floating modal off the CTA — close it to move on.
 await page.click('[data-testid="publish-close"]');
@@ -1666,6 +1688,37 @@ check('parts render double-sided — stray winding cannot look transparent',
   check('plate and outlines arrive as two parts',
     ids[0].includes('base') && ids[1].includes('outlines'), ids);
   await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  // The regression that shipped once: parts in the manifest, nothing on the
+  // canvas. The template plate must be a BOUND mesh with real geometry.
+  check('the template plate actually renders (mesh bound, geometry non-empty)',
+    await page.evaluate((id) => {
+      const mesh = (window).__studioViewer.meshOf(id);
+      return !!mesh && mesh.geometry.getAttribute('position').count > 0;
+    }, ids[0]), ids[0]);
+
+  // And the underlying cause, pinned directly: a part NAMED with a space —
+  // GLTFLoader sanitises node names, the viewer must look up both forms.
+  const SPACED_3MF = zipSync({
+    '3D/3dmodel.model': new TextEncoder().encode(
+      `<?xml version="1.0"?><model unit="millimeter">
+       <resources>
+        <object id="1" name="Wall Hook" type="model"><mesh>${boxGeom(6, 6, 6)}</mesh></object>
+       </resources>
+       <build><item objectid="1"/></build>
+      </model>`),
+  });
+  await page.setInputFiles('[data-testid="add-model-input"]', {
+    name: 'wall-hook.3mf', mimeType: 'application/octet-stream', buffer: Buffer.from(SPACED_3MF),
+  });
+  await page.waitForFunction((n) => (window).__studio?.manifest?.parts?.length === n + 4, before, { timeout: 20000 });
+  await page.waitForFunction(() => (window).__studioViewerReady === true, { timeout: 20000 });
+  m = await manifest();
+  const spaced = m.parts[m.parts.length - 1];
+  check('a part named with a space still binds and renders',
+    await page.evaluate((id) => {
+      const mesh = (window).__studioViewer.meshOf(id);
+      return !!mesh && mesh.geometry.getAttribute('position').count > 0;
+    }, spaced.id), spaced.id);
   check('the viewer took every generated part without complaint', errors.length === 0, errors.join(' | '));
 }
 

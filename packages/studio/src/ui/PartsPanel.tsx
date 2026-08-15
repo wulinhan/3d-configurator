@@ -46,6 +46,30 @@ const UNGROUP = (
     <rect x="13" y="12" width="8" height="8" rx="1.5" />
   </svg>
 );
+// The three ways parts arrive, each with its glyph (Lucide outlines, like
+// the rest of the panel): a file coming up into the project, the primitive
+// shapes, and a picture.
+const ICO_IMPORT = (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="17 8 12 3 7 8" />
+    <line x1="12" y1="3" x2="12" y2="15" />
+  </svg>
+);
+const ICO_SHAPES = (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z" />
+    <rect x="3" y="14" width="7" height="7" rx="1" />
+    <circle cx="17.5" cy="17.5" r="3.5" />
+  </svg>
+);
+const ICO_IMAGE = (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+  </svg>
+);
 
 type DragSource =
   | { kind: 'entry'; id: string }
@@ -417,20 +441,20 @@ export function PartsPanel(props: {
         <span className="hint">Parts</span>
         <span className="spacer" />
         <button
-          className="mini" data-testid="add-model"
+          className="mini ico-label" data-testid="add-model"
           title="Add parts from another 3MF / STL / GLB — or drop the file anywhere on this panel"
           onClick={() => addInputRef.current?.click()}
-        >＋ Add parts</button>
+        >{ICO_IMPORT} Import</button>
         <button
-          className="mini" data-testid="new-shape"
+          className="mini ico-label" data-testid="new-shape"
           title="A ready-made solid: cuboid, cylinder, n-sided prism or torus"
           onClick={() => setShapeDialog(true)}
-        >＋ Shape</button>
+        >{ICO_SHAPES} Shape</button>
         <button
-          className="mini" data-testid="new-from-image"
+          className="mini ico-label" data-testid="new-from-image"
           title="Trace an SVG / PNG / JPG into a colouring template: raised lines on a plate shaped like the artwork"
           onClick={() => imageInputRef.current?.click()}
-        >＋ Image</button>
+        >{ICO_IMAGE} Image</button>
         <button className="mini" data-testid="show-all" onClick={() => { props.onHideAll(false); props.onSolo(null); }}>Show all</button>
         <button className="mini" data-testid="hide-all" onClick={() => props.onHideAll(true)}>Hide all</button>
         <input
@@ -454,9 +478,10 @@ export function PartsPanel(props: {
       </div>
       {!manifest.parts.length && (
         <p className="empty" data-testid="empty-parts">
-          No parts yet — click <strong>＋ Add parts</strong>, or drop a 3MF / STL / GLB
-          file anywhere on this panel. Parts arrive as separate pieces from 3MF and
-          GLB; STL imports as a single part.
+          No parts yet — click <strong>Import</strong> (or drop a 3MF / STL / GLB file
+          anywhere on this panel), add a ready-made <strong>Shape</strong>, or trace
+          an <strong>Image</strong> into a colouring template. Parts arrive as
+          separate pieces from 3MF and GLB; STL imports as a single part.
         </p>
       )}
       <div

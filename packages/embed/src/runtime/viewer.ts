@@ -386,9 +386,18 @@ export class Viewer {
     // Each PART gets its own copy of its geometry: two parts may share one
     // mesh (a duplicated variant set), and the re-centring below mutates the
     // buffer — sharing would re-centre it once per part.
+    //
+    // GLTFLoader sanitises node names for animation paths (spaces become
+    // underscores; [ ] . : / are stripped) while the manifest cites the mesh
+    // name as authored — so a part named "Front Panel" would never bind.
+    // Look the raw reference up first, then its sanitised form.
+    const sanitised = (ref: string) => {
+      const at = ref.indexOf('#');
+      return `${ref.slice(0, at)}#${ref.slice(at + 1).replace(/\s/g, '_').replace(/[[\].:/]/g, '')}`;
+    };
     const partGeometry = new Map<string, THREE.BufferGeometry>();
     for (const part of this.manifest.parts) {
-      const source = geometries.get(part.mesh);
+      const source = geometries.get(part.mesh) ?? geometries.get(sanitised(part.mesh));
       if (source) partGeometry.set(part.id, source.clone());
     }
 
@@ -1373,6 +1382,50 @@ export class Viewer {
   /** The mesh rendering a part — the object a Studio gizmo attaches to. */
   meshOf(partId: string): THREE.Object3D | undefined {
     return this.meshes.get(partId);
+  }
+
+  /**
+   * Every visible part and live repeat copy, geometry baked into world
+   * millimetres — what an exporter writes to disk. This walks the SCENE, so
+   * whatever is true on screen is true in the file: layout transforms,
+   * engraving cuts, repeat placement. Hidden parts are skipped (export what
+   * you see); text runs, image zones and other customer-side previews stay
+   * out — they belong to a customer's order, not the merchant's model.
+   */
+  exportMeshes(): Array<{ name: string; positions: Float32Array; indices: Uint32Array }> {
+    this.scene.updateMatrixWorld(true);
+    // Everything relative to the model group, so the customiser's
+    // centre-on-origin shift never leaks into exported coordinates.
+    const inverse = this.group.matrixWorld.clone().invert();
+    const out: Array<{ name: string; positions: Float32Array; indices: Uint32Array }> = [];
+    const bake = (obj: THREE.Object3D, name: string) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.visible) return;
+      const pos = mesh.geometry.getAttribute('position');
+      if (!pos || pos.count === 0) return;
+      const m = new THREE.Matrix4().multiplyMatrices(inverse, mesh.matrixWorld);
+      const v = new THREE.Vector3();
+      const positions = new Float32Array(pos.count * 3);
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos as THREE.BufferAttribute, i).applyMatrix4(m);
+        positions[i * 3] = v.x; positions[i * 3 + 1] = v.y; positions[i * 3 + 2] = v.z;
+      }
+      const idx = mesh.geometry.getIndex();
+      const indices = idx
+        ? Uint32Array.from(idx.array as ArrayLike<number>)
+        : Uint32Array.from({ length: pos.count }, (_, i) => i);
+      out.push({ name, positions, indices });
+    };
+    for (const [partId, mesh] of this.meshes) bake(mesh, partId);
+    for (const [partId, entry] of this.repeatCopies) {
+      entry.meshes.forEach((copy, i) => {
+        const target = (copy as THREE.Mesh).isMesh
+          ? copy
+          : copy.children.find((c) => (c as THREE.Mesh).isMesh);
+        if (target) bake(target, `${partId}-copy-${i + 1}`);
+      });
+    }
+    return out;
   }
 
   /** Let a gizmo pause orbiting while it owns the pointer. */

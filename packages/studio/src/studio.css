@@ -177,6 +177,9 @@ input, select { font: inherit; }
   padding: 4px 9px; font-size: 11px; color: var(--ink2);
 }
 .mini:hover { border-color: #c5c2bb; color: var(--ink); }
+/* mini buttons that carry a glyph beside their label */
+.mini.ico-label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.mini.ico-label svg { flex: none; }
 .mini.icon {
   width: 26px; height: 26px; flex: none; padding: 0; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;

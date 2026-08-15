@@ -175,8 +175,11 @@ export function ImageTemplateDialog(props: {
     // let the button repaint to "Tracing…" before the synchronous work
     setTimeout(() => {
       try {
-        const stem = props.file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim().toLowerCase() || 'template';
-        const parts = templateFromRaster(raster, opts).map((p) => ({ ...p, name: `${stem} ${p.name}` }));
+        // Slug, not prose: mesh names travel through GLB, and GLTFLoader
+        // sanitises spaced node names — hyphens survive everything.
+        const stem = props.file.name.replace(/\.[^.]+$/, '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'template';
+        const parts = templateFromRaster(raster, opts).map((p) => ({ ...p, name: `${stem}-${p.name}` }));
         props.onAdd(parts);
         props.onClose();
       } catch (err) {
