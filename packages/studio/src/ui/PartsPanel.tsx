@@ -9,7 +9,7 @@
 // zones); every drop commits through a tested edit op, so an illegal drop is
 // refused by the edit layer, not by fragile UI guards.
 
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Manifest, ChoiceOption } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
 import {
@@ -101,6 +101,8 @@ export function PartsPanel(props: {
   axes: string;
   onAxesChange: (axes: string) => void;
   onSetHidden: (ids: string[], hidden: boolean) => void;
+  /** The ☑-ticked parts, reported live — what Export exports. */
+  onCheckedChange: (ids: string[]) => void;
   onSolo: (id: string | null) => void;
   onHideAll: (hide: boolean) => void;
   onDuplicate: (entryId: string) => void;
@@ -125,6 +127,12 @@ export function PartsPanel(props: {
   const [imageFile, setImageFile] = useState<File | null>(null);
 
   const entries = entriesOf(manifest);
+
+  // Mirror the tick-set up to the App (Export exports exactly these); on
+  // unmount — tab switch, project change — the ticks are gone, so say so.
+  const { onCheckedChange } = props;
+  useEffect(() => { onCheckedChange([...checked]); }, [checked, onCheckedChange]);
+  useEffect(() => () => onCheckedChange([]), [onCheckedChange]);
 
   const act = (fn: () => Manifest) => {
     try { props.onChange(fn()); setError(null); }

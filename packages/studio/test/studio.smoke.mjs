@@ -828,9 +828,11 @@ await page.waitForTimeout(200);
 check('the publish modal closes', await page.evaluate(() => !document.querySelector('.publish-modal')), '');
 
 // Export: its own topbar dialog (where Preview used to live) — it exports
-// THE SELECTED OBJECT, so select a part first; the dialog closes itself
+// exactly the ☑-TICKED parts, so tick one first; the dialog closes itself
 // after each save.
-await page.click('.part-name:has-text("Base")');
+check('with nothing ticked the Export button is inactive',
+  await page.evaluate(() => document.querySelector('[data-testid="export-open"]')?.disabled === true), '');
+await page.check('[data-testid="pick-base"]');
 await page.waitForTimeout(150);
 await page.click('[data-testid="export-open"]');
 check('the export dialog names what it exports',
@@ -856,6 +858,7 @@ const mf = readFileSync(await mfDl.path());
 check('3MF export is a zip package with the parts kept separate',
   mfDl.suggestedFilename().endsWith('.3mf') && mf[0] === 0x50 && mf[1] === 0x4b,
   { name: mfDl.suggestedFilename(), bytes: mf.length });
+await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
 
 // ── 11. structure: undo/redo, reorder, variants, groups, preview ───────────
 {

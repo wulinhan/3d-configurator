@@ -160,6 +160,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   const [axes, setAxes] = useState<string>(AXIS_PRESETS[1].axes); // 3D-print files dominate
   const [previewing, setPreviewing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  /** The explorer's ☑-ticked part ids, mirrored up — Export's exact scope. */
+  const [checkedParts, setCheckedParts] = useState<string[]>([]);
   /** Part id the Delete key is asking about — second press confirms. */
   const [deleteAsk, setDeleteAsk] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
@@ -685,26 +687,18 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     return null;
   }, [project?.manifest, editingGroup, editingVariant, selectedPart]);
 
-  // What Export would export: THE SELECTED OBJECT — a part, or the whole
-  // assembly / variant set being edited. Nothing selected, nothing to
-  // export; the topbar button greys out.
+  // What Export would export: exactly the ☑-TICKED parts in the explorer.
+  // Nothing ticked, nothing to export; the topbar button greys out.
   const exportTarget = useMemo(() => {
-    if (!project) return null;
-    if (selectedPart) {
-      const part = project.manifest.parts.find((p) => p.id === selectedPart);
-      return part ? { ids: [part.id], label: part.label } : null;
-    }
-    if (editingGroup) {
-      const group = project.manifest.groups?.find((g) => g.id === editingGroup);
-      return group ? { ids: [...group.parts], label: group.label ?? group.id } : null;
-    }
-    if (editingVariant) {
-      const ids = project.manifest.parts.filter((p) => p.visibleWhen?.option === editingVariant).map((p) => p.id);
-      const option = project.manifest.options.find((o) => o.id === editingVariant);
-      return ids.length ? { ids, label: option?.label ?? 'Variant set' } : null;
-    }
-    return null;
-  }, [project?.manifest, selectedPart, editingGroup, editingVariant]);
+    if (!project || !checkedParts.length) return null;
+    const ticked = new Set(checkedParts);
+    const parts = project.manifest.parts.filter((p) => ticked.has(p.id));
+    if (!parts.length) return null;
+    return {
+      ids: parts.map((p) => p.id),
+      label: parts.length === 1 ? parts[0].label : `${parts.length} parts`,
+    };
+  }, [project?.manifest, checkedParts]);
 
   // The floating properties panel: slides in when something is selected,
   // slides out (keeping its last content while it goes) when nothing is.
@@ -789,7 +783,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         )}
         <button
           className="ghost preview-btn" data-testid="export-open" disabled={!exportTarget}
-          title={exportTarget ? `Export ${exportTarget.label}` : 'Select a part (or an assembly) to export'}
+          title={exportTarget ? `Export ${exportTarget.label}` : 'Tick the ☐ boxes on the parts to export'}
           onClick={() => setExporting(true)}
         >
           Export
@@ -823,6 +817,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
               axes={axes}
               onAxesChange={setAxes}
               onSetHidden={setHidden}
+              onCheckedChange={setCheckedParts}
               onSolo={soloPart}
               onHideAll={(hide) => { setSolo(null); setHiddenParts(hide ? new Set(project.manifest.parts.map((p) => p.id)) : new Set()); }}
               onDuplicate={duplicateEntryInApp}

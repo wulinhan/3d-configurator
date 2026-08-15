@@ -222,6 +222,9 @@ export interface ViewerOptions {
   centreOnOrigin?: boolean;
 }
 
+/** ~1.5% inflation about the part's own centre — the rim's thickness. */
+const _outlineScale = new THREE.Matrix4().makeScale(1.015, 1.015, 1.015);
+
 export class Viewer {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
@@ -289,6 +292,10 @@ export class Viewer {
   /** partId → the live repeat copies riding alongside its own mesh, and the
    * signature (pattern + geometry + children) they were built from. */
   private repeatCopies = new Map<string, { meshes: THREE.Object3D[]; sig: string }>();
+  /** Studio selection emphasis: the part everything else dims for. */
+  private emphasis: string | null = null;
+  private outlineMesh?: THREE.Mesh;
+  private outlineMat?: THREE.MeshBasicMaterial;
 
   constructor(opts: ViewerOptions) {
     this.manifest = opts.manifest;
@@ -2464,9 +2471,55 @@ export class Viewer {
       this.rafId = requestAnimationFrame(tick);
       this.updateTextRuns(performance.now());
       this.controls.update();
+      this.trackEmphasisOutline();
       this.renderer.render(this.scene, this.camera);
     };
     tick();
+  }
+
+  /**
+   * Studio selection emphasis: every OTHER part fades to a ghost and the
+   * selected one wears a thin white rim (its own geometry re-rendered
+   * slightly inflated, back faces only — the classic silhouette outline,
+   * no post-processing). The embed never calls this.
+   */
+  setSelectionEmphasis(partId: string | null): void {
+    this.emphasis = partId;
+    for (const [id, material] of this.materials) {
+      const dim = !!partId && id !== partId && !!this.meshes.get(partId);
+      const opacity = dim ? 0.25 : 1;
+      if (material.transparent !== dim) {
+        material.transparent = dim;
+        material.needsUpdate = true; // the transparency switch recompiles
+      }
+      material.opacity = opacity;
+    }
+    if (this.outlineMesh) {
+      this.scene.remove(this.outlineMesh);
+      this.outlineMesh = undefined;
+    }
+    const target = partId ? this.meshes.get(partId) : undefined;
+    if (target) {
+      this.outlineMat ??= new THREE.MeshBasicMaterial({
+        color: 0xffffff, side: THREE.BackSide, toneMapped: false,
+      });
+      const hull = new THREE.Mesh(target.geometry, this.outlineMat);
+      hull.matrixAutoUpdate = false;
+      hull.raycast = () => {}; // never intercept picking
+      this.outlineMesh = hull;
+      this.scene.add(hull);
+    }
+  }
+
+  /** The rim follows its part live — gizmo drags, layout moves, geometry
+   * swaps (engraving) — by copying the mesh's world matrix every frame. */
+  private trackEmphasisOutline(): void {
+    const hull = this.outlineMesh;
+    const mesh = this.emphasis ? this.meshes.get(this.emphasis) : undefined;
+    if (!hull || !mesh) return;
+    if (hull.geometry !== mesh.geometry) hull.geometry = mesh.geometry;
+    hull.visible = mesh.visible;
+    hull.matrix.copy(mesh.matrixWorld).multiply(_outlineScale);
   }
 
   /** Ease each centred per-letter run toward its target shift (see

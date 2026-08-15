@@ -58,6 +58,8 @@ input, select { font: inherit; }
   padding: 7px 12px; font-size: 13px; color: var(--ink);
 }
 .ghost:hover { border-color: #c5c2bb; background: var(--surface); }
+.ghost:disabled { opacity: .4; cursor: default; }
+.ghost:disabled:hover { border-color: var(--line); background: none; }
 .ghost.danger { color: var(--danger); border: none; padding: 4px 8px; }
 .cta {
   border: none; border-radius: 8px; background: var(--accent); color: #fff;

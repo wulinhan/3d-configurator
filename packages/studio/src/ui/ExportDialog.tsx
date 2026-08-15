@@ -63,14 +63,6 @@ export function ExportDialog(props: {
     <div className="dialog-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
       <div className="dialog-card shape-dialog" role="dialog" aria-modal="true" aria-label="Export the model" data-testid="export-dialog">
         <h3>Export the model</h3>
-        <div className="dialog-body">
-          <p>
-            Exactly as laid out on the stage — repeat copies included, hidden
-            parts left out, millimetres throughout, Z-up and ready for the
-            build plate. Parts are welded watertight wherever the geometry
-            allows.
-          </p>
-        </div>
         {meshes && (
           <p className="trace-note" data-testid="export-parts">
             {labels.length

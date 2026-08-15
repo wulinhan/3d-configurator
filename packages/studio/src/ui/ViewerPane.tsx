@@ -289,6 +289,9 @@ export function ViewerPane(props: {
     const viewer = viewerRef.current;
     if (!viewer) return;
     viewer.highlight(props.selectedPart);
+    // the rest of the model steps back: everything unselected goes ghost,
+    // the selected part wears a thin white rim
+    viewer.setSelectionEmphasis(props.selectedPart);
     gizmoRef.current?.attach(props.selectedPart);
     const bounds = viewer.layoutBounds();
     if (!Number.isFinite(bounds.min[0])) return;
