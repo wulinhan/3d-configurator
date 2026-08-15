@@ -2490,8 +2490,11 @@ export class Viewer {
    * part renders front faces only with the depth buffer on, so exactly one
    * stable surface blends with the page — the flicker of the naive version
    * was double-sided transparency showing back faces through front faces
-   * in draw order. Ghosts also stop casting shadows; a see-through part
-   * with a solid black shadow reads as a bug.
+   * in draw order. Opacity sits at 0.55, not lower: a ghost blends with
+   * the near-white page, and below half opacity every colour washes to
+   * white and the part reads as ERASED rather than faded. Shadows stay on
+   * — on flat-lay artwork the drop shadow is what keeps a ghost looking
+   * present at all.
    */
   setSelectionEmphasis(partId: string | null): void {
     this.emphasis = partId;
@@ -2514,7 +2517,7 @@ export class Viewer {
   }
 
   /** Ghost the unselected: see-through at their own colour, one stable
-   * front surface each, no shadow. Everything restores on deselect. */
+   * front surface each. Everything restores on deselect. */
   private syncEmphasisMaterials(): void {
     const active = this.emphasis && this.meshes.get(this.emphasis) ? this.emphasis : null;
     for (const [id, material] of this.materials) {
@@ -2523,17 +2526,10 @@ export class Viewer {
         material.transparent = dim;
         material.needsUpdate = true; // the transparency switch recompiles
       }
-      material.opacity = dim ? 0.25 : 1;
+      material.opacity = dim ? 0.55 : 1;
       // FrontSide while ghosted: no back faces to bleed through the front;
       // DoubleSide again when solid (stray winding must not read as holes).
       material.side = dim ? THREE.FrontSide : THREE.DoubleSide;
-    }
-    for (const [id, mesh] of this.meshes) {
-      const dim = !!active && id !== active;
-      mesh.castShadow = !dim;
-      this.repeatCopies.get(id)?.meshes.forEach((copy) => copy.traverse((o) => {
-        if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = !dim;
-      }));
     }
   }
 
