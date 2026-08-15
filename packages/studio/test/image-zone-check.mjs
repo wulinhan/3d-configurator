@@ -149,7 +149,8 @@ await page.press('[data-testid="image-height-base-image"]', 'Enter');
 await page.waitForTimeout(300);
 
 // Customer preview: upload the real logo.
-await page.click('[data-testid="preview-open"]');
+await page.click('[data-testid="publish-cta"]');
+  await page.click('[data-testid="preview-open"]'); // in the publish modal head; closes the modal
 await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
 await page.click('.preview-overlay .cfg-tab:has-text("Base image")');
 await page.waitForTimeout(200);

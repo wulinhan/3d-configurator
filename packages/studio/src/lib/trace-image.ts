@@ -19,15 +19,23 @@ import type { ImportedPart } from './types.ts';
 export interface TemplateOpts {
   /** Overall plate width (the artwork's X span). */
   widthMm: number;
+  /** Whether the lines get a plate under them at all — off leaves just the
+   * connected line-art relief. */
+  withBase: boolean;
   /** Base plate thickness. */
   baseMm: number;
+  /** Expand the plate outward along its own outline, beyond the artwork —
+   * a border for the template. */
+  baseGrowMm: number;
   /** How far the ridges stand PROUD of the base. */
   ridgeMm: number;
   /** Extra thickness added to every line (0 = as drawn). */
   widenMm: number;
 }
 
-export const TEMPLATE_DEFAULTS: TemplateOpts = { widthMm: 100, baseMm: 3, ridgeMm: 1.5, widenMm: 0 };
+export const TEMPLATE_DEFAULTS: TemplateOpts = {
+  widthMm: 100, withBase: true, baseMm: 3, baseGrowMm: 0, ridgeMm: 1.5, widenMm: 0,
+};
 
 /** RGBA pixels — what ctx.getImageData returns, but structural so tests can
  * synthesise it without a DOM. */
@@ -297,8 +305,16 @@ const extrudeRings = (name: string, rings: Ring[], scale: number, thickMm: numbe
 
 export interface TemplatePreview { width: number; height: number; silhouette: Uint8Array; ink: Uint8Array }
 
-/** The masks alone — cheap enough to re-run on every dialog keystroke. */
-export function templateMasks(img: Raster, widenMm: number, widthMm: number): TemplatePreview {
+export interface MaskOpts {
+  widthMm: number;
+  widenMm: number;
+  /** Grow the plate outward along its outline, in mm past the artwork. */
+  baseGrowMm: number;
+}
+
+/** The masks alone — cheap enough to re-run on every dialog keystroke, and
+ * exactly what the dialog previews: what is filled here is what prints. */
+export function templateMasks(img: Raster, opts: MaskOpts): TemplatePreview {
   const { width: w, height: h } = img;
   const n = w * h;
   const gray = toGray(img.data, n);
@@ -312,42 +328,66 @@ export function templateMasks(img: Raster, widenMm: number, widthMm: number): Te
   let ink = new Uint8Array(n);
   for (let i = 0; i < n; i++) ink[i] = gray[i] <= thresh ? 1 : 0;
   ink = despeckle(ink, w, h, Math.max(4, Math.round(n / 50_000)));
-  const widenPx = Math.round((widenMm / 2) / (widthMm / w));
+  const mmPerPx = opts.widthMm / w;
+  const widenPx = Math.round((opts.widenMm / 2) / mmPerPx);
   if (widenPx > 0) ink = dilate(ink, w, h, widenPx);
-  return { width: w, height: h, ink, silhouette: fillEnclosed(ink, w, h) };
+  const growPx = Math.round(opts.baseGrowMm / mmPerPx);
+  if (growPx <= 0) return { width: w, height: h, ink, silhouette: fillEnclosed(ink, w, h) };
+  // The border grows OUTWARD, so pad the canvas by the growth radius first —
+  // otherwise artwork near the edge would have its border clipped flat.
+  const pw = w + growPx * 2, ph = h + growPx * 2;
+  const pad = (src: Uint8Array): Uint8Array => {
+    const out = new Uint8Array(pw * ph);
+    for (let y = 0; y < h; y++) out.set(src.subarray(y * w, y * w + w), (y + growPx) * pw + growPx);
+    return out;
+  };
+  return {
+    width: pw, height: ph,
+    ink: pad(ink),
+    silhouette: dilate(pad(fillEnclosed(ink, w, h)), pw, ph, growPx),
+  };
 }
 
 export function templateFromRaster(img: Raster, opts: TemplateOpts): ImportedPart[] {
-  const { width: w, height: h } = img;
-  if (opts.widthMm <= 0 || opts.baseMm <= 0 || opts.ridgeMm <= 0) {
+  const { width: w } = img;
+  if (opts.widthMm <= 0 || opts.ridgeMm <= 0 || (opts.withBase && opts.baseMm <= 0)) {
     throw new Error('width, base and line height must all be positive');
   }
-  const { ink, silhouette } = templateMasks(img, opts.widenMm, opts.widthMm);
+  const masks = templateMasks(img, opts);
+  const { ink, silhouette } = masks;
   if (!ink.some((v) => v)) throw new Error('no lines found — the image looks blank or too faint');
 
+  // scale is anchored to the ARTWORK's width: growing the base makes the
+  // plate larger than widthMm rather than shrinking the art inside it.
   const scale = opts.widthMm / w;
   const eps = Math.max(1, w / 800); // simplify harder as resolution grows
-  const trace = (mask: Uint8Array) => traceLoops(mask, w, h).map((r) => simplifyRing(r, eps));
+  const trace = (mask: Uint8Array) => traceLoops(mask, masks.width, masks.height).map((r) => simplifyRing(r, eps));
 
-  const base = extrudeRings('base', trace(silhouette), scale, opts.baseMm, 0);
-  const ridges = extrudeRings('outlines', trace(ink), scale, opts.ridgeMm, opts.baseMm);
+  // Without a base the lines ARE the part, sat straight on the ground.
+  const lift = opts.withBase ? opts.baseMm : 0;
+  const ridges = extrudeRings('outlines', trace(ink), scale, opts.ridgeMm, lift);
+  const parts = opts.withBase
+    ? [extrudeRings('base', trace(silhouette), scale, opts.baseMm, 0), ridges]
+    : [ridges];
 
-  // one shared offset so ridges stay registered on their plate: centre the
-  // BASE on X/Z (it is already grounded at y=0 by construction)
+  // one shared offset so ridges stay registered on their plate: centre on
+  // X/Z from the LARGEST footprint (the base when there is one) — parts
+  // are already grounded at y=0 by construction
+  const anchor = parts[0];
   const min = [Infinity, Infinity], max = [-Infinity, -Infinity];
-  for (let i = 0; i < base.positions.length; i += 3) {
+  for (let i = 0; i < anchor.positions.length; i += 3) {
     for (const [k, axis] of [[0, 0], [1, 2]] as const) {
-      const v = base.positions[i + axis];
+      const v = anchor.positions[i + axis];
       if (v < min[k]) min[k] = v;
       if (v > max[k]) max[k] = v;
     }
   }
   const cx = (min[0] + max[0]) / 2, cz = (min[1] + max[1]) / 2;
-  for (const part of [base, ridges]) {
+  for (const part of parts) {
     for (let i = 0; i < part.positions.length; i += 3) {
       part.positions[i] -= cx;
       part.positions[i + 2] -= cz;
     }
   }
-  return [base, ridges];
+  return parts;
 }

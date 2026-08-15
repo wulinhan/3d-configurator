@@ -151,23 +151,30 @@ export function ImageTemplateDialog(props: {
     return () => window.removeEventListener('keydown', onKey);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The preview IS the two masks: plate in warm grey, ridges in ink. What
-  // you see filled is what gets printed.
+  // The preview IS the two masks: plate in warm grey (with the grown border
+  // when one is asked for), ridges in ink. What you see filled is what gets
+  // printed — no base means lines on bare page.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !raster) return;
-    const { width: w, height: h } = raster;
-    const masks = templateMasks(raster, opts.widenMm, opts.widthMm);
+    const masks = templateMasks(raster, {
+      widthMm: opts.widthMm,
+      widenMm: opts.widenMm,
+      baseGrowMm: opts.withBase ? opts.baseGrowMm : 0,
+    });
+    const { width: w, height: h } = masks;
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const out = ctx.createImageData(w, h);
     for (let i = 0, p = 0; i < w * h; i++, p += 4) {
-      const [r, g, b] = masks.ink[i] ? [45, 45, 45] : masks.silhouette[i] ? [229, 222, 208] : [248, 246, 241];
+      const [r, g, b] = masks.ink[i] ? [45, 45, 45]
+        : opts.withBase && masks.silhouette[i] ? [229, 222, 208]
+          : [248, 246, 241];
       out.data[p] = r; out.data[p + 1] = g; out.data[p + 2] = b; out.data[p + 3] = 255;
     }
     ctx.putImageData(out, 0, 0);
-  }, [raster, opts.widenMm, opts.widthMm]);
+  }, [raster, opts.widenMm, opts.widthMm, opts.baseGrowMm, opts.withBase]);
 
   const add = () => {
     if (!raster) return;
@@ -189,33 +196,34 @@ export function ImageTemplateDialog(props: {
     }, 30);
   };
 
-  const heightMm = raster ? Math.round(opts.widthMm * (raster.height / raster.width)) : null;
+  const artHeightMm = raster ? Math.round(opts.widthMm * (raster.height / raster.width)) : null;
+  const grow = opts.withBase ? opts.baseGrowMm : 0;
   return (
     <div className="dialog-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
       <div className="dialog-card shape-dialog" role="dialog" aria-modal="true" aria-label="Colouring template from image" data-testid="image-template-dialog">
         <h3>Template from image</h3>
         <div className="dialog-body">
           <p>
-            The drawn lines become raised ridges; the artwork's outer shape becomes
-            the plate they stand on. Two parts arrive — plate and lines — each with
-            its own colour.
+            The drawn lines become raised ridges; with a base plate on, the
+            artwork's outer shape becomes the plate they stand on and each part
+            arrives with its own colour.
           </p>
         </div>
         <canvas ref={canvasRef} className="trace-preview" data-testid="trace-preview" aria-label="Traced template preview" />
         {!raster && !error && <p className="trace-note">Reading the image…</p>}
-        {raster && heightMm !== null && <p className="trace-note">Plate: {opts.widthMm} × {heightMm} mm</p>}
+        {raster && artHeightMm !== null && (
+          <p className="trace-note">
+            {opts.withBase
+              ? `Plate: ${opts.widthMm + 2 * grow} × ${artHeightMm + 2 * grow} mm`
+              : `Artwork: ${opts.widthMm} × ${artHeightMm} mm — lines only, no base`}
+          </p>
+        )}
         <div className="dialog-fields">
           <div className="field-row">
             <NumberField
               label="Width" value={opts.widthMm} suffix="mm" step={5}
               testId="template-width" onCommit={(v) => set({ widthMm: v })}
             />
-            <NumberField
-              label="Base" value={opts.baseMm} suffix="mm" step={0.5}
-              testId="template-base" onCommit={(v) => set({ baseMm: v })}
-            />
-          </div>
-          <div className="field-row">
             <NumberField
               label="Line height" value={opts.ridgeMm} suffix="mm" step={0.25}
               testId="template-ridge" onCommit={(v) => set({ ridgeMm: v })}
@@ -225,6 +233,25 @@ export function ImageTemplateDialog(props: {
               testId="template-widen" onCommit={(v) => set({ widenMm: Math.max(0, v) })}
             />
           </div>
+          <label className="lock">
+            <input
+              type="checkbox" checked={opts.withBase} data-testid="template-with-base"
+              onChange={(e) => set({ withBase: e.target.checked })}
+            />
+            Base plate under the lines (the artwork's silhouette)
+          </label>
+          {opts.withBase && (
+            <div className="field-row">
+              <NumberField
+                label="Base" value={opts.baseMm} suffix="mm" step={0.5}
+                testId="template-base" onCommit={(v) => set({ baseMm: v })}
+              />
+              <NumberField
+                label="Grow base" value={opts.baseGrowMm} suffix="mm" step={0.5}
+                testId="template-grow" onCommit={(v) => set({ baseGrowMm: Math.max(0, v) })}
+              />
+            </div>
+          )}
         </div>
         {error && <p className="field-error" role="alert">{error}</p>}
         <div className="dialog-actions">

@@ -22,7 +22,7 @@ import {
   boundsOf, boundsByPartId, mergeModel, emptyManifest, EMPTY_BOUNDS, type PartBounds,
 } from './lib/manifest-init.ts';
 import {
-  duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, addImageZone, refitImageZone, setTextPath, type Axis,
+  duplicateEntry, repeatEntry, frameCamera, withProductName, addTextSlot, addImageZone, refitImageZone, setTextPath, removePart, type Axis,
 } from './lib/manifest-edit.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
@@ -32,6 +32,8 @@ import { FinishPanel } from './ui/FinishPanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
 import { CloudPublish } from './ui/CloudPublish.tsx';
 import { PreviewOverlay } from './ui/PreviewOverlay.tsx';
+import { ExportDialog } from './ui/ExportDialog.tsx';
+import { ConfirmDialog } from './ui/controls.tsx';
 import { SignIn } from './ui/SignIn.tsx';
 import { Projects } from './ui/Projects.tsx';
 import { api, apiBase, go, routeOf, type Me, type Route } from './lib/api.ts';
@@ -149,6 +151,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   const [solo, setSolo] = useState<string | null>(null);
   const [axes, setAxes] = useState<string>(AXIS_PRESETS[1].axes); // 3D-print files dominate
   const [previewing, setPreviewing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  /** Part id the Delete key is asking about — second press confirms. */
+  const [deleteAsk, setDeleteAsk] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   // Armed "click a face to place …" tool: what lands there and on which part.
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
@@ -493,6 +498,36 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     setSelectedPart(manifest.parts[manifest.parts.length - incoming.length]?.id ?? null);
   }, []);
 
+  // Delete / Backspace with a part selected: the first press opens the
+  // confirm dialog, the second press confirms it — the modal is the safety,
+  // the key is the speed. Typing fields and open dialogs are left alone.
+  const confirmDeleteAsk = useCallback((id: string) => {
+    const old = projectRef.current;
+    setDeleteAsk(null);
+    if (!old) return;
+    try {
+      setManifest(removePart(old.manifest, id, old.raw));
+      setSelectedPart(null);
+    } catch { /* removal refused by the edit layer — nothing changes */ }
+  }, [setManifest]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (deleteAsk) {
+        e.preventDefault();
+        confirmDeleteAsk(deleteAsk);
+      } else if (selectedPart && !previewing && !document.querySelector('.dialog-backdrop')) {
+        e.preventDefault();
+        setDeleteAsk(selectedPart);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [deleteAsk, selectedPart, previewing, confirmDeleteAsk]);
+
   // A placement click in the viewport lands here: the picked face's sketch
   // plane becomes a text slot or image zone via the tested edit op.
   // setManifest records the history step; nothing needs a viewer remount.
@@ -699,8 +734,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
             New project
           </button>
         )}
-        <button className="ghost preview-btn" data-testid="preview-open" onClick={() => setPreviewing(true)}>
-          Preview
+        <button className="ghost preview-btn" data-testid="export-open" onClick={() => setExporting(true)}>
+          Export
         </button>
         <button className="cta" data-testid="publish-cta" onClick={() => setPublishing(true)}>
           Publish
@@ -772,11 +807,30 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         </div>
       </div>
       {previewing && <PreviewOverlay project={project} cloudProjectId={cloudProjectId} onClose={() => setPreviewing(false)} />}
+      {exporting && <ExportDialog manifest={project.manifest} onClose={() => setExporting(false)} />}
+      {deleteAsk && (() => {
+        const part = project.manifest.parts.find((p) => p.id === deleteAsk);
+        if (!part) return null;
+        return (
+          <ConfirmDialog
+            testId="confirm-delete-key"
+            title={`Delete ${part.label}?`}
+            body={<p>Press Delete again to confirm. Colour options and pricing tied to this part are removed; Ctrl+Z brings everything back.</p>}
+            confirmLabel="Delete part"
+            onCancel={() => setDeleteAsk(null)}
+            onConfirm={() => confirmDeleteAsk(deleteAsk)}
+          />
+        );
+      })()}
       {publishing && (
         <div className="dialog-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) setPublishing(false); }}>
           <div className="publish-modal" role="dialog" aria-modal="true" aria-label="Publish">
             <div className="publish-modal-head">
               <h3>Publish</h3>
+              <button
+                className="ghost" data-testid="preview-open"
+                onClick={() => { setPublishing(false); setPreviewing(true); }}
+              >Preview</button>
               <button className="ghost" data-testid="publish-close" onClick={() => setPublishing(false)}>Close</button>
             </div>
             {cloudProjectId

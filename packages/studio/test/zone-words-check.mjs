@@ -142,7 +142,8 @@ await page.screenshot({ path: join(OUT, 'zone-words-long.png') });
 // The customer's panel says the same thing as the part.
 await page.fill('[data-testid="image-placeholder-base-image"]', 'Your logo here');
 await page.waitForTimeout(300);
-await page.click('[data-testid="preview-open"]');
+await page.click('[data-testid="publish-cta"]');
+  await page.click('[data-testid="preview-open"]'); // in the publish modal head; closes the modal
 await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
 await page.click('.preview-overlay .cfg-tab:has-text("Base image")');
 await page.waitForTimeout(300);
@@ -156,7 +157,8 @@ await page.click('[data-testid="preview-close"]');
 await page.waitForTimeout(300);
 await page.fill('[data-testid="image-placeholder-base-image"]', '');
 await page.waitForTimeout(300);
-await page.click('[data-testid="preview-open"]');
+await page.click('[data-testid="publish-cta"]');
+  await page.click('[data-testid="preview-open"]'); // in the publish modal head; closes the modal
 await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 20000 });
 await page.click('.preview-overlay .cfg-tab:has-text("Base image")');
 await page.waitForTimeout(300);

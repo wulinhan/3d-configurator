@@ -11,8 +11,6 @@ import { validateManifest } from '../../../embed/src/manifest/validate.ts';
 import { frameCamera, withProductName, withCurrency } from '../lib/manifest-edit.ts';
 import { writeGlb } from '../lib/write-glb.ts';
 import { compressGlb } from '../lib/compress-glb.ts';
-import { exportModel, EXPORT_FORMATS, type ExportFormat, type ExportMesh } from '../lib/export-model.ts';
-import { Select } from './controls.tsx';
 import type { Project } from '../App.tsx';
 
 const kb = (n: number) => `${(n / 1024).toFixed(0)} KB`;
@@ -22,7 +20,6 @@ export function PublishPanel(props: { project: Project; onChange: (m: Manifest) 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sizeNote, setSizeNote] = useState<string | null>(null);
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('stl');
   const report = useMemo(() => validateManifest(manifest), [manifest]);
 
   const download = (name: string, blob: Blob) => {
@@ -110,38 +107,6 @@ export function PublishPanel(props: { project: Project; onChange: (m: Manifest) 
       <p className="hint">
         Host both files next to your product page. The model ships
         meshopt-compressed; the embed decodes it automatically.
-      </p>
-
-      <h4>Export the model</h4>
-      <div className="publish-actions">
-        <Select
-          value={exportFormat} ariaLabel="Export format" testId="export-format"
-          options={EXPORT_FORMATS.map((f) => ({ value: f.id, label: f.label }))}
-          onChange={(id) => setExportFormat(id as ExportFormat)}
-        />
-        <button
-          data-testid="export-download" disabled={!manifest.parts.length}
-          onClick={() => {
-            try {
-              // The viewer scene is the source of truth: layout applied,
-              // engraving cut, repeat copies placed, hidden parts skipped.
-              const viewer = (window as { __studioViewer?: { exportMeshes?: () => ExportMesh[] } }).__studioViewer;
-              const meshes = viewer?.exportMeshes?.();
-              if (!meshes) throw new Error('the 3D view is still loading');
-              const format = EXPORT_FORMATS.find((f) => f.id === exportFormat)!;
-              const bytes = exportModel(meshes, exportFormat, manifest.name);
-              download(`${manifest.id}.${format.ext}`, new Blob([bytes as BlobPart], { type: format.mime }));
-              setError(null);
-            } catch (err) {
-              setError(err instanceof Error ? err.message : String(err));
-            }
-          }}
-        >Export</button>
-      </div>
-      <p className="hint">
-        The model exactly as laid out on the stage — repeat copies included,
-        hidden parts left out — in millimetres. Customer text and images are
-        not part of the model.
       </p>
 
       <h4>Embed snippet</h4>

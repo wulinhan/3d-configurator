@@ -811,7 +811,16 @@ check('downloaded GLB is meshopt-compressed', glb.includes('EXT_meshopt_compress
 check('compression size note appears', /compressed, from/.test(await page.textContent('[data-testid="size-note"]') ?? ''),
   await page.textContent('[data-testid="size-note"]'));
 
-// Export: the laid-out model straight from the scene, in a slicer's format.
+await shoot('4-publish.png');
+// Publish now lives in a floating modal off the CTA — close it to move on.
+await page.click('[data-testid="publish-close"]');
+await page.waitForTimeout(200);
+check('the publish modal closes', await page.evaluate(() => !document.querySelector('.publish-modal')), '');
+
+// Export: its own topbar dialog (where Preview used to live) — pick a
+// format, get the laid-out model straight from the scene. The dialog
+// closes itself after each save.
+await page.click('[data-testid="export-open"]');
 const [stlDl] = await Promise.all([
   page.waitForEvent('download'),
   page.click('[data-testid="export-download"]'),
@@ -821,6 +830,7 @@ const stlTris = stl.readUInt32LE(80);
 check('STL export is well-formed and carries real triangles',
   stlDl.suggestedFilename().endsWith('.stl') && stlTris > 0 && stl.length === 84 + stlTris * 50,
   { name: stlDl.suggestedFilename(), bytes: stl.length, tris: stlTris });
+await page.click('[data-testid="export-open"]');
 await page.click('[data-testid="export-format"]');
 await page.click('[data-testid="export-format-opt-3mf"]');
 const [mfDl] = await Promise.all([
@@ -831,12 +841,6 @@ const mf = readFileSync(await mfDl.path());
 check('3MF export is a zip package with the parts kept separate',
   mfDl.suggestedFilename().endsWith('.3mf') && mf[0] === 0x50 && mf[1] === 0x4b,
   { name: mfDl.suggestedFilename(), bytes: mf.length });
-
-await shoot('4-publish.png');
-// Publish now lives in a floating modal off the CTA — close it to move on.
-await page.click('[data-testid="publish-close"]');
-await page.waitForTimeout(200);
-check('the publish modal closes', await page.evaluate(() => !document.querySelector('.publish-modal')), '');
 
 // ── 11. structure: undo/redo, reorder, variants, groups, preview ───────────
 {
@@ -1029,7 +1033,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
 
   // 11d. the preview must let customers actually choose between them — and
   // the panel is either-or too: the hidden side has no colour tab or row.
-  await page.click('[data-testid="preview-open"]');
+  await page.click('[data-testid="publish-cta"]');
+  await page.click('[data-testid="preview-open"]'); // in the publish modal head; closes the modal
   await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 45000 });
   await page.waitForTimeout(400);
   // The active tab wears a ✓ — strip it, these checks are about the NAMES.
@@ -1156,7 +1161,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   }
 
   // 11f. the customer preview is the real embed
-  await page.click('[data-testid="preview-open"]');
+  await page.click('[data-testid="publish-cta"]');
+  await page.click('[data-testid="preview-open"]'); // in the publish modal head; closes the modal
   await page.waitForSelector('.preview-overlay .cfg-swatch', { timeout: 45000 });
   const previewBits = await page.evaluate(() => ({
     swatches: document.querySelectorAll('.preview-overlay .cfg-swatch').length,
@@ -1485,7 +1491,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   await page.fill('[data-testid="text-perchar-base-text"]', '2');
   await page.press('[data-testid="text-perchar-base-text"]', 'Enter');
   await page.waitForTimeout(200);
-  await page.click('[data-testid="preview-open"]');
+  await page.click('[data-testid="publish-cta"]');
+  await page.click('[data-testid="preview-open"]'); // in the publish modal head; closes the modal
   await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 45000 });
   await page.click('.preview-overlay .cfg-tab:has-text("Base text")');
   await page.waitForTimeout(200);
@@ -1596,7 +1603,8 @@ check('the publish modal closes', await page.evaluate(() => !document.querySelec
   check('the width field writes the zone size', true, '');
 
   // The customer flow: upload → decal appears → reposition → resize → remove.
-  await page.click('[data-testid="preview-open"]');
+  await page.click('[data-testid="publish-cta"]');
+  await page.click('[data-testid="preview-open"]'); // in the publish modal head; closes the modal
   await page.waitForSelector('.preview-overlay .cfg-tab', { timeout: 45000 });
   await page.click('.preview-overlay .cfg-tab:has-text("Base image")');
   await page.waitForTimeout(200);

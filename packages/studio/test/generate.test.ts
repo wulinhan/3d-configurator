@@ -153,8 +153,8 @@ test('a traced ring becomes a plate with ridges standing proud', () => {
 test('thickened lines grow the ink mask, and a blank image is refused', () => {
   const w = 60, h = 60;
   const img = raster(w, h, (x, y) => y === 30 && x >= 10 && x < 50);
-  const thin = templateMasks(img, 0, 60);
-  const thick = templateMasks(img, 4, 60);
+  const thin = templateMasks(img, { widenMm: 0, widthMm: 60, baseGrowMm: 0 });
+  const thick = templateMasks(img, { widenMm: 4, widthMm: 60, baseGrowMm: 0 });
   const count = (m: Uint8Array) => m.reduce((a, b) => a + b, 0);
   assert.ok(count(thick.ink) > count(thin.ink) * 2, 'widen widens');
 
@@ -162,4 +162,42 @@ test('thickened lines grow the ink mask, and a blank image is refused', () => {
     () => templateFromRaster(raster(20, 20, () => false), TEMPLATE_DEFAULTS),
     /blank or too faint/,
   );
+});
+
+test('the base is optional — lines-only lands one part, on the ground', () => {
+  const w = 60, h = 60;
+  const img = raster(w, h, (x, y) => {
+    const r = Math.hypot(x - 30, y - 30);
+    return r >= 16 && r <= 20;
+  });
+  const parts = templateFromRaster(img, { ...TEMPLATE_DEFAULTS, withBase: false, baseMm: 0 });
+  assert.equal(parts.length, 1);
+  assert.equal(parts[0].name, 'outlines');
+  const { min, max } = boundsOf(parts[0]);
+  near(min[1], 0, 0.01);                          // grounded, no plate underneath
+  near(max[1], TEMPLATE_DEFAULTS.ridgeMm, 0.01);  // just the line height
+  near((min[0] + max[0]) / 2, 0, 0.5);            // still centred
+});
+
+test('grow base pushes the plate outward along its outline', () => {
+  const w = 60, h = 60;
+  const dark = (x: number, y: number) => {
+    const r = Math.hypot(x - 30, y - 30);
+    return r >= 16 && r <= 20;
+  };
+  const img = raster(w, h, dark);
+  const plain = templateMasks(img, { widenMm: 0, widthMm: 60, baseGrowMm: 0 });
+  const grown = templateMasks(img, { widenMm: 0, widthMm: 60, baseGrowMm: 5 });
+  const count = (m: Uint8Array) => m.reduce((a, b) => a + b, 0);
+  assert.ok(grown.width > plain.width, 'the canvas pads so the border cannot clip');
+  assert.ok(count(grown.silhouette) > count(plain.silhouette) * 1.3, 'the plate grew');
+
+  const opts = { ...TEMPLATE_DEFAULTS, widthMm: 60, baseGrowMm: 5 };
+  const [base, ridges] = templateFromRaster(img, opts);
+  const bb = boundsOf(base), rb = boundsOf(ridges);
+  // ring artwork spans 40px = 40mm; a 5mm border adds 10mm across
+  near(bb.max[0] - bb.min[0], 50, 3);
+  // the ridges still sit registered on the plate, standing proud of it
+  near(rb.min[1], opts.baseMm, 0.01);
+  assert.ok(rb.min[0] > bb.min[0] && rb.max[0] < bb.max[0], 'border surrounds the lines');
 });
