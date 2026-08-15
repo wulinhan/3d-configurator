@@ -548,6 +548,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     } catch { /* removal refused by the edit layer — nothing changes */ }
   }, [setManifest]);
 
+  /** Ctrl/Cmd+C's stash: the part (or assembly) a later Ctrl/Cmd+V copies. */
+  const copyRef = useRef<string | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -558,13 +560,28 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         if (all.length) { e.preventDefault(); setCheckedParts(all); }
         return;
       }
+      if ((e.key === 'c' || e.key === 'C') && (e.ctrlKey || e.metaKey)) {
+        // real text selections keep their native copy
+        if (window.getSelection()?.toString()) return;
+        const id = selectedPart ?? editingGroup;
+        if (id) copyRef.current = id;
+        return;
+      }
+      if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey)) {
+        const id = copyRef.current;
+        const m = projectRef.current?.manifest;
+        const alive = !!id && !!m
+          && (m.parts.some((p) => p.id === id) || (m.groups ?? []).some((g) => g.id === id));
+        if (alive) { e.preventDefault(); duplicateEntryInApp(id!); }
+        return;
+      }
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const ids = checkedParts.length ? checkedParts : selectedPart ? [selectedPart] : [];
       if (ids.length) { e.preventDefault(); setDeleteAsk(ids); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [checkedParts, selectedPart, previewing]);
+  }, [checkedParts, selectedPart, editingGroup, previewing, duplicateEntryInApp]);
 
   // Ticks must never outlive their parts (deletes, new project, undo).
   useEffect(() => {

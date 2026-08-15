@@ -70,6 +70,13 @@ const ICO_IMAGE = (
     <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
   </svg>
 );
+// Tick everything: a checked box (the Lucide "check-square" glyph).
+const ICO_SELECT_ALL = (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="9 11 12 14 22 4" />
+    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+  </svg>
+);
 
 type DragSource =
   | { kind: 'entry'; id: string }
@@ -465,6 +472,17 @@ export function PartsPanel(props: {
           onClick={() => imageInputRef.current?.click()}
         >{ICO_IMAGE} Image</button>
         <span className="head-sep" aria-hidden="true" />
+        <button
+          className={`mini icon${checked.size && checked.size === manifest.parts.length ? ' is-active' : ''}`}
+          data-testid="select-all" disabled={!manifest.parts.length}
+          title={checked.size === manifest.parts.length && checked.size
+            ? 'Unselect all parts'
+            : 'Select all parts (Ctrl+A) — then Delete, or Export'}
+          aria-label="Select or unselect all parts"
+          onClick={() => setChecked(checked.size === manifest.parts.length
+            ? new Set()
+            : new Set(manifest.parts.map((p) => p.id)))}
+        >{ICO_SELECT_ALL}</button>
         <button
           className="mini icon" data-testid="show-all" title="Show all parts" aria-label="Show all parts"
           onClick={() => { props.onHideAll(false); props.onSolo(null); }}
