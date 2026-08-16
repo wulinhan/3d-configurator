@@ -2550,9 +2550,13 @@ export class Viewer {
         : (copy.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh | undefined);
       if (mesh) out.push(mesh);
     }
+    // pieces are keyed by MEMBER part id — a clicker row spawns clones of
+    // base AND cap, and selecting the cap must rim only the cap clones
     for (const entry of this.perCharText.values()) {
-      if (entry.part !== partId) continue;
-      for (const piece of entry.pieces) for (const clone of piece.values()) out.push(clone);
+      for (const piece of entry.pieces) {
+        const clone = piece.get(partId);
+        if (clone) out.push(clone);
+      }
     }
     return out;
   }
@@ -2597,11 +2601,14 @@ export class Viewer {
       applyTree(mesh, dim);
       for (const copy of this.repeatCopies.get(id)?.meshes ?? []) applyTree(copy, dim);
     }
-    // per-letter pieces and their glyphs follow their CARRIER part
+    // per-letter piece clones follow the MEMBER part they are copies of;
+    // only the glyphs belong to the run's carrier
     for (const entry of this.perCharText.values()) {
-      const dim = !!active && entry.part !== active;
-      for (const piece of entry.pieces) for (const clone of piece.values()) applyTree(clone, dim);
-      for (const glyph of entry.glyphs) applyTree(glyph, dim);
+      for (const piece of entry.pieces) {
+        for (const [memberId, clone] of piece) applyTree(clone, !!active && memberId !== active);
+      }
+      const dimGlyphs = !!active && entry.part !== active;
+      for (const glyph of entry.glyphs) applyTree(glyph, dimGlyphs);
     }
   }
 
