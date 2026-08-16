@@ -222,8 +222,26 @@ export interface ViewerOptions {
   centreOnOrigin?: boolean;
 }
 
-/** ~1.5% inflation about the part's own centre — the rim's thickness. */
-const _outlineScale = new THREE.Matrix4().makeScale(1.015, 1.015, 1.015);
+/**
+ * The selection rim: the mesh re-rendered back-faces-only with every vertex
+ * pushed HALF A MILLIMETRE along its own normal. The offset is local, which
+ * is the whole point — scaling the mesh about its centre floods hollow
+ * parts with white, because an inflated cavity wall rises past its own lip
+ * and covers the part it is meant to outline.
+ */
+const OUTLINE_MM = 0.5;
+const makeOutlineMat = () => new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  depthWrite: false,
+  uniforms: { thickness: { value: OUTLINE_MM } },
+  vertexShader: `
+    uniform float thickness;
+    void main() {
+      vec3 p = position + normalize(normal) * thickness;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    }`,
+  fragmentShader: 'void main() { gl_FragColor = vec4(1.0); }',
+});
 
 export class Viewer {
   readonly scene = new THREE.Scene();
@@ -298,7 +316,7 @@ export class Viewer {
    * per-letter pieces all get one. */
   private outlinePairs: Array<{ hull: THREE.Mesh; src: THREE.Mesh }> = [];
   private outlineGroup?: THREE.Group;
-  private outlineMat?: THREE.MeshBasicMaterial;
+  private outlineMat?: THREE.ShaderMaterial;
 
   constructor(opts: ViewerOptions) {
     this.manifest = opts.manifest;
@@ -2520,11 +2538,13 @@ export class Viewer {
     }
     const sources = partId ? this.emphasisMeshesOf(partId) : [];
     if (sources.length) {
-      this.outlineMat ??= new THREE.MeshBasicMaterial({
-        color: 0xffffff, side: THREE.BackSide, toneMapped: false,
-      });
+      this.outlineMat ??= makeOutlineMat();
       const group = new THREE.Group();
       for (const src of sources) {
+        // the shader offsets along vertex normals — make sure they exist
+        // (flat-shaded geometry renders fine without them and may not
+        // carry any; adding them changes nothing it draws)
+        if (!src.geometry.getAttribute('normal')) src.geometry.computeVertexNormals();
         const hull = new THREE.Mesh(src.geometry, this.outlineMat);
         hull.matrixAutoUpdate = false;
         hull.raycast = () => {}; // never intercept picking
@@ -2617,10 +2637,13 @@ export class Viewer {
    * source's world matrix every frame. */
   private trackEmphasisOutline(): void {
     for (const { hull, src } of this.outlinePairs) {
-      if (hull.geometry !== src.geometry) hull.geometry = src.geometry;
+      if (hull.geometry !== src.geometry) {
+        if (!src.geometry.getAttribute('normal')) src.geometry.computeVertexNormals();
+        hull.geometry = src.geometry;
+      }
       // a piece whose row shrank may be gone from the scene entirely
       hull.visible = src.visible && !!src.parent;
-      hull.matrix.copy(src.matrixWorld).multiply(_outlineScale);
+      hull.matrix.copy(src.matrixWorld);
     }
   }
 
