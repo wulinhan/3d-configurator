@@ -2442,6 +2442,24 @@ export class Viewer {
     return this.layout.get(partId)?.box ?? null;
   }
 
+  /**
+   * World-space bounds of everything on screen that IS the part — its own
+   * mesh, live repeat copies, per-letter pieces, children included. What
+   * selection framing zooms to: the whole family, centred on its middle,
+   * not just the one piece that was imported.
+   */
+  partFamilyBox(partId: string): Box | null {
+    const sources = this.emphasisMeshesOf(partId);
+    if (!sources.length) return this.partBox(partId);
+    this.scene.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    for (const src of sources) {
+      if (src.visible && src.parent) box.expandByObject(src);
+    }
+    if (box.isEmpty()) return this.partBox(partId);
+    return { min: [box.min.x, box.min.y, box.min.z], max: [box.max.x, box.max.y, box.max.z] };
+  }
+
   /** Glow the part the customer is editing, so the panel and model agree. */
   highlight(partId: string | null): void {
     this.highlighted = partId;

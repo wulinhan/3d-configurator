@@ -296,7 +296,9 @@ export function ViewerPane(props: {
     const bounds = viewer.layoutBounds();
     if (!Number.isFinite(bounds.min[0])) return;
     if (props.selectedPart) {
-      const box = viewer.partBox(props.selectedPart);
+      // frame the whole family — repeats and per-letter pieces included —
+      // centred on its middle, zoomed out far enough to hold all of it
+      const box = viewer.partFamilyBox(props.selectedPart);
       if (box) {
         const centre = [0, 1, 2].map((a) => (box.min[a] + box.max[a]) / 2) as [number, number, number];
         const span = Math.max(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]);
