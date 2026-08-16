@@ -294,7 +294,10 @@ export class Viewer {
   private repeatCopies = new Map<string, { meshes: THREE.Object3D[]; sig: string }>();
   /** Studio selection emphasis: the part everything else dims for. */
   private emphasis: string | null = null;
-  private outlineMesh?: THREE.Mesh;
+  /** Rim hulls and the live meshes they shadow — part, repeat copies, and
+   * per-letter pieces all get one. */
+  private outlinePairs: Array<{ hull: THREE.Mesh; src: THREE.Mesh }> = [];
+  private outlineGroup?: THREE.Group;
   private outlineMat?: THREE.MeshBasicMaterial;
 
   constructor(opts: ViewerOptions) {
@@ -1470,9 +1473,9 @@ export class Viewer {
     // Gradients LAST: engraving may just have swapped a part's geometry, and
     // the vertex colours live on the geometry.
     this.syncGradients(colours);
-    // re-ghost after the repaint — apply() rebuilt shadows and materials
-    // for whatever changed, and the emphasis must survive it
-    this.syncEmphasisMaterials();
+    // re-emphasise after the repaint — apply() may have rebuilt repeat
+    // copies and per-letter pieces, so the ghosts AND the rims re-derive
+    this.setSelectionEmphasis(this.emphasis);
     // A typed word may have grown or shrunk a per-letter run just now — the
     // shadow plane and shadow camera must cover wherever it ends today.
     this.fitShadowCatcher();
@@ -2510,49 +2513,108 @@ export class Viewer {
   setSelectionEmphasis(partId: string | null): void {
     this.emphasis = partId;
     this.syncEmphasisMaterials();
-    if (this.outlineMesh) {
-      this.scene.remove(this.outlineMesh);
-      this.outlineMesh = undefined;
+    if (this.outlineGroup) {
+      this.scene.remove(this.outlineGroup);
+      this.outlineGroup = undefined;
+      this.outlinePairs = [];
     }
-    const target = partId ? this.meshes.get(partId) : undefined;
-    if (target) {
+    const sources = partId ? this.emphasisMeshesOf(partId) : [];
+    if (sources.length) {
       this.outlineMat ??= new THREE.MeshBasicMaterial({
         color: 0xffffff, side: THREE.BackSide, toneMapped: false,
       });
-      const hull = new THREE.Mesh(target.geometry, this.outlineMat);
-      hull.matrixAutoUpdate = false;
-      hull.raycast = () => {}; // never intercept picking
-      this.outlineMesh = hull;
-      this.scene.add(hull);
+      const group = new THREE.Group();
+      for (const src of sources) {
+        const hull = new THREE.Mesh(src.geometry, this.outlineMat);
+        hull.matrixAutoUpdate = false;
+        hull.raycast = () => {}; // never intercept picking
+        group.add(hull);
+        this.outlinePairs.push({ hull, src });
+      }
+      this.outlineGroup = group;
+      this.scene.add(group);
     }
   }
 
+  /** Everything on screen that IS the part: its own mesh, its live repeat
+   * copies, and — when a per-letter run rides it — every piece of the row.
+   * The selection is the row the merchant sees, not just the first piece. */
+  private emphasisMeshesOf(partId: string): THREE.Mesh[] {
+    const out: THREE.Mesh[] = [];
+    const base = this.meshes.get(partId);
+    if (!base) return out;
+    out.push(base);
+    for (const copy of this.repeatCopies.get(partId)?.meshes ?? []) {
+      const mesh = (copy as THREE.Mesh).isMesh
+        ? (copy as THREE.Mesh)
+        : (copy.children.find((c) => (c as THREE.Mesh).isMesh) as THREE.Mesh | undefined);
+      if (mesh) out.push(mesh);
+    }
+    for (const entry of this.perCharText.values()) {
+      if (entry.part !== partId) continue;
+      for (const piece of entry.pieces) for (const clone of piece.values()) out.push(clone);
+    }
+    return out;
+  }
+
   /** Ghost the unselected: see-through at their own colour, one stable
-   * front surface each. Everything restores on deselect. */
+   * front surface each. Everything restores on deselect. This walks each
+   * part's whole subtree, so extruded text, engraved floors and image
+   * zones — which carry their OWN materials — fade with their carrier
+   * instead of floating at full strength over a ghost. */
   private syncEmphasisMaterials(): void {
     const active = this.emphasis && this.meshes.get(this.emphasis) ? this.emphasis : null;
-    for (const [id, material] of this.materials) {
-      const dim = !!active && id !== active;
+    const done = new Set<THREE.Material>();
+    const apply = (material: THREE.Material, dim: boolean) => {
+      if (done.has(material)) return;
+      done.add(material);
+      const store = material.userData as { trueSide?: THREE.Side };
       if (material.transparent !== dim) {
         material.transparent = dim;
         material.needsUpdate = true; // the transparency switch recompiles
       }
       material.opacity = dim ? 0.55 : 1;
       // FrontSide while ghosted: no back faces to bleed through the front;
-      // DoubleSide again when solid (stray winding must not read as holes).
-      material.side = dim ? THREE.FrontSide : THREE.DoubleSide;
+      // the material's own side again when solid (text and floors are not
+      // all double-sided, so remember rather than assume).
+      if (dim) {
+        store.trueSide ??= material.side;
+        material.side = THREE.FrontSide;
+      } else if (store.trueSide !== undefined) {
+        material.side = store.trueSide;
+        delete store.trueSide;
+      }
+    };
+    const applyTree = (root: THREE.Object3D, dim: boolean) => {
+      root.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        if (!m) return;
+        for (const mat of Array.isArray(m) ? m : [m]) apply(mat, dim);
+      });
+    };
+    for (const [id, mesh] of this.meshes) {
+      const dim = !!active && id !== active;
+      applyTree(mesh, dim);
+      for (const copy of this.repeatCopies.get(id)?.meshes ?? []) applyTree(copy, dim);
+    }
+    // per-letter pieces and their glyphs follow their CARRIER part
+    for (const entry of this.perCharText.values()) {
+      const dim = !!active && entry.part !== active;
+      for (const piece of entry.pieces) for (const clone of piece.values()) applyTree(clone, dim);
+      for (const glyph of entry.glyphs) applyTree(glyph, dim);
     }
   }
 
-  /** The rim follows its part live — gizmo drags, layout moves, geometry
-   * swaps (engraving) — by copying the mesh's world matrix every frame. */
+  /** The rims follow their meshes live — gizmo drags, layout moves,
+   * geometry swaps (engraving), a run re-spelling itself — by copying each
+   * source's world matrix every frame. */
   private trackEmphasisOutline(): void {
-    const hull = this.outlineMesh;
-    const mesh = this.emphasis ? this.meshes.get(this.emphasis) : undefined;
-    if (!hull || !mesh) return;
-    if (hull.geometry !== mesh.geometry) hull.geometry = mesh.geometry;
-    hull.visible = mesh.visible;
-    hull.matrix.copy(mesh.matrixWorld).multiply(_outlineScale);
+    for (const { hull, src } of this.outlinePairs) {
+      if (hull.geometry !== src.geometry) hull.geometry = src.geometry;
+      // a piece whose row shrank may be gone from the scene entirely
+      hull.visible = src.visible && !!src.parent;
+      hull.matrix.copy(src.matrixWorld).multiply(_outlineScale);
+    }
   }
 
   /** Ease each centred per-letter run toward its target shift (see
