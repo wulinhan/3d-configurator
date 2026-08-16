@@ -2105,7 +2105,9 @@ export class Viewer {
           if (!src) continue;
           const copy = new THREE.Mesh(src.geometry, src.material);
           copy.castShadow = copy.receiveShadow = true;
-          copy.raycast = () => {};
+          // a piece IS its member part: clicking any letter's base or cap
+          // selects that part, exactly like clicking the original
+          copy.userData.part = memberId;
           copy.name = memberId === option.part
             ? `percopy-${option.id}-${k}`
             : `percopy-${option.id}-${k}-${memberId}`;
@@ -2479,8 +2481,27 @@ export class Viewer {
       const r = canvas.getBoundingClientRect();
       pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
       raycaster.setFromCamera(pointer, this.camera);
-      const hits = raycaster.intersectObjects([...this.meshes.values()].filter((m) => m.visible));
-      return hits.length ? (hits[0].object.userData.part as string) : null;
+      // every mesh that IS a part: the originals, their repeat copies, and
+      // per-letter pieces — all carry userData.part, resolved through the
+      // parent chain so a hit on a child (a glyph, a zone) still names the
+      // part that owns it
+      const targets: THREE.Object3D[] = [...this.meshes.values()].filter((m) => m.visible);
+      for (const entry of this.repeatCopies.values()) {
+        for (const copy of entry.meshes) if (copy.visible) targets.push(copy);
+      }
+      for (const entry of this.perCharText.values()) {
+        for (const piece of entry.pieces) {
+          for (const clone of piece.values()) if (clone.visible && clone.parent) targets.push(clone);
+        }
+      }
+      const hits = raycaster.intersectObjects(targets);
+      for (const hit of hits) {
+        for (let o: THREE.Object3D | null = hit.object; o; o = o.parent) {
+          const part = o.userData.part as string | undefined;
+          if (part) return part;
+        }
+      }
+      return null;
     };
 
     canvas.addEventListener('pointerdown', (e) => {
