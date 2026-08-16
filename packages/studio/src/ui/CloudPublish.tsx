@@ -44,6 +44,7 @@ export function CloudPublish(props: {
   flush: () => Promise<void>;
   onChange: (m: Manifest) => void;
   embedBase: string;
+  onPublished?: () => void;
 }) {
   const { project, projectId, flush, onChange, embedBase } = props;
   const { manifest, model } = project;
@@ -89,6 +90,7 @@ export function CloudPublish(props: {
       const raw = writeGlb(model.parts.filter((p) => used.has(p.name)));
       const packed = await compressGlb(raw);
       const out = await api.publish(projectId, packed);
+      props.onPublished?.();
       setNote(`Version ${out.publication.version} is live. Model: ${kb(packed.length)} compressed, from ${kb(raw.length)} raw.`);
       await reload();
     } catch (err) {

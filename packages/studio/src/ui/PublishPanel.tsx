@@ -15,7 +15,7 @@ import type { Project } from '../App.tsx';
 
 const kb = (n: number) => `${(n / 1024).toFixed(0)} KB`;
 
-export function PublishPanel(props: { project: Project; onChange: (m: Manifest) => void }) {
+export function PublishPanel(props: { project: Project; onChange: (m: Manifest) => void; onPublished?: () => void }) {
   const { manifest, model } = props.project;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -95,6 +95,7 @@ export function PublishPanel(props: { project: Project; onChange: (m: Manifest) 
               const packed = await compressGlb(raw);
               download('model.glb', new Blob([packed as BlobPart], { type: 'model/gltf-binary' }));
               setSizeNote(`model.glb: ${kb(packed.length)} compressed, from ${kb(raw.length)} raw.`);
+              props.onPublished?.(); // the files exist — the product can go live
             } catch (err) {
               setError(`compression failed: ${err instanceof Error ? err.message : err}`);
             } finally {

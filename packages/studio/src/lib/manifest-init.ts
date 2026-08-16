@@ -50,7 +50,7 @@ export function boundsByPartId(manifest: Manifest, byName: Map<string, PartBound
 
 // A working palette so the first render isn't a wall of grey. Merchants
 // replace these; they're the same finishes the demo product uses.
-const STARTER_SWATCHES = [
+export const STARTER_SWATCHES = [
   { id: 'white', name: 'White', hex: '#FEFEFE' },
   { id: 'black', name: 'Black', hex: '#1A1A1A' },
   { id: 'grey', name: 'Grey', hex: '#9E9E9E' },

@@ -161,6 +161,54 @@ input, select { font: inherit; }
 }
 .tabs button.is-active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
 .panel-body { padding: 14px 16px 32px; display: flex; flex-direction: column; gap: 14px; }
+
+/* journey numbers on the tabs — a tick once that step is met */
+.tabs button { display: inline-flex; align-items: center; gap: 6px; }
+.tab-num {
+  width: 16px; height: 16px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1.5px solid var(--line);
+  font-family: var(--mono, monospace); font-size: 9.5px; font-weight: 700;
+  color: var(--ink2); background: #fff;
+}
+.tab-num.is-done { background: #E0F0E3; border-color: #A6D3AE; color: #1F6B2E; }
+
+/* the header's one-answer button: what to do next */
+.next-cta { border-color: var(--accent); font-weight: 600; }
+
+/* ── setup guide, docked at the explorer's foot ── */
+.setup-guide {
+  margin-top: auto; /* stays at the bottom whatever the panel holds */
+  border-top: 1.5px solid var(--line);
+  background: var(--surface);
+  flex: none;
+}
+.setup-guide-head {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border: none; background: none; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 700; color: var(--ink);
+}
+.setup-guide.is-done .setup-guide-head { color: #1F6B2E; }
+.setup-guide-count {
+  font-family: var(--mono, monospace); font-size: 10.5px; font-weight: 700;
+  color: var(--ink2);
+}
+.setup-guide-steps { list-style: none; margin: 0; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 2px; }
+.setup-step {
+  width: 100%; display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px; border: none; border-radius: 8px; background: none;
+  font: inherit; font-size: 12.5px; color: var(--ink); cursor: pointer; text-align: left;
+}
+.setup-step:hover { background: #fff; }
+.setup-step.is-done { color: var(--ink2); }
+.setup-step-tick {
+  width: 18px; height: 18px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1.5px solid var(--line);
+  font-family: var(--mono, monospace); font-size: 10px; font-weight: 700;
+  color: var(--ink2); background: #fff;
+}
+.setup-step.is-done .setup-step-tick { background: #E0F0E3; border-color: #A6D3AE; color: #1F6B2E; }
 .hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink2); }
 .empty { color: var(--ink2); font-size: 13px; padding: 16px; }
 

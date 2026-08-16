@@ -32,6 +32,8 @@ import { FinishPanel } from './ui/FinishPanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
 import { CloudPublish } from './ui/CloudPublish.tsx';
 import { PreviewOverlay } from './ui/PreviewOverlay.tsx';
+import { SetupGuide } from './ui/SetupGuide.tsx';
+import { setupSteps, nextStep, type GuideProgress, type SetupStep } from './lib/setup-guide.ts';
 import { ExportDialog } from './ui/ExportDialog.tsx';
 import { ConfirmDialog } from './ui/controls.tsx';
 import { SignIn } from './ui/SignIn.tsx';
@@ -164,6 +166,11 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   const [checkedParts, setCheckedParts] = useState<string[]>([]);
   /** Part ids the Delete key is asking about — pressing it again confirms. */
   const [deleteAsk, setDeleteAsk] = useState<string[] | null>(null);
+  /** Steps the manifest can't see (previewed, published), per project. */
+  const [guideProgress, setGuideProgress] = useState<GuideProgress>({});
+  const [guideCollapsed, setGuideCollapsed] = useState(() => {
+    try { return localStorage.getItem('studio.guide.collapsed') === '1'; } catch { return false; }
+  });
   const [publishing, setPublishing] = useState(false);
   // Armed "click a face to place …" tool: what lands there and on which part.
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
@@ -728,6 +735,38 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     };
   }, [project?.manifest, checkedParts]);
 
+  // The setup journey — detected from the manifest, in the customer's
+  // order; the two flags it can't detect are remembered per project.
+  const guideKey = `studio.guide.${cloudProjectId ?? project?.manifest.id ?? 'local'}`;
+  useEffect(() => {
+    try { setGuideProgress(JSON.parse(localStorage.getItem(guideKey) ?? '{}')); }
+    catch { setGuideProgress({}); }
+  }, [guideKey]);
+  const markGuide = useCallback((flag: keyof GuideProgress) => {
+    setGuideProgress((old) => {
+      if (old[flag]) return old;
+      const next = { ...old, [flag]: true };
+      try { localStorage.setItem(guideKey, JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
+  }, [guideKey]);
+  const guide = useMemo(
+    () => (project ? setupSteps(project.manifest, guideProgress) : []),
+    [project?.manifest, guideProgress],
+  );
+  const guideNext = nextStep(guide);
+  const toggleGuide = useCallback(() => {
+    setGuideCollapsed((c) => {
+      try { localStorage.setItem('studio.guide.collapsed', c ? '0' : '1'); } catch { /* private mode */ }
+      return !c;
+    });
+  }, []);
+  const goToStep = useCallback((step: SetupStep) => {
+    if (step.id === 'preview') { setPreviewing(true); markGuide('previewed'); return; }
+    if (step.id === 'publish') { setPublishing(true); return; }
+    if (step.tab) setTab(step.tab);
+  }, [markGuide]);
+
   // The floating properties panel: slides in when something is selected,
   // slides out (keeping its last content while it goes) when nothing is.
   const floatContent = project && tab === 'Parts'
@@ -809,6 +848,14 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
             New project
           </button>
         )}
+        {guideNext && (
+          <button
+            className="ghost next-cta" data-testid="next-step" title={guideNext.hint}
+            onClick={() => goToStep(guideNext)}
+          >
+            Next: {guideNext.label}
+          </button>
+        )}
         <button
           className="ghost preview-btn" data-testid="export-open" disabled={!exportTarget}
           title={exportTarget ? `Export ${exportTarget.label}` : 'Tick the ☐ boxes on the parts to export'}
@@ -824,11 +871,17 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
       <div className="workspace">
         <aside className="panel" style={{ width: panelOpen ? panelWidth : 0 }} aria-hidden={!panelOpen}>
           <nav className="tabs" role="tablist">
-            {TABS.map((t) => (
-              <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'is-active' : ''} onClick={() => setTab(t)}>
-                {t}
-              </button>
-            ))}
+            {TABS.map((t, i) => {
+              // tabs wear the journey's numbers; a tick once their step is met
+              const stepId = t === 'Parts' ? 'parts' : t === 'Palette' ? 'colours' : null;
+              const done = !!stepId && guide.some((s) => s.id === stepId && s.done);
+              return (
+                <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'is-active' : ''} onClick={() => setTab(t)}>
+                  <span className={`tab-num${done ? ' is-done' : ''}`} aria-hidden="true">{done ? '✓' : i + 1}</span>
+                  {t}
+                </button>
+              );
+            })}
           </nav>
           {tab === 'Parts' && (
             <PartsPanel
@@ -855,6 +908,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
           )}
           {tab === 'Palette' && <PalettePanel project={project} onChange={setManifest} />}
           {tab === 'Finish' && <FinishPanel project={project} onChange={setManifest} />}
+          {guide.length > 0 && (
+            <SetupGuide steps={guide} collapsed={guideCollapsed} onToggle={toggleGuide} onGo={goToStep} />
+          )}
         </aside>
 
         <div
@@ -913,7 +969,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
               <h3>Publish</h3>
               <button
                 className="ghost" data-testid="preview-open"
-                onClick={() => { setPublishing(false); setPreviewing(true); }}
+                onClick={() => { setPublishing(false); setPreviewing(true); markGuide('previewed'); }}
               >Preview</button>
               <button className="ghost" data-testid="publish-close" onClick={() => setPublishing(false)}>Close</button>
             </div>
@@ -922,9 +978,10 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
                 <CloudPublish
                   project={project} projectId={cloudProjectId} flush={flushSave}
                   onChange={setManifest} embedBase={apiBase()}
+                  onPublished={() => markGuide('published')}
                 />
               )
-              : <PublishPanel project={project} onChange={setManifest} />}
+              : <PublishPanel project={project} onChange={setManifest} onPublished={() => markGuide('published')} />}
           </div>
         </div>
       )}
