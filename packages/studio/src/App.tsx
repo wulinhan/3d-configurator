@@ -18,7 +18,8 @@ import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
 import type { ImportedPart } from './lib/types.ts';
 import { writeGlb } from './lib/write-glb.ts';
-import { chamferPart, type ChamferOpts } from './lib/chamfer.ts';
+import { chamferEdges, type EdgeOpts } from './lib/chamfer.ts';
+import { featureEdges, type EdgeChain } from './lib/edges.ts';
 import {
   boundsOf, boundsByPartId, mergeModel, emptyManifest, slug, EMPTY_BOUNDS, type PartBounds,
 } from './lib/manifest-init.ts';
@@ -316,6 +317,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     futureRef.current = [];
     edgeOriginalsRef.current.clear();
     setEdgeEdited(new Set());
+    previewSeqRef.current++;
+    setEdgeMode(null);
+    setEdgePreview(null);
     setSelectedPart(null);
     setEditingGroup(null);
     setEditingVariant(null);
@@ -449,51 +453,146 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   }, []);
 
   // Edge treatments (Edges section in the part editor) are GEOMETRY edits,
-  // which the manifest-only history cannot undo — so the pre-treatment mesh
-  // is stashed per part and the editor offers "Restore" instead. Re-applying
-  // always recomputes from that original, so tweaking the size never
-  // compounds one bevel on top of another.
+  // which the manifest-only history cannot undo — so the FIRST treatment
+  // stashes the untouched mesh per part and the editor offers "Restore".
+  // Treatments stack (chamfer one edge, then another) exactly like Fusion;
+  // Restore rewinds the lot.
   const edgeOriginalsRef = useRef<Map<string, ImportedPart>>(new Map());
   const [edgeEdited, setEdgeEdited] = useState<Set<string>>(new Set());
 
-  const chamferPartInApp = useCallback(async (partId: string, opts: ChamferOpts) => {
-    const before = projectRef.current;
-    const partDef = before.manifest.parts.find((p) => p.id === partId);
-    if (!partDef) return;
+  // The Fusion-style picker: which part is in edge-select mode, its detected
+  // sharp-edge chains, and the chains clicked so far.
+  const [edgeMode, setEdgeMode] = useState<{ partId: string; chains: EdgeChain[]; selected: string[] } | null>(null);
+  /** Live, uncommitted chamfer preview shown by the viewer. */
+  const [edgePreview, setEdgePreview] = useState<{ partId: string; positions: Float32Array; indices: Uint32Array } | null>(null);
+  /** Guards stale async previews: only the latest request may land. */
+  const previewSeqRef = useRef(0);
+
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4500);
+  }, []);
+
+  const meshOfPart = useCallback((partId: string): { meshName: string; sourceId: string; mesh: ImportedPart } | null => {
+    const project = projectRef.current;
+    const partDef = project.manifest.parts.find((p) => p.id === partId);
+    if (!partDef) return null;
     const [sourceId, meshName] = partDef.mesh.split('#');
-    const current = before.model.parts.find((m) => m.name === meshName);
-    if (!current) throw new Error('No geometry for this part.');
-    const base = edgeOriginalsRef.current.get(partId) ?? current;
-    const treated = await chamferPart(base, opts); // may throw ChamferError — the section shows it
+    const mesh = project.model.parts.find((m) => m.name === meshName);
+    return mesh ? { meshName, sourceId, mesh } : null;
+  }, []);
+
+  const startEdgeMode = useCallback((partId: string) => {
+    const found = meshOfPart(partId);
+    if (!found) return;
+    const chains = featureEdges(found.mesh.positions, found.mesh.indices);
+    if (!chains.length) {
+      showToast('No sharp edges found on this part — smooth shapes have nothing to chamfer.');
+      return;
+    }
+    setEdgeMode({ partId, chains, selected: [] });
+  }, [meshOfPart, showToast]);
+
+  const endEdgeMode = useCallback(() => {
+    previewSeqRef.current++;
+    setEdgeMode(null);
+    setEdgePreview(null);
+  }, []);
+
+  const toggleEdge = useCallback((chainId: string) => {
+    setEdgeMode((mode) => {
+      if (!mode) return mode;
+      const selected = mode.selected.includes(chainId)
+        ? mode.selected.filter((id) => id !== chainId)
+        : [...mode.selected, chainId];
+      return { ...mode, selected };
+    });
+  }, []);
+
+  const clearEdgeSelection = useCallback(() => {
+    previewSeqRef.current++;
+    setEdgePreview(null);
+    setEdgeMode((mode) => (mode ? { ...mode, selected: [] } : mode));
+  }, []);
+
+  // The live preview: recompute on every knob change, debounced by the
+  // caller (PartEditor). A failure clears the preview and says why.
+  const previewEdgesInApp = useCallback(async (partId: string, opts: EdgeOpts | null) => {
+    const seq = ++previewSeqRef.current;
+    const mode = edgeModeRef.current;
+    if (!opts || !mode || mode.partId !== partId || !mode.selected.length) {
+      setEdgePreview(null);
+      return;
+    }
+    const found = meshOfPart(partId);
+    if (!found) return;
+    try {
+      const treated = await chamferEdges(found.mesh, mode.chains, mode.selected, opts);
+      if (previewSeqRef.current !== seq) return; // a newer request superseded this one
+      setEdgePreview({ partId, positions: treated.positions, indices: treated.indices });
+    } catch (err) {
+      if (previewSeqRef.current !== seq) return;
+      setEdgePreview(null);
+      showToast(err instanceof Error ? err.message : String(err));
+    }
+  }, [meshOfPart, showToast]);
+
+  // Commit the treatment: same as the preview, then swap the mesh into the
+  // model for real. Duplicates sharing this mesh get their own copy under a
+  // fresh name so only THIS part's edges change.
+  const chamferPartInApp = useCallback(async (partId: string, opts: EdgeOpts) => {
+    try {
+      await commitChamfer(partId, opts);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  }, [showToast]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commitChamfer = useCallback(async (partId: string, opts: EdgeOpts) => {
+    const mode = edgeModeRef.current;
+    if (!mode || mode.partId !== partId || !mode.selected.length) {
+      throw new Error('Select at least one edge first.');
+    }
+    const before = meshOfPart(partId);
+    if (!before) throw new Error('No geometry for this part.');
+    const treated = await chamferEdges(before.mesh, mode.chains, mode.selected, opts);
     // The await yielded; re-read the project so an edit that landed
     // meanwhile is built on, not clobbered.
     const old = projectRef.current;
-    if (!old.manifest.parts.some((p) => p.id === partId)) return; // deleted while computing
+    if (!old.manifest.parts.some((p) => p.id === partId)) return;
     let manifest = old.manifest;
-    let name = meshName;
-    const shared = old.manifest.parts.some((p) => p.id !== partId && p.mesh.split('#')[1] === meshName);
+    let name = before.meshName;
+    const shared = old.manifest.parts.some((p) => p.id !== partId && p.mesh.split('#')[1] === before.meshName);
     if (shared) {
-      // Duplicates share one mesh; only THIS part's edges change, so it
-      // gets its own copy of the geometry under a fresh name.
-      name = `${meshName}-edges`;
-      for (let k = 2; old.model.parts.some((m) => m.name === name); k++) name = `${meshName}-edges-${k}`;
+      name = `${before.meshName}-edges`;
+      for (let k = 2; old.model.parts.some((m) => m.name === name); k++) name = `${before.meshName}-edges-${k}`;
       manifest = structuredClone(old.manifest);
-      manifest.parts.find((p) => p.id === partId)!.mesh = `${sourceId}#${name}`;
+      manifest.parts.find((p) => p.id === partId)!.mesh = `${before.sourceId}#${name}`;
       pastRef.current.push(old.manifest);
       if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
       futureRef.current = [];
     }
-    if (!edgeOriginalsRef.current.has(partId)) edgeOriginalsRef.current.set(partId, base);
+    if (!edgeOriginalsRef.current.has(partId)) edgeOriginalsRef.current.set(partId, before.mesh);
     setEdgeEdited((s) => new Set(s).add(partId));
     const replaced = { name, positions: treated.positions, indices: treated.indices };
     const parts = shared
       ? [...old.model.parts, replaced]
-      : old.model.parts.map((m) => (m.name === meshName ? replaced : m));
+      : old.model.parts.map((m) => (m.name === before.meshName ? replaced : m));
     const raw = boundsByPartId(manifest, boundsOf(parts));
     URL.revokeObjectURL(old.modelUrl);
     const modelUrl = URL.createObjectURL(new Blob([writeGlb(parts)], { type: 'model/gltf-binary' }));
+    // The mesh just changed under the picker: drop the preview and re-detect
+    // chains on the new geometry (the treated edges are new edges now).
+    previewSeqRef.current++;
+    setEdgePreview(null);
     setProject({ ...old, model: { ...old.model, parts }, manifest, raw, modelUrl });
-  }, []);
+    const chains = featureEdges(treated.positions, treated.indices);
+    setEdgeMode(chains.length ? { partId, chains, selected: [] } : null);
+  }, [meshOfPart]);
 
   const restoreEdgesInApp = useCallback((partId: string) => {
     const old = projectRef.current;
@@ -508,8 +607,23 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     const raw = boundsByPartId(old.manifest, boundsOf(parts));
     URL.revokeObjectURL(old.modelUrl);
     const modelUrl = URL.createObjectURL(new Blob([writeGlb(parts)], { type: 'model/gltf-binary' }));
+    previewSeqRef.current++;
+    setEdgePreview(null);
     setProject({ ...old, model: { ...old.model, parts }, raw, modelUrl });
+    const chains = featureEdges(original.positions, original.indices);
+    setEdgeMode((mode) => (mode?.partId === partId
+      ? (chains.length ? { partId, chains, selected: [] } : null) : mode));
   }, []);
+
+  // Handlers above read the mode through a ref so their identities stay
+  // stable while selection changes re-render.
+  const edgeModeRef = useRef(edgeMode);
+  edgeModeRef.current = edgeMode;
+
+  // Leaving the part (or losing it) leaves the tool.
+  useEffect(() => {
+    if (edgeMode && selectedPart !== edgeMode.partId) endEdgeMode();
+  }, [selectedPart, edgeMode, endEdgeMode]);
 
   // Add a model file to the project: parts renamed clear of clashes, manifest
   // extended, one GLB rebuilt from the union. The incoming file is normalised
@@ -760,8 +874,12 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
       undo,
       redo,
       historyDepth: () => ({ past: pastRef.current.length, future: futureRef.current.length }),
+      // the browser test drives the edge picker through these — clicking
+      // 1-px overlay lines with a synthetic pointer is not a fair test
+      edgeMode: () => edgeModeRef.current,
+      toggleEdge,
     } : null;
-  }, [project, setManifest, undo, redo]);
+  }, [project, setManifest, undo, redo, toggleEdge]);
 
   // The set an open editor is working on — ViewerPane parks a translate
   // gizmo at its centre of mass so the whole thing moves as one.
@@ -850,6 +968,11 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
               onChamfer={chamferPartInApp}
               onRestoreEdges={restoreEdgesInApp}
               edgesEdited={edgeEdited.has(selectedPart)}
+              edgeMode={edgeMode?.partId === selectedPart ? edgeMode : null}
+              onEdgeModeStart={startEdgeMode}
+              onEdgeModeEnd={endEdgeMode}
+              onEdgeClear={clearEdgeSelection}
+              onPreviewEdges={previewEdgesInApp}
             />
           : null)
     : null;
@@ -1006,7 +1129,15 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
             onShapeTextDone={() => setShapingText(null)}
             onSelectPart={(id) => { selectPart(id); if (id) setTab('Parts'); }}
             onChange={setManifest}
+            edgeMode={edgeMode && tab === 'Parts' ? {
+              partId: edgeMode.partId,
+              chains: edgeMode.chains.map((c) => ({ id: c.id, points: c.displayPoints })),
+              selected: edgeMode.selected,
+            } : null}
+            onEdgeToggle={toggleEdge}
+            previewGeometry={edgePreview}
           />
+          {toast && <div className="toast" role="status" data-testid="studio-toast">{toast}</div>}
           <div className={`props-float${floatContent ? ' is-open' : ''}`} data-testid="props-float" aria-hidden={!floatContent}>
             {floatContent ?? lastFloatRef.current}
           </div>

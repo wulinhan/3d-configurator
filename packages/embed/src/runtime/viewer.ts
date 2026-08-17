@@ -345,6 +345,19 @@ export class Viewer {
   private rawBoxes = new Map<string, Box>();
   /** Each part's untransformed centre — the pivot every transform is about. */
   private centres = new Map<string, [number, number, number]>();
+  /** Edge-pick mode (the Studio's chamfer tool): overlay lines per sharp
+   * edge chain, hover + click routed to the host. */
+  private edgePick: {
+    partId: string;
+    group: THREE.Group;
+    lines: Map<string, THREE.Line>;
+    hover: string | null;
+    selected: Set<string>;
+    onToggle: (chainId: string) => void;
+  } | null = null;
+  /** Non-committal geometry previews (live chamfer): part id -> what to
+   * put back when the preview clears. */
+  private geometryPreviews = new Map<string, { original: THREE.BufferGeometry; preview: THREE.BufferGeometry }>();
   private layout: ReturnType<typeof resolveLayout> = new Map();
   /** partId → the live repeat copies riding alongside its own mesh, and the
    * signature (pattern + geometry + children) they were built from. */
@@ -1499,6 +1512,124 @@ export class Viewer {
     return out;
   }
 
+  // ── Edge-pick mode + live geometry preview (Studio's chamfer tool) ──────
+
+  private static readonly EDGE_BASE = 0x3a6fd4;
+  private static readonly EDGE_HOVER = 0x9fc0ff;
+  private static readonly EDGE_SELECTED = 0xff9f2a;
+
+  /**
+   * Show pickable edge lines on a part. `chains` carry polylines in RAW
+   * mesh space (the geometry file's own coordinates); they are shifted into
+   * the part's centred local space here and ride as children, so layout,
+   * gizmo drags and scaling move them with the part. Hover and click are
+   * handled by the viewer; each click reports the chain to `onToggle`.
+   */
+  setEdgePickMode(
+    partId: string,
+    chains: Array<{ id: string; points: Float32Array }>,
+    onToggle: (chainId: string) => void,
+  ): void {
+    this.clearEdgePickMode();
+    const mesh = this.meshes.get(partId);
+    if (!mesh) return;
+    const centre = this.centres.get(partId) ?? [0, 0, 0];
+    const group = new THREE.Group();
+    group.name = 'edge-pick';
+    const lines = new Map<string, THREE.Line>();
+    for (const chain of chains) {
+      const local = new Float32Array(chain.points.length);
+      for (let i = 0; i < chain.points.length; i += 3) {
+        local[i] = chain.points[i] - centre[0];
+        local[i + 1] = chain.points[i + 1] - centre[1];
+        local[i + 2] = chain.points[i + 2] - centre[2];
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(local, 3));
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: Viewer.EDGE_BASE }));
+      line.userData.chain = chain.id;
+      line.renderOrder = 3;
+      group.add(line);
+      lines.set(chain.id, line);
+    }
+    mesh.add(group);
+    this.edgePick = { partId, group, lines, hover: null, selected: new Set(), onToggle };
+  }
+
+  clearEdgePickMode(): void {
+    const ep = this.edgePick;
+    if (!ep) return;
+    ep.group.parent?.remove(ep.group);
+    for (const line of ep.lines.values()) {
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    }
+    this.edgePick = null;
+  }
+
+  /** Recolour the overlay for a new selection (hover stays viewer-owned). */
+  setEdgeSelection(chainIds: string[]): void {
+    const ep = this.edgePick;
+    if (!ep) return;
+    ep.selected = new Set(chainIds);
+    this.paintEdgeLines();
+  }
+
+  private paintEdgeLines(): void {
+    const ep = this.edgePick;
+    if (!ep) return;
+    for (const [id, line] of ep.lines) {
+      const m = line.material as THREE.LineBasicMaterial;
+      m.color.set(ep.selected.has(id) ? Viewer.EDGE_SELECTED
+        : id === ep.hover ? Viewer.EDGE_HOVER : Viewer.EDGE_BASE);
+    }
+  }
+
+  /**
+   * Swap a part's rendered geometry without committing anything — the live
+   * chamfer preview. Positions arrive in RAW mesh space; the part's stored
+   * centring shift is applied so it lands exactly where the real mesh sits.
+   * Pass null to put the original geometry back.
+   */
+  previewPartGeometry(partId: string, positions: Float32Array | null, indices?: Uint32Array): void {
+    const mesh = this.meshes.get(partId) as THREE.Mesh | undefined;
+    if (!mesh?.isMesh) return;
+    const existing = this.geometryPreviews.get(partId);
+    if (!positions || !indices) {
+      if (existing) {
+        mesh.geometry = existing.original;
+        existing.preview.dispose();
+        this.geometryPreviews.delete(partId);
+      }
+      return;
+    }
+    const centre = this.centres.get(partId) ?? [0, 0, 0];
+    // De-indexed like every part mesh (the renderer flat-shades), centred
+    // like load() left it, so the mesh's transform stays honest.
+    const out = new Float32Array(indices.length * 3);
+    for (let i = 0; i < indices.length; i++) {
+      const s = indices[i] * 3;
+      out[i * 3] = positions[s] - centre[0];
+      out[i * 3 + 1] = positions[s + 1] - centre[1];
+      out[i * 3 + 2] = positions[s + 2] - centre[2];
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(out, 3));
+    geo.computeVertexNormals();
+    applyBoxUvs(geo);
+    geo.computeBoundingBox();
+    geo.computeBoundingSphere();
+    if (existing) {
+      const old = existing.preview;
+      existing.preview = geo;
+      mesh.geometry = geo;
+      old.dispose();
+    } else {
+      this.geometryPreviews.set(partId, { original: mesh.geometry as THREE.BufferGeometry, preview: geo });
+      mesh.geometry = geo;
+    }
+  }
+
   /** Let a gizmo pause orbiting while it owns the pointer. */
   setOrbitEnabled(enabled: boolean): void {
     this.controls.enabled = enabled;
@@ -2516,6 +2647,20 @@ export class Viewer {
     const pointer = new THREE.Vector2();
     let down = { x: 0, y: 0 };
 
+    // Edge-pick mode: rays test the overlay LINES, with a forgiving grab
+    // distance, and hits name a chain instead of a part.
+    const pickEdge = (e: PointerEvent): string | null => {
+      const ep = this.edgePick;
+      if (!ep) return null;
+      const r = canvas.getBoundingClientRect();
+      pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      raycaster.setFromCamera(pointer, this.camera);
+      raycaster.params.Line.threshold = 1.4;
+      const hits = raycaster.intersectObjects([...ep.lines.values()], false);
+      raycaster.params.Line.threshold = 1;
+      return (hits[0]?.object.userData.chain as string | undefined) ?? null;
+    };
+
     const pick = (e: PointerEvent) => {
       const r = canvas.getBoundingClientRect();
       pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -2553,6 +2698,13 @@ export class Viewer {
       if (e.button !== 0) return;
       // An orbit drag that happens to end on the model isn't a click.
       if (Math.abs(e.clientX - down.x) > 4 || Math.abs(e.clientY - down.y) > 4) return;
+      // Edge-pick mode owns the click: an edge toggles, empty space does
+      // nothing — a stray miss must not drop the part selection mid-tool.
+      if (this.edgePick) {
+        const chain = pickEdge(e);
+        if (chain) this.edgePick.onToggle(chain);
+        return;
+      }
       // null on empty space: hosts that care (the Studio) deselect; the embed
       // panel ignores it.
       this.onSelectPart?.(pick(e));
@@ -2569,6 +2721,15 @@ export class Viewer {
       const now = performance.now();
       if (now - lastCursor < 70) return;
       lastCursor = now;
+      if (this.edgePick) {
+        const chain = pickEdge(e);
+        if (chain !== this.edgePick.hover) {
+          this.edgePick.hover = chain;
+          this.paintEdgeLines();
+        }
+        canvas.style.cursor = chain ? 'pointer' : 'crosshair';
+        return;
+      }
       canvas.style.cursor = pick(e) ? 'pointer' : 'grab';
     });
   }

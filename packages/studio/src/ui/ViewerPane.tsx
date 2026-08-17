@@ -53,6 +53,12 @@ export function ViewerPane(props: {
   onShapeTextDone: () => void;
   onSelectPart: (id: string | null) => void;
   onChange: (m: Manifest, opts?: SetManifestOptions) => void;
+  /** Edge-pick mode (the chamfer tool): overlay this part's sharp edges as
+   * clickable lines; clicks report the chain id back up. */
+  edgeMode: { partId: string; chains: Array<{ id: string; points: Float32Array }>; selected: string[] } | null;
+  onEdgeToggle: (chainId: string) => void;
+  /** Live, uncommitted geometry for a part — the chamfer preview. */
+  previewGeometry: { partId: string; positions: Float32Array; indices: Uint32Array } | null;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -283,6 +289,34 @@ export function ViewerPane(props: {
   useEffect(() => {
     viewerRef.current?.setHiddenParts(props.hiddenParts);
   }, [props.hiddenParts, props.project.manifest]);
+
+  // Edge-pick overlay: lines follow the mode's part; clicks bubble up as
+  // chain toggles. Selection recolours in place. The callback rides a ref
+  // so re-renders don't rebuild the overlay.
+  const edgeToggleRef = useRef(props.onEdgeToggle);
+  edgeToggleRef.current = props.onEdgeToggle;
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (props.edgeMode) {
+      viewer.setEdgePickMode(props.edgeMode.partId, props.edgeMode.chains, (id) => edgeToggleRef.current(id));
+      viewer.setEdgeSelection(props.edgeMode.selected);
+    }
+    return () => viewer.clearEdgePickMode();
+  }, [props.edgeMode?.partId, props.edgeMode?.chains, props.project.modelUrl]);
+  useEffect(() => {
+    if (props.edgeMode) viewerRef.current?.setEdgeSelection(props.edgeMode.selected);
+  }, [props.edgeMode?.selected]);
+
+  // The chamfer preview: swap the part's rendered geometry without touching
+  // the project; clearing (null) puts the real mesh back.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const p = props.previewGeometry;
+    if (p) viewer.previewPartGeometry(p.partId, p.positions, p.indices);
+    return () => { if (p) viewer.previewPartGeometry(p.partId, null); };
+  }, [props.previewGeometry, props.project.modelUrl]);
 
   // Selection: highlight + gizmo + ease the orbit centre onto the part
   // (or back over the origin on deselect).

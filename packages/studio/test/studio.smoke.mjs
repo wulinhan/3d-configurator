@@ -273,39 +273,57 @@ check('camera reframed after the resize (model in view, not engulfing it)',
   afterResize > 0.02 && afterResize < 0.92, afterResize.toFixed(4));
 await shoot('2-anchored.png');
 
-// ── 6a. edge chamfer: rebuild the cap's edges, then restore ────────────────
-// The Edges section is a GEOMETRY edit through the Manifold kernel (WASM in
-// the browser): Apply swaps the part's mesh for a bevelled rebuild, Restore
-// puts the stashed original back. Base and cap don't share meshes, so the
-// manifest must come through untouched.
+// ── 6a. edge chamfer: pick edges Fusion-style, preview, apply, restore ─────
+// The Edges tool: "Select edges" overlays the part's sharp edges, clicks
+// toggle chains (driven through the test handle — a 1-px line is no fair
+// pointer target), the count reads back, and Apply rebuilds the mesh
+// through the Manifold kernel. Restore puts the stashed original back.
 {
   const vertsOfCap = () => page.evaluate(() =>
     window.__studioViewer?.meshOf?.('cap')?.geometry?.attributes?.position?.count ?? null);
-  check('the Edges section offers style, where and size',
+  check('the Edges section offers style, size and a picker',
     await page.isVisible('[data-testid="edges-style"]')
-    && await page.isVisible('[data-testid="edges-where"]')
-    && await page.isVisible('[data-testid="edges-size"]'), '');
+    && await page.isVisible('[data-testid="edges-size"]')
+    && await page.isVisible('[data-testid="edges-pick"]'), '');
+  check('apply stays disabled until an edge is picked',
+    await page.evaluate(() => document.querySelector('[data-testid="edges-apply"]').disabled), '');
   const beforeVerts = await vertsOfCap();
   const meshRefBefore = (await manifest()).parts[1].mesh;
   await page.fill('[data-testid="edges-size"]', '1');
   await page.press('[data-testid="edges-size"]', 'Enter');
-  await page.click('[data-testid="edges-apply"]');
+  await page.click('[data-testid="edges-pick"]');
+  await page.waitForFunction(() => (window.__studio?.edgeMode?.()?.chains?.length ?? 0) > 0, { timeout: 10_000 });
+  const chainCount = await page.evaluate(() => window.__studio.edgeMode().chains.length);
+  check('the cap (a box) shows twelve pickable edges', chainCount === 12, chainCount);
+  await page.evaluate(() => {
+    const m = window.__studio.edgeMode();
+    window.__studio.toggleEdge(m.chains[0].id);
+    window.__studio.toggleEdge(m.chains[1].id);
+  });
+  await page.waitForTimeout(200);
+  const counted = await page.textContent('[data-testid="edges-count"]');
+  check('the picker counts its selection', counted?.includes('2 edges selected'), counted);
+  // The live preview lands without any Apply: the rendered cap changes.
   await page.waitForFunction((n) => {
     const c = window.__studioViewer?.meshOf?.('cap')?.geometry?.attributes?.position?.count;
     return !!c && c !== n;
   }, beforeVerts, { timeout: 30_000 });
+  check('the cut previews live before applying', true, '');
+  await page.click('[data-testid="edges-apply"]');
+  await page.waitForFunction(() =>
+    document.querySelector('[data-testid="edges-restore"]') !== null, { timeout: 30_000 });
   const afterVerts = await vertsOfCap();
-  check('applying a chamfer rebuilt the cap mesh (more vertices than the box had)',
+  check('applying rebuilt the cap mesh (more vertices than the box had)',
     afterVerts > beforeVerts, `${beforeVerts} → ${afterVerts}`);
   m = await manifest();
   check('an unshared mesh keeps its manifest reference', m.parts[1].mesh === meshRefBefore, m.parts[1].mesh);
-  check('the restore button appeared', await page.isVisible('[data-testid="edges-restore"]'), '');
   await page.click('[data-testid="edges-restore"]');
   await page.waitForFunction((n) =>
     window.__studioViewer?.meshOf?.('cap')?.geometry?.attributes?.position?.count === n,
   beforeVerts, { timeout: 15_000 });
   check('restore brought the original geometry back', await vertsOfCap() === beforeVerts, await vertsOfCap());
   check('…and the restore button folded away', !(await page.isVisible('[data-testid="edges-restore"]')), '');
+  if (await page.isVisible('[data-testid="edges-done"]')) await page.click('[data-testid="edges-done"]');
 }
 
 // ── 6b. what the viewer draws is where the layout engine says parts are ────

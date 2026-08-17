@@ -3,7 +3,7 @@
 // selected (see App.tsx); the explorer stays in the left panel. Every control
 // calls a tested edit op; these components only render and route.
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Manifest, AnchorEdge, ColourOption, ChoiceOption, TextOption, UploadOption, TextFont, Part } from '../../../embed/src/manifest/types.ts';
 import { FONT_CHOICES } from '../../../embed/src/runtime/fonts.ts';
 import {
@@ -21,7 +21,8 @@ import {
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
-import type { ChamferOpts } from '../lib/chamfer.ts';
+import type { EdgeOpts } from '../lib/chamfer.ts';
+import type { EdgeChain } from '../lib/edges.ts';
 import { NumberField } from './fields.tsx';
 import { Select } from './controls.tsx';
 import { Section } from './section.tsx';
@@ -513,12 +514,19 @@ export function PartEditor(props: {
   onShapeText: (optionId: string | null) => void;
   /** The slot whose baseline is being shaped right now, if any. */
   shapingText: string | null;
-  /** Rebuild this part's top/bottom edges as a chamfer or round-over. */
-  onChamfer: (partId: string, opts: ChamferOpts) => Promise<void>;
+  /** Rebuild the SELECTED edges as a chamfer or round-over. */
+  onChamfer: (partId: string, opts: EdgeOpts) => Promise<void>;
   /** Put back the part's stashed pre-treatment geometry. */
   onRestoreEdges: (partId: string) => void;
   /** Whether this part currently carries an edge treatment to restore. */
   edgesEdited: boolean;
+  /** Edge-pick state for THIS part (null while the tool is off). */
+  edgeMode: { chains: EdgeChain[]; selected: string[] } | null;
+  onEdgeModeStart: (partId: string) => void;
+  onEdgeModeEnd: () => void;
+  onEdgeClear: () => void;
+  /** Debounced live preview: opts to show one, null to clear it. */
+  onPreviewEdges: (partId: string, opts: EdgeOpts | null) => void;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -646,6 +654,9 @@ export function PartEditor(props: {
 
       <EdgesSection
         partId={part.id} edited={props.edgesEdited}
+        edgeMode={props.edgeMode}
+        onStart={props.onEdgeModeStart} onEnd={props.onEdgeModeEnd} onClear={props.onEdgeClear}
+        onPreview={props.onPreviewEdges}
         onChamfer={props.onChamfer} onRestore={props.onRestoreEdges}
       />
 
@@ -769,28 +780,47 @@ export function PartEditor(props: {
   );
 }
 
-// Chamfer / round-over the part's printed edges. This is a GEOMETRY edit —
-// the mesh is rebuilt through the Manifold kernel — so Ctrl+Z cannot help;
-// instead the original shape is stashed on first apply, every re-apply
-// recomputes from that original (a new size never stacks on the old bevel),
-// and "Restore" brings the sharp edges back.
+// Chamfer / round-over the edges the merchant PICKS, Fusion-style: enter
+// the tool, hover an edge on the model to light it up, click to select
+// (click again to deselect), and the model previews the cut live as the
+// size changes. Apply commits; failures surface as a toast saying why.
+// Geometry edits sit outside the manifest history, so the original shape
+// is stashed on first apply and "Restore" rewinds every treatment.
 function EdgesSection(props: {
   partId: string;
   edited: boolean;
-  onChamfer: (partId: string, opts: ChamferOpts) => Promise<void>;
+  edgeMode: { chains: EdgeChain[]; selected: string[] } | null;
+  onStart: (partId: string) => void;
+  onEnd: () => void;
+  onClear: () => void;
+  onPreview: (partId: string, opts: EdgeOpts | null) => void;
+  onChamfer: (partId: string, opts: EdgeOpts) => Promise<void>;
   onRestore: (partId: string) => void;
 }) {
-  const [style, setStyle] = useState<ChamferOpts['style']>('chamfer');
-  const [edges, setEdges] = useState<ChamferOpts['edges']>('top');
+  const [style, setStyle] = useState<EdgeOpts['style']>('chamfer');
   const [size, setSize] = useState(1);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const active = !!props.edgeMode;
+  const count = props.edgeMode?.selected.length ?? 0;
+
+  // Live preview: any knob or pick change re-renders the cut on the model,
+  // debounced so scrubbing the size doesn't queue a rebuild per step.
+  const preview = props.onPreview;
+  const selectedKey = props.edgeMode?.selected.join(',') ?? '';
+  useEffect(() => {
+    if (!active) return;
+    const timer = setTimeout(() => {
+      preview(props.partId, count ? { style, sizeMm: size } : null);
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [active, count, selectedKey, style, size, props.partId, preview]);
+
   return (
     <Section title="Edges" icon="edges" testId="section-edges">
       <p className="hint">
-        Softens the part's printed edges: a chamfer cuts a flat bevel, rounded
-        rolls them over. Re-apply with new numbers any time — it always starts
-        from the original shape.
+        Softens printed edges: a chamfer cuts a flat bevel, rounded rolls
+        them over. Pick the edges on the model — hover lights one up, click
+        selects it — and the cut previews live before you apply.
       </p>
       <div className="field-row">
         <label className="field">
@@ -799,16 +829,7 @@ function EdgesSection(props: {
             ariaLabel="Edge style" testId="edges-style" compact
             value={style}
             options={[{ value: 'chamfer', label: 'Chamfer' }, { value: 'round', label: 'Rounded' }]}
-            onChange={(v) => setStyle(v as ChamferOpts['style'])}
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">Where</span>
-          <Select
-            ariaLabel="Which edges" testId="edges-where" compact
-            value={edges}
-            options={[{ value: 'top', label: 'Top' }, { value: 'bottom', label: 'Bottom' }, { value: 'both', label: 'Both' }]}
-            onChange={(v) => setEdges(v as ChamferOpts['edges'])}
+            onChange={(v) => setStyle(v as EdgeOpts['style'])}
           />
         </label>
         <NumberField
@@ -817,17 +838,35 @@ function EdgesSection(props: {
         />
       </div>
       <div className="match-row">
+        {!active ? (
+          <button
+            className="mini" data-testid="edges-pick"
+            title="Show this part's sharp edges on the model, ready to click"
+            onClick={() => props.onStart(props.partId)}
+          >Select edges</button>
+        ) : (
+          <>
+            <span className="hint edges-count" data-testid="edges-count">
+              {count ? `${count} edge${count === 1 ? '' : 's'} selected` : 'Click edges on the model'}
+            </span>
+            {count > 0 && (
+              <button className="mini" data-testid="edges-clear" onClick={props.onClear}>Clear</button>
+            )}
+            <button className="mini" data-testid="edges-done" onClick={props.onEnd}>Done</button>
+          </>
+        )}
+      </div>
+      <div className="match-row">
         <button
-          className="mini" data-testid="edges-apply" disabled={busy}
-          title="Rebuilds the part's mesh — hollow parts ease over on their inner rims too"
+          className="mini" data-testid="edges-apply" disabled={busy || !count}
+          title={count ? 'Rebuild the selected edges into the part' : 'Pick at least one edge first'}
           onClick={() => {
             setBusy(true);
-            props.onChamfer(props.partId, { style, edges, sizeMm: size })
-              .then(() => setError(null))
-              .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+            props.onChamfer(props.partId, { style, sizeMm: size })
+              .catch(() => { /* the toast already said why */ })
               .finally(() => setBusy(false));
           }}
-        >{busy ? 'Rebuilding…' : props.edited ? 'Re-apply edges' : 'Apply edges'}</button>
+        >{busy ? 'Rebuilding…' : 'Apply edges'}</button>
         {props.edited && (
           <button
             className="mini" data-testid="edges-restore"
@@ -836,7 +875,6 @@ function EdgesSection(props: {
           >Restore original</button>
         )}
       </div>
-      {error && <p className="error" role="alert">{error}</p>}
     </Section>
   );
 }
