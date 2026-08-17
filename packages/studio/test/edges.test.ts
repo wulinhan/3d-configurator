@@ -160,3 +160,37 @@ test('refusals say why', async () => {
     () => chamferEdges(slab, slabChains, slabChains.map((c) => c.id), { style: 'chamfer', sizeMm: 6 }),
     (e: Error) => e instanceof ChamferError && /removes the whole part/i.test(e.message));
 });
+
+test('an n-gon rim chains into ONE loop, its verticals stay separate', () => {
+  const oct = primitivePart(spec({ kind: 'prism', sides: 8, widthMm: 30, heightMm: 12 }));
+  const chains = featureEdges(oct.positions, oct.indices);
+  const rims = chains.filter((c) => c.closed);
+  const verts = chains.filter((c) => !c.closed);
+  assert.equal(rims.length, 2, 'top and bottom rims');
+  assert.ok(rims.every((c) => c.segs.length === 8), 'each rim runs all eight segments');
+  assert.equal(verts.length, 8, 'eight vertical edges');
+});
+
+test('"similar" grabs the family: all verticals of an octagon, both rims, four of a box', async () => {
+  const { similarChains } = await import('../src/lib/edges.ts');
+  const oct = primitivePart(spec({ kind: 'prism', sides: 8, widthMm: 30, heightMm: 12 }));
+  const chains = featureEdges(oct.positions, oct.indices);
+  const vertical = chains.find((c) => !c.closed)!;
+  assert.equal(similarChains(chains, vertical.id).length, 8, 'all eight verticals');
+  const rim = chains.find((c) => c.closed)!;
+  assert.equal(similarChains(chains, rim.id).length, 2, 'both rims');
+
+  const box = primitivePart(spec({}));
+  const bc = featureEdges(box.positions, box.indices);
+  const upright = bc.find((c) => Math.abs(c.dir[1]) > 0.9)!;
+  assert.equal(similarChains(bc, upright.id).length, 4, 'the four uprights');
+});
+
+test('a chamfer follows an octagon rim around its corners, watertight', async () => {
+  const oct = primitivePart(spec({ kind: 'prism', sides: 8, widthMm: 30, heightMm: 12 }));
+  const chains = featureEdges(oct.positions, oct.indices);
+  const rim = chains.find((c) => c.closed)!;
+  const cut = await chamferEdges(oct, chains, [rim.id], { style: 'chamfer', sizeMm: 1.5 });
+  watertight(cut, 'octagon rim chamfer');
+  assert.ok(volumeOf(cut) < volumeOf(oct), 'material came off the rim');
+});

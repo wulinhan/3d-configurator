@@ -1110,3 +1110,23 @@ input, select { font: inherit; }
   align-self: center;
   font-weight: 600;
 }
+
+/* Export gets a roomier card than the shape dialog it borrowed: a long
+ * format list opens INSIDE the card instead of spilling past its edge. */
+.export-dialog { width: min(640px, 96vw); min-height: 400px; padding: 26px 28px; }
+.export-dialog .dialog-fields { gap: 14px; }
+
+/* Shared-project mark: a small person chip on the card's thumbnail. */
+.dash-thumb { position: relative; }
+.dash-shared {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  background: rgba(255, 255, 255, 0.92);
+  color: #3b4552;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(15, 18, 24, 0.18);
+}
+.dash-card-icon { position: relative; }
+.dash-card-icon .dash-shared { top: -2px; right: -6px; }

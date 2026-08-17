@@ -19,7 +19,7 @@ import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-mode
 import type { ImportedPart } from './lib/types.ts';
 import { writeGlb } from './lib/write-glb.ts';
 import { chamferEdges, type EdgeOpts } from './lib/chamfer.ts';
-import { featureEdges, type EdgeChain } from './lib/edges.ts';
+import { featureEdges, similarChains, type EdgeChain } from './lib/edges.ts';
 import {
   boundsOf, boundsByPartId, mergeModel, emptyManifest, slug, EMPTY_BOUNDS, type PartBounds,
 } from './lib/manifest-init.ts';
@@ -502,9 +502,15 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     setEdgePreview(null);
   }, []);
 
-  const toggleEdge = useCallback((chainId: string) => {
+  const toggleEdge = useCallback((chainId: string, gesture: 'toggle' | 'similar' = 'toggle') => {
     setEdgeMode((mode) => {
       if (!mode) return mode;
+      // Double-click = grab the family: every parallel edge of the same
+      // kind (all eight verticals of an octagon), or the matching rings.
+      if (gesture === 'similar') {
+        const family = similarChains(mode.chains, chainId);
+        return { ...mode, selected: [...new Set([...mode.selected, ...family])] };
+      }
       const selected = mode.selected.includes(chainId)
         ? mode.selected.filter((id) => id !== chainId)
         : [...mode.selected, chainId];

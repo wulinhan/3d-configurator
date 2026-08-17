@@ -819,8 +819,9 @@ function EdgesSection(props: {
     <Section title="Edges" icon="edges" testId="section-edges">
       <p className="hint">
         Softens printed edges: a chamfer cuts a flat bevel, rounded rolls
-        them over. Pick the edges on the model — hover lights one up, click
-        selects it — and the cut previews live before you apply.
+        them over. Pick edges on the model — hover lights one up, click
+        selects, <strong>double-click grabs every matching edge</strong> —
+        and the cut previews live before you apply.
       </p>
       <div className="field-row">
         <label className="field">

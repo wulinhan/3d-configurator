@@ -30,6 +30,9 @@ export interface EdgeChain {
   closed: boolean;
   lengthMm: number;
   segs: EdgeSeg[];
+  /** Length-weighted overall direction — ~zero for a closed ring. What
+   * "select similar" compares to find the parallel brothers of an edge. */
+  dir: V3;
 }
 
 export const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -83,23 +86,38 @@ export function featureEdges(
   // the threshold. Only clean two-sided edges qualify — a boundary or a
   // non-manifold fan is not something a chamfer can follow.
   const minDot = Math.cos((angleDeg * Math.PI) / 180);
-  interface Feature { u: number; v: number; n1: V3; n2: V3; convex: boolean }
-  const features: Feature[] = [];
-  const featureAt = new Map<number, number[]>(); // vertex -> feature indices
+  interface Feature { u: number; v: number; n1: V3; n2: V3; convex: boolean; rA: number; rB: number }
+  interface Raw { u: number; v: number; f1: number; f2: number; n1: V3; n2: V3; convex: boolean }
+  const raws: Raw[] = [];
+  // Union-find over faces: faces joined across every SMOOTH edge collapse
+  // into surface regions (a barrel, a top disc, one octagon facet). A
+  // feature edge then knows which region lies on each side — what lets a
+  // chain follow an n-gon rim around its corners without leaking down a
+  // vertical edge.
+  const parent = normals.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   for (const [key, he] of half) {
     const [u, v] = key.split('>').map(Number);
     if (u > v) continue; // visit each undirected edge once
     const twin = half.get(`${v}>${u}`);
     if (!twin) continue;
     const n1 = normals[he.face], n2 = normals[twin.face];
-    if (dot(n1, n2) >= minDot) continue;
+    if (dot(n1, n2) >= minDot) {
+      parent[find(he.face)] = find(twin.face);
+      continue;
+    }
     // Convex iff the winding direction (as face 1 owns it) agrees with
     // n1 × n2 — verified against a cube (all convex) in the tests.
     const dir = norm(sub3(verts[v], verts[u]));
     const convex = dot(cross(n1, n2), dir) > 0;
+    raws.push({ u, v, f1: he.face, f2: twin.face, n1, n2, convex });
+  }
+  const features: Feature[] = [];
+  const featureAt = new Map<number, number[]>(); // vertex -> feature indices
+  for (const r of raws) {
     const idx = features.length;
-    features.push({ u, v, n1, n2, convex });
-    for (const w of [u, v]) {
+    features.push({ u: r.u, v: r.v, n1: r.n1, n2: r.n2, convex: r.convex, rA: find(r.f1), rB: find(r.f2) });
+    for (const w of [r.u, r.v]) {
       const list = featureAt.get(w) ?? [];
       list.push(idx);
       featureAt.set(w, list);
@@ -116,15 +134,24 @@ export function featureEdges(
     norm(from === f.u ? sub3(verts[f.v], verts[f.u]) : sub3(verts[f.u], verts[f.v]));
   const other = (f: Feature, w: number) => (w === f.u ? f.v : f.u);
 
+  // Continue through a vertex when exactly ONE outgoing edge reads as the
+  // same physical edge carrying on: same convexity, sharing a surface
+  // region with the incoming edge, turning less than 75°. An octagon rim
+  // turns 45° at each corner while sharing the top face all the way round
+  // — one loop; a box corner turns 90° everywhere — twelve edges; the
+  // vertical edge at that octagon corner fails the angle test and stays
+  // its own edge.
+  const COS_75 = Math.cos((75 * Math.PI) / 180);
+  const shares = (a: Feature, b: Feature) =>
+    a.rA === b.rA || a.rA === b.rB || a.rB === b.rA || a.rB === b.rB;
   const nextOf = (f: number, at: number): number | null => {
     const here = featureAt.get(at) ?? [];
-    if (here.length !== 2) return null;
-    const n = here[0] === f ? here[1] : here[0];
-    if (used.has(n)) return null;
-    if (features[n].convex !== features[f].convex) return null;
     const into = segDir(features[f], other(features[f], at)); // arriving direction
-    const out = segDir(features[n], at);
-    return dot(into, out) > Math.SQRT1_2 ? n : null; // < 45° turn
+    const fits = here.filter((n) => n !== f && !used.has(n)
+      && features[n].convex === features[f].convex
+      && shares(features[n], features[f])
+      && dot(into, segDir(features[n], at)) > COS_75);
+    return fits.length === 1 ? fits[0] : null;
   };
 
   for (let start = 0; start < features.length; start++) {
@@ -172,7 +199,12 @@ export function featureEdges(
     });
 
     let lengthMm = 0;
-    for (const s of segs) lengthMm += Math.hypot(...sub3(s.b, s.a));
+    let run: V3 = [0, 0, 0];
+    for (const s of segs) {
+      lengthMm += Math.hypot(...sub3(s.b, s.a));
+      run = add3(run, sub3(s.b, s.a));
+    }
+    const dir = norm(run);
 
     // Display polyline: each path vertex lifted along the average corner
     // bisector of its adjacent segments.
@@ -189,7 +221,7 @@ export function featureEdges(
     }
     if (closed) pts.set(pts.slice(0, 3), path.length * 3);
 
-    chains.push({ id: `e${chains.length}`, displayPoints: pts, closed, lengthMm, segs });
+    chains.push({ id: `e${chains.length}`, displayPoints: pts, closed, lengthMm, segs, dir });
   }
 
   // Longest first: the edges someone most likely wants sit at the top of
@@ -197,4 +229,27 @@ export function featureEdges(
   chains.sort((a, b) => b.lengthMm - a.lengthMm);
   chains.forEach((c, i) => { c.id = `e${i}`; });
   return chains;
+}
+
+/**
+ * The "grab the whole family" gesture: given one chain, every chain that
+ * reads as its sibling. For a straight edge that means the PARALLEL edges
+ * of matching convexity and similar length — double-click one vertical of
+ * an octagon and all eight answer. For a closed ring (whose net direction
+ * is zero) it means the other rings of similar size — a cylinder's two
+ * rims. Always includes the chain itself.
+ */
+export function similarChains(chains: EdgeChain[], id: string): string[] {
+  const ref = chains.find((c) => c.id === id);
+  if (!ref) return [id];
+  const sameKind = (c: EdgeChain) =>
+    c.segs[0]?.convex === ref.segs[0]?.convex
+    && c.lengthMm > ref.lengthMm * 0.7 && c.lengthMm < ref.lengthMm * 1.45;
+  const straight = Math.hypot(...ref.dir) > 0.5;
+  const out = chains.filter((c) => {
+    if (!sameKind(c)) return false;
+    if (!straight) return c.closed === ref.closed && Math.hypot(...c.dir) <= 0.5;
+    return Math.hypot(...c.dir) > 0.5 && Math.abs(dot(c.dir, ref.dir)) > 0.95;
+  }).map((c) => c.id);
+  return out.includes(id) ? out : [id, ...out];
 }

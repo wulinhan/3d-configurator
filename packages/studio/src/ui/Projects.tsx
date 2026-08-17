@@ -296,6 +296,19 @@ function ProjectCard(props: {
   };
 
   const tag = <span className={`dash-tag${p.live ? ' is-live' : ''}`}>{p.live ? 'Published' : 'Draft'}</span>;
+  // A quiet person mark on shared projects — the card says at a glance
+  // that other people can open this one.
+  const sharedMark = p.shared ? (
+    <span className="dash-shared" title="Shared with others" data-testid={`shared-mark-${p.id}`}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="9" cy="8" r="3.4" />
+        <path d="M3.5 20c.6-3.4 2.8-5.2 5.5-5.2s4.9 1.8 5.5 5.2" />
+        <circle cx="17" cy="9" r="2.6" />
+        <path d="M16.2 14.6c2.3.2 4 1.8 4.4 4.6" />
+      </svg>
+    </span>
+  ) : null;
 
   return (
     <li>
@@ -308,9 +321,10 @@ function ProjectCard(props: {
           <span className="dash-thumb" data-testid={`thumb-${p.id}`}>
             <img src={api.thumbUrl(p.id)} alt="" loading="lazy" />
             {tag}
+            {sharedMark}
           </span>
         ) : (
-          <span className="dash-card-icon" aria-hidden="true">{CUBE}</span>
+          <span className="dash-card-icon" aria-hidden="true">{CUBE}{sharedMark}</span>
         )}
         {renaming ? (
           <input

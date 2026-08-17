@@ -23,6 +23,8 @@ export interface ProjectSummary {
   hasModel: boolean;
   hasThumb: boolean;
   live: string | null;
+  /** Someone else has been given access to this project. */
+  shared?: boolean;
 }
 
 export interface ProjectDetail {

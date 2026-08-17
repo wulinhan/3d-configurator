@@ -268,6 +268,7 @@ export function studioRoutes(deps: Deps): Route[] {
             id: p.id, name: p.name, revision: p.revision, valid: p.valid,
             updatedAt: p.updated_at, hasModel: !!p.model_asset_id,
             hasThumb: !!p.thumb_asset_id, live: p.live_publication_id,
+            shared: (p.share_count ?? 0) > 0,
           })),
         };
       },

@@ -350,10 +350,11 @@ export class Viewer {
   private edgePick: {
     partId: string;
     group: THREE.Group;
-    lines: Map<string, THREE.Line>;
+    lines: Map<string, THREE.Mesh>;
     hover: string | null;
     selected: Set<string>;
-    onToggle: (chainId: string) => void;
+    last: { id: string; t: number } | null;
+    onToggle: (chainId: string, gesture: 'toggle' | 'similar') => void;
   } | null = null;
   /** Non-committal geometry previews (live chamfer): part id -> what to
    * put back when the preview clears. */
@@ -1528,32 +1529,46 @@ export class Viewer {
   setEdgePickMode(
     partId: string,
     chains: Array<{ id: string; points: Float32Array }>,
-    onToggle: (chainId: string) => void,
+    onToggle: (chainId: string, gesture: 'toggle' | 'similar') => void,
   ): void {
     this.clearEdgePickMode();
     const mesh = this.meshes.get(partId);
     if (!mesh) return;
     const centre = this.centres.get(partId) ?? [0, 0, 0];
+    // Edges render as thin TUBES, not hairlines: a tube has real pixels to
+    // see and real surface to click, sized to the part so a coaster and a
+    // metre-wide sign both read. Half the tube sinks into the surface —
+    // what shows is a rounded highlight hugging the edge.
+    (mesh as THREE.Mesh).geometry.computeBoundingBox();
+    const bb = (mesh as THREE.Mesh).geometry.boundingBox;
+    const diag = bb ? bb.min.distanceTo(bb.max) : 60;
+    const radius = Math.min(0.9, Math.max(0.18, diag * 0.009));
     const group = new THREE.Group();
     group.name = 'edge-pick';
-    const lines = new Map<string, THREE.Line>();
+    const lines = new Map<string, THREE.Mesh>();
     for (const chain of chains) {
-      const local = new Float32Array(chain.points.length);
+      const pts: THREE.Vector3[] = [];
       for (let i = 0; i < chain.points.length; i += 3) {
-        local[i] = chain.points[i] - centre[0];
-        local[i + 1] = chain.points[i + 1] - centre[1];
-        local[i + 2] = chain.points[i + 2] - centre[2];
+        pts.push(new THREE.Vector3(
+          chain.points[i] - centre[0],
+          chain.points[i + 1] - centre[1],
+          chain.points[i + 2] - centre[2],
+        ));
       }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(local, 3));
-      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: Viewer.EDGE_BASE }));
-      line.userData.chain = chain.id;
-      line.renderOrder = 3;
-      group.add(line);
-      lines.set(chain.id, line);
+      if (pts.length < 2) continue;
+      const path = new THREE.CurvePath<THREE.Vector3>();
+      for (let i = 0; i < pts.length - 1; i++) path.add(new THREE.LineCurve3(pts[i], pts[i + 1]));
+      const geo = new THREE.TubeGeometry(
+        path as unknown as THREE.Curve<THREE.Vector3>,
+        Math.min(256, (pts.length - 1) * 2), radius, 6, false);
+      const tube = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: Viewer.EDGE_BASE }));
+      tube.userData.chain = chain.id;
+      tube.renderOrder = 3;
+      group.add(tube);
+      lines.set(chain.id, tube);
     }
     mesh.add(group);
-    this.edgePick = { partId, group, lines, hover: null, selected: new Set(), onToggle };
+    this.edgePick = { partId, group, lines, hover: null, selected: new Set(), last: null, onToggle };
   }
 
   clearEdgePickMode(): void {
@@ -1578,8 +1593,8 @@ export class Viewer {
   private paintEdgeLines(): void {
     const ep = this.edgePick;
     if (!ep) return;
-    for (const [id, line] of ep.lines) {
-      const m = line.material as THREE.LineBasicMaterial;
+    for (const [id, tube] of ep.lines) {
+      const m = tube.material as THREE.MeshBasicMaterial;
       m.color.set(ep.selected.has(id) ? Viewer.EDGE_SELECTED
         : id === ep.hover ? Viewer.EDGE_HOVER : Viewer.EDGE_BASE);
     }
@@ -2655,9 +2670,7 @@ export class Viewer {
       const r = canvas.getBoundingClientRect();
       pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
       raycaster.setFromCamera(pointer, this.camera);
-      raycaster.params.Line.threshold = 1.4;
       const hits = raycaster.intersectObjects([...ep.lines.values()], false);
-      raycaster.params.Line.threshold = 1;
       return (hits[0]?.object.userData.chain as string | undefined) ?? null;
     };
 
@@ -2702,7 +2715,13 @@ export class Viewer {
       // nothing — a stray miss must not drop the part selection mid-tool.
       if (this.edgePick) {
         const chain = pickEdge(e);
-        if (chain) this.edgePick.onToggle(chain);
+        if (chain) {
+          const t = performance.now();
+          const last = this.edgePick.last;
+          const dbl = !!last && last.id === chain && t - last.t < 400;
+          this.edgePick.last = { id: chain, t };
+          this.edgePick.onToggle(chain, dbl ? 'similar' : 'toggle');
+        }
         return;
       }
       // null on empty space: hosts that care (the Studio) deselect; the embed

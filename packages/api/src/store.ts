@@ -187,6 +187,8 @@ export async function getAsset(sql: Sql, id: string): Promise<Asset | null> {
 // ── projects ──────────────────────────────────────────────────────────────
 
 export interface ProjectRow {
+  /** Only populated by listProjects — how many people this is shared with. */
+  share_count?: number;
   id: string; org_id: string; name: string; manifest: unknown;
   model_asset_id: string | null; live_publication_id: string | null;
   thumb_asset_id: string | null;
@@ -251,7 +253,9 @@ export async function projectFor(sql: Sql, projectId: string, userId: string): P
 
 export async function listProjects(sql: Sql, orgId: string, userId: string): Promise<ProjectRow[]> {
   const { rows } = await sql.query<ProjectRow>(
-    `select p.* from projects p
+    `select p.*,
+       (select count(*)::int from project_shares s where s.project_id = p.id) as share_count
+     from projects p
      join memberships m on m.org_id = p.org_id and m.user_id = $2
      where p.org_id = $1 and p.archived_at is null
      order by p.updated_at desc`, [orgId, userId]);

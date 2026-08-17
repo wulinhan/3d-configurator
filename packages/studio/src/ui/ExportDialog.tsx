@@ -61,7 +61,7 @@ export function ExportDialog(props: {
   const labels = meshes ? labelsOf(meshes, props.manifest) : [];
   return (
     <div className="dialog-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
-      <div className="dialog-card shape-dialog" role="dialog" aria-modal="true" aria-label="Export the model" data-testid="export-dialog">
+      <div className="dialog-card shape-dialog export-dialog" role="dialog" aria-modal="true" aria-label="Export the model" data-testid="export-dialog">
         <h3>Export the model</h3>
         {meshes && (
           <p className="trace-note" data-testid="export-parts">

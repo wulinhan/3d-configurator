@@ -56,7 +56,7 @@ export function ViewerPane(props: {
   /** Edge-pick mode (the chamfer tool): overlay this part's sharp edges as
    * clickable lines; clicks report the chain id back up. */
   edgeMode: { partId: string; chains: Array<{ id: string; points: Float32Array }>; selected: string[] } | null;
-  onEdgeToggle: (chainId: string) => void;
+  onEdgeToggle: (chainId: string, gesture: 'toggle' | 'similar') => void;
   /** Live, uncommitted geometry for a part — the chamfer preview. */
   previewGeometry: { partId: string; positions: Float32Array; indices: Uint32Array } | null;
 }) {
@@ -299,7 +299,7 @@ export function ViewerPane(props: {
     const viewer = viewerRef.current;
     if (!viewer) return;
     if (props.edgeMode) {
-      viewer.setEdgePickMode(props.edgeMode.partId, props.edgeMode.chains, (id) => edgeToggleRef.current(id));
+      viewer.setEdgePickMode(props.edgeMode.partId, props.edgeMode.chains, (id, gesture) => edgeToggleRef.current(id, gesture));
       viewer.setEdgeSelection(props.edgeMode.selected);
     }
     return () => viewer.clearEdgePickMode();
