@@ -88,6 +88,33 @@ export function Projects(props: { me: Me; onSignedOut: () => void }) {
 
   useEffect(() => { void reload(); }, [reload]);
 
+  // Duplicate = the same two artefacts a project IS (manifest + model),
+  // copied through the endpoints that already own them — nothing new for
+  // the service to learn. The copy opens from the card like any project.
+  const [duplicating, setDuplicating] = useState<string | null>(null);
+  const duplicate = async (p: ProjectSummary) => {
+    if (!org || duplicating) return;
+    setDuplicating(p.id);
+    setError(null);
+    try {
+      const detail = await api.getProject(p.id);
+      const copyName = `Copy of ${p.name}`.slice(0, 120);
+      const manifest = detail.manifest && typeof detail.manifest === 'object'
+        ? { ...(detail.manifest as Record<string, unknown>), name: copyName }
+        : detail.manifest;
+      const made = await api.createProject(org.id, copyName, manifest);
+      if (detail.hasModel) {
+        const glb = await api.getModel(p.id);
+        await api.putModel(made.id, glb);
+      }
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'could not duplicate that product');
+    } finally {
+      setDuplicating(null);
+    }
+  };
+
   const create = async () => {
     setBusy(true);
     try {
@@ -156,6 +183,8 @@ export function Projects(props: { me: Me; onSignedOut: () => void }) {
                 onShare={() => setSharing({ id: p.id, name: p.name })}
                 onDelete={() => setDeleting({ id: p.id, name: p.name })}
                 onRenamed={reload}
+                onDuplicate={() => void duplicate(p)}
+                duplicating={duplicating === p.id}
               />
             ))}
           </ul>
@@ -245,6 +274,7 @@ function AccountMenu(props: { me: Me; isOwner: boolean; onPeople: () => void; on
 function ProjectCard(props: {
   project: ProjectSummary; now: number; canEdit: boolean;
   onShare: () => void; onDelete: () => void; onRenamed: () => void;
+  onDuplicate: () => void; duplicating: boolean;
 }) {
   const { project: p, now, canEdit, onShare, onDelete, onRenamed } = props;
   const [menu, setMenu] = useState(false);
@@ -320,6 +350,11 @@ function ProjectCard(props: {
                 <button className="menu-item" role="menuitem" onClick={(e) => {
                   e.preventDefault(); setMenu(false); onShare();
                 }}>Share…</button>
+                <button
+                  className="menu-item" role="menuitem" data-testid={`duplicate-${p.id}`}
+                  disabled={props.duplicating}
+                  onClick={(e) => { e.preventDefault(); setMenu(false); props.onDuplicate(); }}
+                >{props.duplicating ? 'Duplicating…' : 'Duplicate'}</button>
                 <span className="menu-sep" />
                 <button className="menu-item danger" role="menuitem" onClick={(e) => {
                   e.preventDefault(); setMenu(false); onDelete();
