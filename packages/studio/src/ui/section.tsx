@@ -15,7 +15,7 @@ import { useState, type ReactNode } from 'react';
 
 export type SectionIcon =
   | 'size' | 'position' | 'rotation' | 'colour' | 'addon'
-  | 'text' | 'image' | 'repeat' | 'assembly' | 'variant' | 'finish';
+  | 'text' | 'image' | 'repeat' | 'assembly' | 'variant' | 'finish' | 'edges';
 
 const PATHS: Record<SectionIcon, ReactNode> = {
   // maximize: a frame with corner ticks — bounding box, i.e. size
@@ -40,6 +40,8 @@ const PATHS: Record<SectionIcon, ReactNode> = {
   variant: <><circle cx="7" cy="6" r="2.4" /><circle cx="7" cy="18" r="2.4" /><circle cx="17" cy="12" r="2.4" /><path d="M7 8.4v7.2" /><path d="M9.4 6H13a2 2 0 0 1 2 2v1.8" /></>,
   // sparkles: surface finish
   finish: <><path d="M12 3l1.8 4.7L18.5 9.5 13.8 11.3 12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3Z" /><path d="M18 16l.9 2.1L21 19l-2.1.9L18 22l-.9-2.1L15 19l2.1-.9L18 16Z" /></>,
+  // a square with one corner cut off — a chamfered edge
+  edges: <><path d="M10 4h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8l6-6Z" /><path d="M10 4v6H4" /></>,
 };
 
 function Icon(props: { name: SectionIcon }) {

@@ -341,6 +341,30 @@ test('importModel orients a Z-up print file into Y-up mm space', () => {
   near(m.bounds.min[2] + m.bounds.max[2], 0); // Z centred
 });
 
+test('the z-up preset is a rotation, not a mirror — winding survives it', () => {
+  // The y/z swap in x,z,-y (parity −1) and its one negation (sign −1)
+  // cancel: determinant +1, so triangles must NOT be re-wound. The old
+  // minus-sign count flipped them, and every z-up import arrived inside-out
+  // — invisible under double-sided materials, fatal to solid-geometry maths.
+  const signedVolume = (positions: Float32Array, indices: Uint32Array) => {
+    let six = 0;
+    for (let t = 0; t < indices.length; t += 3) {
+      const [a, b, c] = [indices[t] * 3, indices[t + 1] * 3, indices[t + 2] * 3];
+      six += positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1])
+        - positions[a + 1] * (positions[b] * positions[c + 2] - positions[b + 2] * positions[c])
+        + positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c]);
+    }
+    return six / 6;
+  };
+  for (const axes of ['x,y,z', 'x,z,-y', 'y,z,x']) {
+    const m = importModel(make3mf(TWO_PART_3MF), { axes });
+    for (const part of m.parts) {
+      assert.ok(signedVolume(part.positions, part.indices) > 0,
+        `${part.name} imports outward-wound under ${axes}`);
+    }
+  }
+});
+
 test('importModel applies a manual unit override', () => {
   const inches = importModel(binaryStl(boxTriangles(1, 1, 1)), { unitToMm: 25.4 });
   const size = inches.bounds.max.map((v: number, i: number) => v - inches.bounds.min[i]);

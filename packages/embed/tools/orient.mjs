@@ -69,10 +69,17 @@ export function orientParts(parts, opts = {}) {
     return { ...part, positions: out };
   });
 
-  // A flipped axis reverses triangle winding, which would leave the model
-  // inside-out under back-face culling. Undo it by swapping two corners.
-  const flips = map.filter((m) => m.sign < 0).length;
-  if (flips % 2 === 1) {
+  // A remap that MIRRORS reverses triangle winding, which would leave the
+  // model inside-out. Mirroring is not "an odd number of minus signs": the
+  // z-up preset x,z,-y swaps two axes AND negates one — parity −1 times
+  // sign −1 — which is a pure rotation. The real test is the transform's
+  // determinant: permutation parity times the product of the signs. Undo a
+  // true mirror by swapping two corners of every triangle.
+  const order = map.map((m) => m.axis);
+  let inversions = 0;
+  for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) if (order[i] > order[j]) inversions++;
+  const det = (inversions % 2 ? -1 : 1) * map.reduce((s, m) => s * m.sign, 1);
+  if (det < 0) {
     for (const part of remapped) {
       const idx = part.indices;
       for (let t = 0; t < idx.length; t += 3) {

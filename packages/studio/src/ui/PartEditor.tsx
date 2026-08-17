@@ -21,6 +21,7 @@ import {
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
+import type { ChamferOpts } from '../lib/chamfer.ts';
 import { NumberField } from './fields.tsx';
 import { Select } from './controls.tsx';
 import { Section } from './section.tsx';
@@ -512,6 +513,12 @@ export function PartEditor(props: {
   onShapeText: (optionId: string | null) => void;
   /** The slot whose baseline is being shaped right now, if any. */
   shapingText: string | null;
+  /** Rebuild this part's top/bottom edges as a chamfer or round-over. */
+  onChamfer: (partId: string, opts: ChamferOpts) => Promise<void>;
+  /** Put back the part's stashed pre-treatment geometry. */
+  onRestoreEdges: (partId: string) => void;
+  /** Whether this part currently carries an edge treatment to restore. */
+  edgesEdited: boolean;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -637,6 +644,11 @@ export function PartEditor(props: {
         </div>
       </Section>
 
+      <EdgesSection
+        partId={part.id} edited={props.edgesEdited}
+        onChamfer={props.onChamfer} onRestore={props.onRestoreEdges}
+      />
+
       {colourOption && palette && (
         <Section title="Colour" icon="colour" testId="section-colour">
           <label className="field wide">
@@ -754,6 +766,78 @@ export function PartEditor(props: {
       )}
       {error && <p className="error" role="alert">{error}</p>}
     </div>
+  );
+}
+
+// Chamfer / round-over the part's printed edges. This is a GEOMETRY edit —
+// the mesh is rebuilt through the Manifold kernel — so Ctrl+Z cannot help;
+// instead the original shape is stashed on first apply, every re-apply
+// recomputes from that original (a new size never stacks on the old bevel),
+// and "Restore" brings the sharp edges back.
+function EdgesSection(props: {
+  partId: string;
+  edited: boolean;
+  onChamfer: (partId: string, opts: ChamferOpts) => Promise<void>;
+  onRestore: (partId: string) => void;
+}) {
+  const [style, setStyle] = useState<ChamferOpts['style']>('chamfer');
+  const [edges, setEdges] = useState<ChamferOpts['edges']>('top');
+  const [size, setSize] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Section title="Edges" icon="edges" testId="section-edges">
+      <p className="hint">
+        Softens the part's printed edges: a chamfer cuts a flat bevel, rounded
+        rolls them over. Re-apply with new numbers any time — it always starts
+        from the original shape.
+      </p>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-label">Style</span>
+          <Select
+            ariaLabel="Edge style" testId="edges-style" compact
+            value={style}
+            options={[{ value: 'chamfer', label: 'Chamfer' }, { value: 'round', label: 'Rounded' }]}
+            onChange={(v) => setStyle(v as ChamferOpts['style'])}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Where</span>
+          <Select
+            ariaLabel="Which edges" testId="edges-where" compact
+            value={edges}
+            options={[{ value: 'top', label: 'Top' }, { value: 'bottom', label: 'Bottom' }, { value: 'both', label: 'Both' }]}
+            onChange={(v) => setEdges(v as ChamferOpts['edges'])}
+          />
+        </label>
+        <NumberField
+          label="Size" value={size} suffix="mm" step={0.5} testId="edges-size"
+          onCommit={setSize}
+        />
+      </div>
+      <div className="match-row">
+        <button
+          className="mini" data-testid="edges-apply" disabled={busy}
+          title="Rebuilds the part's mesh — hollow parts ease over on their inner rims too"
+          onClick={() => {
+            setBusy(true);
+            props.onChamfer(props.partId, { style, edges, sizeMm: size })
+              .then(() => setError(null))
+              .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+              .finally(() => setBusy(false));
+          }}
+        >{busy ? 'Rebuilding…' : props.edited ? 'Re-apply edges' : 'Apply edges'}</button>
+        {props.edited && (
+          <button
+            className="mini" data-testid="edges-restore"
+            title="Bring back the part's original sharp edges"
+            onClick={() => props.onRestore(props.partId)}
+          >Restore original</button>
+        )}
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+    </Section>
   );
 }
 

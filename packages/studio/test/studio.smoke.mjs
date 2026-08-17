@@ -273,6 +273,41 @@ check('camera reframed after the resize (model in view, not engulfing it)',
   afterResize > 0.02 && afterResize < 0.92, afterResize.toFixed(4));
 await shoot('2-anchored.png');
 
+// ── 6a. edge chamfer: rebuild the cap's edges, then restore ────────────────
+// The Edges section is a GEOMETRY edit through the Manifold kernel (WASM in
+// the browser): Apply swaps the part's mesh for a bevelled rebuild, Restore
+// puts the stashed original back. Base and cap don't share meshes, so the
+// manifest must come through untouched.
+{
+  const vertsOfCap = () => page.evaluate(() =>
+    window.__studioViewer?.meshOf?.('cap')?.geometry?.attributes?.position?.count ?? null);
+  check('the Edges section offers style, where and size',
+    await page.isVisible('[data-testid="edges-style"]')
+    && await page.isVisible('[data-testid="edges-where"]')
+    && await page.isVisible('[data-testid="edges-size"]'), '');
+  const beforeVerts = await vertsOfCap();
+  const meshRefBefore = (await manifest()).parts[1].mesh;
+  await page.fill('[data-testid="edges-size"]', '1');
+  await page.press('[data-testid="edges-size"]', 'Enter');
+  await page.click('[data-testid="edges-apply"]');
+  await page.waitForFunction((n) => {
+    const c = window.__studioViewer?.meshOf?.('cap')?.geometry?.attributes?.position?.count;
+    return !!c && c !== n;
+  }, beforeVerts, { timeout: 30_000 });
+  const afterVerts = await vertsOfCap();
+  check('applying a chamfer rebuilt the cap mesh (more vertices than the box had)',
+    afterVerts > beforeVerts, `${beforeVerts} → ${afterVerts}`);
+  m = await manifest();
+  check('an unshared mesh keeps its manifest reference', m.parts[1].mesh === meshRefBefore, m.parts[1].mesh);
+  check('the restore button appeared', await page.isVisible('[data-testid="edges-restore"]'), '');
+  await page.click('[data-testid="edges-restore"]');
+  await page.waitForFunction((n) =>
+    window.__studioViewer?.meshOf?.('cap')?.geometry?.attributes?.position?.count === n,
+  beforeVerts, { timeout: 15_000 });
+  check('restore brought the original geometry back', await vertsOfCap() === beforeVerts, await vertsOfCap());
+  check('…and the restore button folded away', !(await page.isVisible('[data-testid="edges-restore"]')), '');
+}
+
 // ── 6b. what the viewer draws is where the layout engine says parts are ────
 // Guards the transform-pivot class of bug: layout scales about part centres,
 // so the meshes must too — a scaled, anchored pair diverges immediately if

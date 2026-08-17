@@ -18,6 +18,7 @@ import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
 import type { ImportedPart } from './lib/types.ts';
 import { writeGlb } from './lib/write-glb.ts';
+import { chamferPart, type ChamferOpts } from './lib/chamfer.ts';
 import {
   boundsOf, boundsByPartId, mergeModel, emptyManifest, slug, EMPTY_BOUNDS, type PartBounds,
 } from './lib/manifest-init.ts';
@@ -313,6 +314,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     setProject(emptyProject());
     pastRef.current = [];
     futureRef.current = [];
+    edgeOriginalsRef.current.clear();
+    setEdgeEdited(new Set());
     setSelectedPart(null);
     setEditingGroup(null);
     setEditingVariant(null);
@@ -443,6 +446,69 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     const modelUrl = URL.createObjectURL(new Blob([writeGlb(old.model.parts)], { type: 'model/gltf-binary' }));
     const raw = boundsByPartId(manifest, boundsOf(old.model.parts));
     setProject({ ...old, manifest, raw, modelUrl });
+  }, []);
+
+  // Edge treatments (Edges section in the part editor) are GEOMETRY edits,
+  // which the manifest-only history cannot undo — so the pre-treatment mesh
+  // is stashed per part and the editor offers "Restore" instead. Re-applying
+  // always recomputes from that original, so tweaking the size never
+  // compounds one bevel on top of another.
+  const edgeOriginalsRef = useRef<Map<string, ImportedPart>>(new Map());
+  const [edgeEdited, setEdgeEdited] = useState<Set<string>>(new Set());
+
+  const chamferPartInApp = useCallback(async (partId: string, opts: ChamferOpts) => {
+    const before = projectRef.current;
+    const partDef = before.manifest.parts.find((p) => p.id === partId);
+    if (!partDef) return;
+    const [sourceId, meshName] = partDef.mesh.split('#');
+    const current = before.model.parts.find((m) => m.name === meshName);
+    if (!current) throw new Error('No geometry for this part.');
+    const base = edgeOriginalsRef.current.get(partId) ?? current;
+    const treated = await chamferPart(base, opts); // may throw ChamferError — the section shows it
+    // The await yielded; re-read the project so an edit that landed
+    // meanwhile is built on, not clobbered.
+    const old = projectRef.current;
+    if (!old.manifest.parts.some((p) => p.id === partId)) return; // deleted while computing
+    let manifest = old.manifest;
+    let name = meshName;
+    const shared = old.manifest.parts.some((p) => p.id !== partId && p.mesh.split('#')[1] === meshName);
+    if (shared) {
+      // Duplicates share one mesh; only THIS part's edges change, so it
+      // gets its own copy of the geometry under a fresh name.
+      name = `${meshName}-edges`;
+      for (let k = 2; old.model.parts.some((m) => m.name === name); k++) name = `${meshName}-edges-${k}`;
+      manifest = structuredClone(old.manifest);
+      manifest.parts.find((p) => p.id === partId)!.mesh = `${sourceId}#${name}`;
+      pastRef.current.push(old.manifest);
+      if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
+      futureRef.current = [];
+    }
+    if (!edgeOriginalsRef.current.has(partId)) edgeOriginalsRef.current.set(partId, base);
+    setEdgeEdited((s) => new Set(s).add(partId));
+    const replaced = { name, positions: treated.positions, indices: treated.indices };
+    const parts = shared
+      ? [...old.model.parts, replaced]
+      : old.model.parts.map((m) => (m.name === meshName ? replaced : m));
+    const raw = boundsByPartId(manifest, boundsOf(parts));
+    URL.revokeObjectURL(old.modelUrl);
+    const modelUrl = URL.createObjectURL(new Blob([writeGlb(parts)], { type: 'model/gltf-binary' }));
+    setProject({ ...old, model: { ...old.model, parts }, manifest, raw, modelUrl });
+  }, []);
+
+  const restoreEdgesInApp = useCallback((partId: string) => {
+    const old = projectRef.current;
+    const original = edgeOriginalsRef.current.get(partId);
+    const partDef = old.manifest.parts.find((p) => p.id === partId);
+    if (!original || !partDef) return;
+    const meshName = partDef.mesh.split('#')[1];
+    const parts = old.model.parts.map((m) => (m.name === meshName
+      ? { name: meshName, positions: original.positions, indices: original.indices } : m));
+    edgeOriginalsRef.current.delete(partId);
+    setEdgeEdited((s) => { const next = new Set(s); next.delete(partId); return next; });
+    const raw = boundsByPartId(old.manifest, boundsOf(parts));
+    URL.revokeObjectURL(old.modelUrl);
+    const modelUrl = URL.createObjectURL(new Blob([writeGlb(parts)], { type: 'model/gltf-binary' }));
+    setProject({ ...old, model: { ...old.model, parts }, raw, modelUrl });
   }, []);
 
   // Add a model file to the project: parts renamed clear of clashes, manifest
@@ -781,6 +847,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
               onPlaceImage={(id) => setPlacing({ kind: 'image', partId: id })}
               onShapeText={shapeTextInApp}
               shapingText={shapingText}
+              onChamfer={chamferPartInApp}
+              onRestoreEdges={restoreEdgesInApp}
+              edgesEdited={edgeEdited.has(selectedPart)}
             />
           : null)
     : null;
