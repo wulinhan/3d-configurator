@@ -6,6 +6,7 @@
 
 import type { Manifest, TextureType } from '../../../embed/src/manifest/types.ts';
 import { TEXTURE_CHOICES } from '../../../embed/src/runtime/textures.ts';
+import { DEFAULT_EXPOSURE, MAX_EXPOSURE, MAX_ENV, highlightsFlatten } from '../../../embed/src/runtime/viewer.ts';
 import { setPartMaterial, setScene } from '../lib/manifest-edit.ts';
 import type { Project, SetManifestOptions } from '../App.tsx';
 import { Select } from './controls.tsx';
@@ -41,9 +42,15 @@ export function FinishPanel(props: {
           reflections, and how strongly it sits on its shadow. Ships with the
           manifest; the storefront lights it exactly this way.
         </p>
-        {sceneSlider('Light', 'exposure', scene.exposure ?? 1.25, 0.3, 2.5, 'scene-exposure')}
-        {sceneSlider('Reflect', 'environmentIntensity', scene.environmentIntensity ?? 0.5, 0, 1.5, 'scene-env')}
+        {sceneSlider('Light', 'exposure', scene.exposure ?? DEFAULT_EXPOSURE, 0.2, MAX_EXPOSURE, 'scene-exposure')}
+        {sceneSlider('Reflect', 'environmentIntensity', scene.environmentIntensity ?? 0.5, 0, MAX_ENV, 'scene-env')}
         {sceneSlider('Shadow', 'shadowOpacity', scene.shadowOpacity ?? 0.2, 0, 1, 'scene-shadow')}
+        {highlightsFlatten(scene.exposure, scene.environmentIntensity) && (
+          <p className="hint warn" data-testid="scene-flat-warning">
+            Light and Reflect together are washing the highlights out — pale
+            finishes will start looking like each other. Ease one of them back.
+          </p>
+        )}
       </section>
       <p className="hint">
         How each part's surface catches light. Finish ships with the manifest —

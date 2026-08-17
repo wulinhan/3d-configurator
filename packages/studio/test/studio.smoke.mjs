@@ -703,19 +703,19 @@ await shoot('2-anchored.png');
   // Scene sliders: staging knobs land in the manifest AND on the renderer.
   await page.locator('[data-testid="scene-exposure"]').evaluate((el) => {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    setter.call(el, '1.8');
+    setter.call(el, '0.85');
     el.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await page.waitForTimeout(250);
   m = await manifest();
   check('the light slider writes scene.exposure',
-    near(m.scene?.exposure ?? -1, 1.8), m.scene);
+    near(m.scene?.exposure ?? -1, 0.85), m.scene);
   check('…and the renderer follows live', await page.evaluate(() =>
-    Math.abs(window.__studioViewer.renderer.toneMappingExposure - 1.8) < 1e-6), '');
+    Math.abs(window.__studioViewer.renderer.toneMappingExposure - 0.85) < 1e-6), '');
   await page.keyboard.press('Control+z');
   await page.waitForTimeout(200);
   check('undo returns the default staging', await page.evaluate(() =>
-    Math.abs(window.__studioViewer.renderer.toneMappingExposure - 1.25) < 1e-6), '');
+    Math.abs(window.__studioViewer.renderer.toneMappingExposure - 0.6) < 1e-6), '');
 
   // Procedural texture library: pick a finish, tune it, clear it.
   await pick('texture-base', 'leather');

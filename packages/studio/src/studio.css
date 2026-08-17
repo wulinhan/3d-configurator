@@ -210,6 +210,10 @@ input, select { font: inherit; }
 }
 .setup-step.is-done .setup-step-tick { background: #E0F0E3; border-color: #A6D3AE; color: #1F6B2E; }
 .hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink2); }
+.hint.warn {
+  padding: 8px 10px; border-radius: 8px;
+  background: #FDF6E7; border: 1.5px solid #E8D9A8; color: #7A5B12;
+}
 .empty { color: var(--ink2); font-size: 13px; padding: 16px; }
 
 .snap-hint {

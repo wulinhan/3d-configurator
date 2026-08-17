@@ -34,10 +34,49 @@ import type { SurfaceProbe } from './wrap.ts';
  * scaled back up to match (LIGHT_SCALE), then the ambient share was pulled
  * down: at the legacy balance the ambient term alone exceeded 1.0, so every
  * face of a white part clipped to the same flat 255 and the model read as a
- * silhouette. Filmic tone mapping plus a smaller ambient keeps whites bright
- * (~235) while letting the key light and environment carve visible form.
+ * silhouette. Tone mapping plus a smaller ambient keeps whites bright
+ * (~237) while letting the key light and environment carve visible form.
+ *
+ * The curve is Khronos PBR Neutral, not ACES. ACES stopped the CLIPPING
+ * but not the convergence behind it: its shoulder squeezed everything
+ * light into the same corner, so #FEFEFE and a silver #C8C8C8 rendered
+ * eleven levels apart — and five at the top of the Light slider, which is
+ * "silver looks white" all over again. Neutral holds its slope far longer:
+ * the same pair now lands 47 apart at rest and never closer than about a
+ * dozen at maximum brightness. Fidelity is the point of a product
+ * configurator, which is exactly what that curve was designed for.
  */
 const LIGHT_SCALE = Math.PI;
+
+/** A stored exposure, read on the curve it was authored for. Anything
+ * above the current maximum can only have come from the ACES era, where
+ * the same brightness needed roughly twice the number. */
+const legacyExposure = (value?: number): number => {
+  if (value === undefined) return DEFAULT_EXPOSURE;
+  return value > MAX_EXPOSURE ? value * 0.48 : value;
+};
+
+/** Staging defaults. EXPOSURE is calibrated to the Neutral curve — under
+ * the old ACES curve the same look needed ~1.25, so a manifest still
+ * carrying a value from then is rescaled on read rather than rendering
+ * blown out (see applyScene). */
+export const DEFAULT_EXPOSURE = 0.6;
+/** The most a merchant can ask for, and the point past which light
+ * colours start collapsing into each other again. */
+export const MAX_EXPOSURE = 1.0;
+export const MAX_ENV = 1.0;
+
+/**
+ * Does this staging flatten the highlights? Light and Reflect multiply, so
+ * either alone at maximum still leaves pale finishes about a dozen levels
+ * apart, but both together closes that to two or three — measurably the
+ * old "silver looks white". Rather than forbid the combination (over-
+ * lighting is a legitimate choice), the Finish panel says so. The
+ * threshold is fitted to measured white-vs-silver separation: drive 0.85
+ * reads ~12 levels apart, 1.0 and up reads under 10.
+ */
+export const highlightsFlatten = (exposure?: number, env?: number): boolean =>
+  (exposure ?? DEFAULT_EXPOSURE) * (0.35 + (env ?? 0.5)) > 0.95;
 
 /**
  * Meshopt decoder, loaded only if a model actually uses the extension.
@@ -334,8 +373,8 @@ export class Viewer {
     // Highlight rolloff instead of hard clipping — the reason white parts
     // show their chamfers and logos rather than rendering as a flat sheet.
     // The clear colour bypasses tone mapping, so the background is unchanged.
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
+    this.renderer.toneMappingExposure = DEFAULT_EXPOSURE;
     this.renderer.setClearColor(new THREE.Color(cam.background ?? '#F8F6F1'));
 
     // Near at 1 mm, not 0.1: a 50 000:1 far/near ratio starves the depth
@@ -562,7 +601,7 @@ export class Viewer {
   /** Manifest scene knobs → renderer state. Safe to call any time. */
   private applyScene(): void {
     const s = this.manifest.scene ?? {};
-    this.renderer.toneMappingExposure = s.exposure ?? 1.25;
+    this.renderer.toneMappingExposure = legacyExposure(s.exposure);
     this.scene.environmentIntensity = s.environmentIntensity ?? 0.5;
     if (this.shadowCatcher) {
       (this.shadowCatcher.material as THREE.ShadowMaterial).opacity = s.shadowOpacity ?? 0.2;

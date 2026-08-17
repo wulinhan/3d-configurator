@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
-import { Viewer, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
+import { Viewer, highlightsFlatten, type SurfaceHit } from '../../../embed/src/runtime/viewer.ts';
 import type { TextOption } from '../../../embed/src/manifest/types.ts';
 import { openCurveSegments, curvePoint, type Pt } from '../../../embed/src/runtime/text-path.ts';
 import { applyGizmoPose, setCameraView, setTextPath, snapFaces, nudgeEntry, rotateEntry, scaleEntryBy, type GizmoPose } from '../lib/manifest-edit.ts';
@@ -142,6 +142,7 @@ export function ViewerPane(props: {
     viewer.setPanEnabled(true); // right-drag / two-finger pan while authoring
     viewerRef.current = viewer;
     (window as any).__studioViewer = viewer; // test hook
+    (window as any).__studioHighlightsFlatten = highlightsFlatten; // test hook
     let disposed = false;
 
     // A whole drag is ONE undo step: the first commit of a gesture records
