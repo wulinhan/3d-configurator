@@ -1536,13 +1536,19 @@ export class Viewer {
     if (!mesh) return;
     const centre = this.centres.get(partId) ?? [0, 0, 0];
     // Edges render as thin TUBES, not hairlines: a tube has real pixels to
-    // see and real surface to click, sized to the part so a coaster and a
-    // metre-wide sign both read. Half the tube sinks into the surface —
-    // what shows is a rounded highlight hugging the edge.
+    // see and real surface to click. The tube is a CHILD of the part, so
+    // its radius is picked in WORLD size and divided by the part's scale —
+    // a base blown up 4× must not wear a 4×-fat highlight — and it centres
+    // exactly on the edge: the visible sliver is the tube's outer quarter
+    // hugging the corner.
     (mesh as THREE.Mesh).geometry.computeBoundingBox();
     const bb = (mesh as THREE.Mesh).geometry.boundingBox;
-    const diag = bb ? bb.min.distanceTo(bb.max) : 60;
-    const radius = Math.min(0.9, Math.max(0.18, diag * 0.009));
+    mesh.updateWorldMatrix(true, false);
+    const ws = new THREE.Vector3();
+    mesh.getWorldScale(ws);
+    const worldScale = Math.max(Math.abs(ws.x), Math.abs(ws.y), Math.abs(ws.z), 1e-6);
+    const diag = (bb ? bb.min.distanceTo(bb.max) : 60) * worldScale;
+    const radius = Math.min(0.7, Math.max(0.16, diag * 0.0035)) / worldScale;
     const group = new THREE.Group();
     group.name = 'edge-pick';
     const lines = new Map<string, THREE.Mesh>();

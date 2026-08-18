@@ -296,17 +296,26 @@ function ProjectCard(props: {
   };
 
   const tag = <span className={`dash-tag${p.live ? ' is-live' : ''}`}>{p.live ? 'Published' : 'Draft'}</span>;
-  // A quiet person mark on shared projects — the card says at a glance
-  // that other people can open this one.
+  // Shared projects wear the people themselves: a person mark stacked with
+  // an initials chip per collaborator (the first few, then a +count).
+  const stackNames = (p.sharedWith ?? []).slice(0, 3);
+  const overflow = Math.max(0, (p.shareCount ?? stackNames.length) - stackNames.length);
   const sharedMark = p.shared ? (
-    <span className="dash-shared" title="Shared with others" data-testid={`shared-mark-${p.id}`}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
-        strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="9" cy="8" r="3.4" />
-        <path d="M3.5 20c.6-3.4 2.8-5.2 5.5-5.2s4.9 1.8 5.5 5.2" />
-        <circle cx="17" cy="9" r="2.6" />
-        <path d="M16.2 14.6c2.3.2 4 1.8 4.4 4.6" />
-      </svg>
+    <span
+      className="dash-shared-stack" data-testid={`shared-mark-${p.id}`}
+      title={`Shared with ${(p.sharedWith ?? []).map((u) => u.name || u.email).join(', ') || 'others'}`}
+    >
+      <span className="dash-shared" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1"
+          strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="8.2" r="3.9" />
+          <path d="M4.5 20.5c.8-4 3.7-6.2 7.5-6.2s6.7 2.2 7.5 6.2" />
+        </svg>
+      </span>
+      {stackNames.map((u) => (
+        <span key={u.email} className="dash-shared dash-shared-avatar">{initials(u.email)}</span>
+      ))}
+      {overflow > 0 && <span className="dash-shared dash-shared-avatar">+{overflow}</span>}
     </span>
   ) : null;
 

@@ -12,7 +12,7 @@
 // that slides in over the stage's right edge whenever a part or assembly is
 // selected — the stage keeps its full width, the properties come to you.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Manifest, ChoiceOption } from '../../embed/src/manifest/types.ts';
 import { defaultSelections } from '../../embed/src/runtime/state.ts';
 import { importModel, AXIS_PRESETS, type OrientedModel } from './lib/import-model.ts';
@@ -28,7 +28,7 @@ import {
 } from './lib/manifest-edit.ts';
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
-import { PartEditor, GroupEditor, VariantEditor } from './ui/PartEditor.tsx';
+import { PartEditor, GroupEditor, VariantEditor, partSections, entrySections } from './ui/PartEditor.tsx';
 import { PalettePanel } from './ui/PalettePanel.tsx';
 import { FinishPanel } from './ui/FinishPanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
@@ -61,6 +61,18 @@ export interface PartColour {
   label?: string;
 }
 
+/** One edge amendment: a chamfer or round-over the merchant applied,
+ * revisitable from the Edges section. Edges are remembered by centroid and
+ * length so the list can replay from the original mesh. */
+export interface EdgeOp {
+  id: string;
+  style: 'chamfer' | 'round';
+  sizeMm: number;
+  picks: Array<{ centroid: [number, number, number]; lengthMm: number }>;
+  /** How many edges the last replay actually matched. */
+  count: number;
+}
+
 export interface SetManifestOptions {
   /** Replace the current manifest without recording an undo step — used by
    * live gizmo commits so a drag lands as a single history entry. */
@@ -70,8 +82,7 @@ export interface SetManifestOptions {
 const TABS = ['Parts', 'Palette', 'Finish'] as const;
 type Tab = typeof TABS[number];
 const HISTORY_LIMIT = 100;
-const PANEL_MIN = 280;
-const PANEL_MAX = 560;
+const PANEL_WIDTH = 400;
 
 const isVariantOption = (m: Manifest, optionId: string): boolean => {
   const o = m.options.find((x) => x.id === optionId);
@@ -157,6 +168,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   const [project, setProject] = useState<Project>(emptyProject);
   const [tab, setTab] = useState<Tab>('Parts');
   const [selectedPart, setSelectedPart] = useState<string | null>(null);
+  /** Which property section's panel is open — driven by the viewport's
+   * icon rail; null keeps the stage clean. */
+  const [openSection, setOpenSection] = useState<string | null>(null);
   const [editingGroup, setEditingGroup] = useState<string | null>(null);
   const [editingVariant, setEditingVariant] = useState<string | null>(null);
   const [hiddenParts, setHiddenParts] = useState<Set<string>>(new Set());
@@ -178,7 +192,6 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
   // The text slot whose baseline curve is being shaped in the viewport.
   const [shapingText, setShapingText] = useState<string | null>(null);
-  const [panelWidth, setPanelWidth] = useState(380);
   const [panelOpen, setPanelOpen] = useState(true);
   // Which choice each pick-one option shows while authoring — the merchant's
   // temporary pick, never written to the manifest.
@@ -316,7 +329,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     pastRef.current = [];
     futureRef.current = [];
     edgeOriginalsRef.current.clear();
-    setEdgeEdited(new Set());
+    setEdgeOps(new Map());
     previewSeqRef.current++;
     setEdgeMode(null);
     setEdgePreview(null);
@@ -381,6 +394,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   // can be visible and edited at once" means clicking the other one shows it.
   const selectPart = useCallback((id: string | null) => {
     setSelectedPart(id);
+    setOpenSection(null);
     if (id) { setEditingGroup(null); setEditingVariant(null); }
     if (!id) return;
     const m = projectRef.current?.manifest;
@@ -458,7 +472,6 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   // Treatments stack (chamfer one edge, then another) exactly like Fusion;
   // Restore rewinds the lot.
   const edgeOriginalsRef = useRef<Map<string, ImportedPart>>(new Map());
-  const [edgeEdited, setEdgeEdited] = useState<Set<string>>(new Set());
 
   // The Fusion-style picker: which part is in edge-select mode, its detected
   // sharp-edge chains, and the chains clicked so far.
@@ -549,45 +562,56 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   // Commit the treatment: same as the preview, then swap the mesh into the
   // model for real. Duplicates sharing this mesh get their own copy under a
   // fresh name so only THIS part's edges change.
-  const chamferPartInApp = useCallback(async (partId: string, opts: EdgeOpts) => {
-    try {
-      await commitChamfer(partId, opts);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err));
-      throw err;
-    }
-  }, [showToast]); // eslint-disable-line react-hooks/exhaustive-deps
+  /**
+   * Every edge treatment on a part is an AMENDMENT the merchant can revisit
+   * — listed in the Edges section like text slots, its size and style
+   * editable after the fact. Editing any amendment replays the whole list
+   * from the stashed original mesh, so changes never compound. An
+   * amendment refinds its edges by centroid+length after earlier
+   * amendments reshaped the mesh; one that no longer matches is dropped
+   * with a toast instead of cutting the wrong thing.
+   */
+  const [edgeOps, setEdgeOps] = useState<Map<string, EdgeOp[]>>(new Map());
+  const opSeq = useRef(0);
 
-  const commitChamfer = useCallback(async (partId: string, opts: EdgeOpts) => {
-    const mode = edgeModeRef.current;
-    if (!mode || mode.partId !== partId || !mode.selected.length) {
-      throw new Error('Select at least one edge first.');
+  const resolvePicks = (chains: EdgeChain[], op: EdgeOp): string[] => {
+    const ids = new Set<string>();
+    for (const pick of op.picks) {
+      let best: { id: string; d: number } | null = null;
+      for (const c of chains) {
+        const d = Math.hypot(c.centroid[0] - pick.centroid[0], c.centroid[1] - pick.centroid[1], c.centroid[2] - pick.centroid[2]);
+        const lengthOk = c.lengthMm > pick.lengthMm * 0.6 && c.lengthMm < pick.lengthMm * 1.66;
+        if (lengthOk && (!best || d < best.d)) best = { id: c.id, d };
+      }
+      if (best && best.d < Math.max(3, op.sizeMm * 2.5)) ids.add(best.id);
     }
-    const before = meshOfPart(partId);
-    if (!before) throw new Error('No geometry for this part.');
-    const treated = await chamferEdges(before.mesh, mode.chains, mode.selected, opts);
-    // The await yielded; re-read the project so an edit that landed
-    // meanwhile is built on, not clobbered.
+    return [...ids];
+  };
+
+  /** Commit a treated mesh into the model — shared-mesh cloning included. */
+  const commitTreatedMesh = useCallback((partId: string, treated: ImportedPart) => {
     const old = projectRef.current;
-    if (!old.manifest.parts.some((p) => p.id === partId)) return;
+    const partDef = old.manifest.parts.find((p) => p.id === partId);
+    if (!partDef) return;
+    const [sourceId, meshName] = partDef.mesh.split('#');
     let manifest = old.manifest;
-    let name = before.meshName;
-    const shared = old.manifest.parts.some((p) => p.id !== partId && p.mesh.split('#')[1] === before.meshName);
+    let name = meshName;
+    const shared = old.manifest.parts.some((p) => p.id !== partId && p.mesh.split('#')[1] === meshName);
     if (shared) {
-      name = `${before.meshName}-edges`;
-      for (let k = 2; old.model.parts.some((m) => m.name === name); k++) name = `${before.meshName}-edges-${k}`;
+      // Duplicates share one mesh; only THIS part's edges change, so it
+      // gets its own copy of the geometry under a fresh name.
+      name = `${meshName}-edges`;
+      for (let k = 2; old.model.parts.some((m) => m.name === name); k++) name = `${meshName}-edges-${k}`;
       manifest = structuredClone(old.manifest);
-      manifest.parts.find((p) => p.id === partId)!.mesh = `${before.sourceId}#${name}`;
+      manifest.parts.find((p) => p.id === partId)!.mesh = `${sourceId}#${name}`;
       pastRef.current.push(old.manifest);
       if (pastRef.current.length > HISTORY_LIMIT) pastRef.current.shift();
       futureRef.current = [];
     }
-    if (!edgeOriginalsRef.current.has(partId)) edgeOriginalsRef.current.set(partId, before.mesh);
-    setEdgeEdited((s) => new Set(s).add(partId));
     const replaced = { name, positions: treated.positions, indices: treated.indices };
     const parts = shared
       ? [...old.model.parts, replaced]
-      : old.model.parts.map((m) => (m.name === before.meshName ? replaced : m));
+      : old.model.parts.map((m) => (m.name === meshName ? replaced : m));
     const raw = boundsByPartId(manifest, boundsOf(parts));
     URL.revokeObjectURL(old.modelUrl);
     const modelUrl = URL.createObjectURL(new Blob([writeGlb(parts)], { type: 'model/gltf-binary' }));
@@ -597,29 +621,81 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     setEdgePreview(null);
     setProject({ ...old, model: { ...old.model, parts }, manifest, raw, modelUrl });
     const chains = featureEdges(treated.positions, treated.indices);
-    setEdgeMode(chains.length ? { partId, chains, selected: [] } : null);
-  }, [meshOfPart]);
-
-  const restoreEdgesInApp = useCallback((partId: string) => {
-    const old = projectRef.current;
-    const original = edgeOriginalsRef.current.get(partId);
-    const partDef = old.manifest.parts.find((p) => p.id === partId);
-    if (!original || !partDef) return;
-    const meshName = partDef.mesh.split('#')[1];
-    const parts = old.model.parts.map((m) => (m.name === meshName
-      ? { name: meshName, positions: original.positions, indices: original.indices } : m));
-    edgeOriginalsRef.current.delete(partId);
-    setEdgeEdited((s) => { const next = new Set(s); next.delete(partId); return next; });
-    const raw = boundsByPartId(old.manifest, boundsOf(parts));
-    URL.revokeObjectURL(old.modelUrl);
-    const modelUrl = URL.createObjectURL(new Blob([writeGlb(parts)], { type: 'model/gltf-binary' }));
-    previewSeqRef.current++;
-    setEdgePreview(null);
-    setProject({ ...old, model: { ...old.model, parts }, raw, modelUrl });
-    const chains = featureEdges(original.positions, original.indices);
     setEdgeMode((mode) => (mode?.partId === partId
       ? (chains.length ? { partId, chains, selected: [] } : null) : mode));
   }, []);
+
+  /** Replay a part's amendment list from its original mesh and commit. */
+  const rebuildEdgeOps = useCallback(async (partId: string, ops: EdgeOp[]) => {
+    const found = meshOfPart(partId);
+    if (!found) throw new Error('No geometry for this part.');
+    const original = edgeOriginalsRef.current.get(partId) ?? found.mesh;
+    let mesh = original;
+    const kept: EdgeOp[] = [];
+    for (const op of ops) {
+      const chains = featureEdges(mesh.positions, mesh.indices);
+      const ids = resolvePicks(chains, op);
+      if (!ids.length) {
+        showToast('One amendment no longer finds its edges after the change, so it was removed.');
+        continue;
+      }
+      mesh = await chamferEdges(mesh, chains, ids, { style: op.style, sizeMm: op.sizeMm });
+      kept.push({ ...op, count: ids.length });
+    }
+    if (!projectRef.current.manifest.parts.some((p) => p.id === partId)) return;
+    if (!kept.length) {
+      // Nothing left — the part returns to its untouched self.
+      edgeOriginalsRef.current.delete(partId);
+      setEdgeOps((m) => { const next = new Map(m); next.delete(partId); return next; });
+      commitTreatedMesh(partId, original);
+      return;
+    }
+    if (!edgeOriginalsRef.current.has(partId)) edgeOriginalsRef.current.set(partId, original);
+    setEdgeOps((m) => new Map(m).set(partId, kept));
+    commitTreatedMesh(partId, mesh);
+  }, [meshOfPart, commitTreatedMesh, showToast]);
+
+  /** Apply = append an amendment built from the current edge selection. */
+  const chamferPartInApp = useCallback(async (partId: string, opts: EdgeOpts) => {
+    try {
+      const mode = edgeModeRef.current;
+      if (!mode || mode.partId !== partId || !mode.selected.length) {
+        throw new Error('Select at least one edge first.');
+      }
+      const picks = mode.chains
+        .filter((c) => mode.selected.includes(c.id))
+        .map((c) => ({ centroid: c.centroid, lengthMm: c.lengthMm }));
+      const op: EdgeOp = { id: `op${++opSeq.current}`, style: opts.style, sizeMm: opts.sizeMm, picks, count: picks.length };
+      await rebuildEdgeOps(partId, [...(edgeOpsRef.current.get(partId) ?? []), op]);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  }, [rebuildEdgeOps, showToast]);
+
+  /** Retune or drop one amendment — the list replays from the original. */
+  const editEdgeOp = useCallback(async (partId: string, opId: string, patch: Partial<Pick<EdgeOp, 'style' | 'sizeMm'>> | null) => {
+    const ops = edgeOpsRef.current.get(partId) ?? [];
+    const next = patch === null
+      ? ops.filter((o) => o.id !== opId)
+      : ops.map((o) => (o.id === opId ? { ...o, ...patch } : o));
+    try {
+      await rebuildEdgeOps(partId, next);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err));
+    }
+  }, [rebuildEdgeOps, showToast]);
+
+  const restoreEdgesInApp = useCallback((partId: string) => {
+    const original = edgeOriginalsRef.current.get(partId);
+    if (!original) return;
+    edgeOriginalsRef.current.delete(partId);
+    setEdgeOps((m) => { const next = new Map(m); next.delete(partId); return next; });
+    commitTreatedMesh(partId, original);
+  }, [commitTreatedMesh]);
+
+  const edgeOpsRef = useRef(edgeOps);
+  edgeOpsRef.current = edgeOps;
 
   // Handlers above read the mode through a ref so their identities stay
   // stable while selection changes re-render.
@@ -846,29 +922,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     setProject({ ...old, manifest, raw, modelUrl });
   }, []);
 
-  // Divider: drag resizes the explorer, a click (no meaningful movement)
-  // collapses/expands it.
-  const onDividerDown = useCallback((e: ReactPointerEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = panelWidth;
-    const wasOpen = panelOpen;
-    let moved = false;
-    const move = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX;
-      if (!moved && Math.abs(dx) < 4) return;
-      moved = true;
-      if (!wasOpen) setPanelOpen(true);
-      setPanelWidth(Math.min(PANEL_MAX, Math.max(PANEL_MIN, (wasOpen ? startWidth : 0) + dx)));
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      if (!moved) setPanelOpen((o) => !o);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }, [panelWidth, panelOpen]);
+  // The explorer is FIXED-width — wide enough for every header icon —
+  // and the divider pill only collapses/expands it. Drag-to-resize kept
+  // eating clicks and cutting off the show/hide buttons at narrow widths.
 
   // The browser test reads and drives the app through this handle; it costs
   // nothing in production and makes "did the feature actually work" checkable.
@@ -914,17 +970,6 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
 
   // What Export would export: exactly the ☑-TICKED parts in the explorer.
   // Nothing ticked, nothing to export; the topbar button greys out.
-  const exportTarget = useMemo(() => {
-    if (!project || !checkedParts.length) return null;
-    const ticked = new Set(checkedParts);
-    const parts = project.manifest.parts.filter((p) => ticked.has(p.id));
-    if (!parts.length) return null;
-    return {
-      ids: parts.map((p) => p.id),
-      label: parts.length === 1 ? parts[0].label : `${parts.length} parts`,
-    };
-  }, [project?.manifest, checkedParts]);
-
   // The setup journey — detected from the manifest, in the customer's
   // order; the two flags it can't detect are remembered per project.
   const guideKey = `studio.guide.${cloudProjectId ?? project?.manifest.id ?? 'local'}`;
@@ -959,21 +1004,33 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
 
   // The floating properties panel: slides in when something is selected,
   // slides out (keeping its last content while it goes) when nothing is.
-  const floatContent = project && tab === 'Parts'
+  // The rail's sections for whatever is selected — and the single open
+  // panel it drives. No open section, no floating panel: the stage stays
+  // clean until an icon asks for its controls.
+  const railSections = useMemo(() => {
+    if (!project || tab !== 'Parts') return [];
+    if (editingVariant || editingGroup) return entrySections();
+    if (selectedPart) return partSections(project, selectedPart);
+    return [];
+  }, [project, tab, editingVariant, editingGroup, selectedPart]);
+
+  const floatContent = project && tab === 'Parts' && openSection
     ? (editingVariant
-      ? <VariantEditor key={editingVariant} project={project} optionId={editingVariant} onChange={setManifest} onRepeat={repeatEntryInApp} onShapeText={shapeTextInApp} shapingText={shapingText} />
+      ? <VariantEditor key={editingVariant} project={project} optionId={editingVariant} onChange={setManifest} onRepeat={repeatEntryInApp} onShapeText={shapeTextInApp} shapingText={shapingText} only={openSection} />
       : editingGroup
-        ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onRepeat={repeatEntryInApp} onShapeText={shapeTextInApp} shapingText={shapingText} />
+        ? <GroupEditor key={editingGroup} project={project} groupId={editingGroup} onChange={setManifest} onRepeat={repeatEntryInApp} onShapeText={shapeTextInApp} shapingText={shapingText} only={openSection} />
         : selectedPart
           ? <PartEditor
               key={selectedPart} project={project} partId={selectedPart} onChange={setManifest} onRepeat={repeatEntryInApp}
+              only={openSection}
               onPlaceText={(id) => setPlacing({ kind: 'text', partId: id })}
               onPlaceImage={(id) => setPlacing({ kind: 'image', partId: id })}
               onShapeText={shapeTextInApp}
               shapingText={shapingText}
               onChamfer={chamferPartInApp}
               onRestoreEdges={restoreEdgesInApp}
-              edgesEdited={edgeEdited.has(selectedPart)}
+              edgeOps={edgeOps.get(selectedPart) ?? []}
+              onEditEdgeOp={editEdgeOp}
               edgeMode={edgeMode?.partId === selectedPart ? edgeMode : null}
               onEdgeModeStart={startEdgeMode}
               onEdgeModeEnd={endEdgeMode}
@@ -1055,8 +1112,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
           </button>
         )}
         <button
-          className="ghost preview-btn" data-testid="export-open" disabled={!exportTarget}
-          title={exportTarget ? `Export ${exportTarget.label}` : 'Tick the ☐ boxes on the parts to export'}
+          className="ghost preview-btn" data-testid="export-open"
+          title="Choose parts and a format, get the file"
           onClick={() => setExporting(true)}
         >
           Export
@@ -1067,7 +1124,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
       </header>
 
       <div className="workspace">
-        <aside className="panel" style={{ width: panelOpen ? panelWidth : 0 }} aria-hidden={!panelOpen}>
+        <aside className="panel" style={{ width: panelOpen ? PANEL_WIDTH : 0 }} aria-hidden={!panelOpen}>
           <nav className="tabs" role="tablist">
             {TABS.map((t, i) => {
               // tabs wear the journey's numbers; a tick once their step is met
@@ -1089,8 +1146,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
               editingGroup={editingGroup}
               editingVariant={editingVariant}
               onSelectPart={selectPart}
-              onEditGroup={(id) => { setEditingGroup(id); if (id) setEditingVariant(null); }}
-              onEditVariant={(id) => { setEditingVariant(id); if (id) { setEditingGroup(null); setSelectedPart(null); } }}
+              onEditGroup={(id) => { setEditingGroup(id); setOpenSection(null); if (id) setEditingVariant(null); }}
+              onEditVariant={(id) => { setEditingVariant(id); setOpenSection(null); if (id) { setEditingGroup(null); setSelectedPart(null); } }}
               onAddModel={addModelParts}
               onAddParts={addGeneratedParts}
               axes={axes}
@@ -1113,8 +1170,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
 
         <div
           className="panel-divider" data-testid="panel-divider" role="separator"
-          aria-label={panelOpen ? 'Drag to resize the explorer; click to collapse' : 'Click to expand the explorer'}
-          onPointerDown={onDividerDown}
+          aria-label={panelOpen ? 'Collapse the explorer' : 'Expand the explorer'}
+          onClick={() => setPanelOpen((o) => !o)}
         >
           <span className="divider-pill" data-testid="panel-toggle">{panelOpen ? '◂' : '▸'}</span>
         </div>
@@ -1142,6 +1199,9 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
             } : null}
             onEdgeToggle={toggleEdge}
             previewGeometry={edgePreview}
+            railSections={railSections}
+            railActive={openSection}
+            onRailPick={setOpenSection}
           />
           {toast && <div className="toast" role="status" data-testid="studio-toast">{toast}</div>}
           <div className={`props-float${floatContent ? ' is-open' : ''}`} data-testid="props-float" aria-hidden={!floatContent}>
@@ -1150,8 +1210,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
         </div>
       </div>
       {previewing && <PreviewOverlay project={project} cloudProjectId={cloudProjectId} onClose={() => setPreviewing(false)} />}
-      {exporting && exportTarget && (
-        <ExportDialog manifest={project.manifest} target={exportTarget} onClose={() => setExporting(false)} />
+      {exporting && (
+        <ExportDialog manifest={project.manifest} initialChecked={checkedParts} onClose={() => setExporting(false)} />
       )}
       {deleteAsk && (() => {
         const parts = project.manifest.parts.filter((p) => deleteAsk.includes(p.id));

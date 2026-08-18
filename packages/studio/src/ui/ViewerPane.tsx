@@ -10,6 +10,7 @@
 // deselect and it returns to the model over the origin.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { SectionGlyph, type SectionIcon } from './section.tsx';
 import * as THREE from 'three';
 import type { Manifest } from '../../../embed/src/manifest/types.ts';
 import type { Selections } from '../../../embed/src/runtime/state.ts';
@@ -59,6 +60,11 @@ export function ViewerPane(props: {
   onEdgeToggle: (chainId: string, gesture: 'toggle' | 'similar') => void;
   /** Live, uncommitted geometry for a part — the chamfer preview. */
   previewGeometry: { partId: string; positions: Float32Array; indices: Uint32Array } | null;
+  /** The icon rail: one square per property section of whatever is
+   * selected. Clicking one slides that section's panel in from the right. */
+  railSections: Array<{ id: string; icon: SectionIcon; title: string }>;
+  railActive: string | null;
+  onRailPick: (id: string | null) => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -67,8 +73,6 @@ export function ViewerPane(props: {
   const viewerRef = useRef<Viewer | null>(null);
   const gizmoRef = useRef<Gizmo | null>(null);
   const axesRef = useRef<THREE.AxesHelper | null>(null);
-  const barRef = useRef<HTMLDivElement>(null);
-  const pillRef = useRef<HTMLSpanElement>(null);
   const [mode, setMode] = useState<GizmoMode>('off');
   // No parts, no tools: with nothing to transform or snap, the bar is inert.
   const hasParts = props.project.manifest.parts.length > 0;
@@ -437,23 +441,6 @@ export function ViewerPane(props: {
     gizmo.attachObject(proxy);
   }, [props.editingEntity, mode, props.project.manifest, props.selectedPart]);
 
-  // The dark pill glides onto the armed tool (the framer-motion layoutId tab
-  // pattern, done with a measured absolute span) and collapses away when no
-  // tool is armed — orbiting has no button to sit on.
-  useLayoutEffect(() => {
-    const bar = barRef.current;
-    const pill = pillRef.current;
-    if (!bar || !pill) return;
-    const activeId = snapArm !== null ? 'snap-tool' : mode === 'transform' ? 'gizmo-transform' : null;
-    const btn = activeId && bar.querySelector<HTMLButtonElement>(`[data-testid="${activeId}"]`);
-    if (!btn) {
-      pill.style.width = '0px';
-      return;
-    }
-    pill.style.left = `${btn.offsetLeft}px`;
-    pill.style.width = `${btn.offsetWidth}px`;
-  }, [mode, snapArm]);
-
   // Face snapping: two picks, first names the mover. The whole flat surface
   // under the pointer glows as a preview; the first pick keeps its glow (in
   // the accent colour) while the second is chosen.
@@ -742,24 +729,32 @@ export function ViewerPane(props: {
     <div className="stage" ref={stageRef}>
       <canvas ref={canvasRef} />
       <canvas ref={cubeRef} className="viewcube" width={92} height={92} data-testid="view-cube" />
-      <div className="gizmo-bar" role="toolbar" aria-label="Viewport tools" ref={barRef}>
-        <span className="mode-pill" ref={pillRef} aria-hidden="true" />
+      <div className="gizmo-bar" role="toolbar" aria-label="Viewport tools">
+        {props.railSections.map((s) => (
+          <button
+            key={s.id} data-testid={`rail-${s.id}`} title={s.title}
+            className={`rail-btn${props.railActive === s.id ? ' is-active' : ''}`}
+            onClick={() => props.onRailPick(props.railActive === s.id ? null : s.id)}
+          ><SectionGlyph name={s.icon} /></button>
+        ))}
+        {props.railSections.length > 0 && <span className="gizmo-sep" />}
         <button
           data-testid="gizmo-transform" disabled={!hasParts}
-          className={snapArm === null && mode === 'transform' ? 'is-active' : ''}
-          title="Move, rotate and scale the selected part — click again (or click empty space) to go back to orbiting"
+          className={`rail-btn${snapArm === null && mode === 'transform' ? ' is-active' : ''}`}
+          title="Transform — move, rotate and scale the selected part; click again (or click empty space) to go back to orbiting"
           onClick={() => { setMode(mode === 'transform' ? 'off' : 'transform'); setSnapArm(null); }}
-        >Transform</button>
+        ><SectionGlyph name="transform" /></button>
         <button
           data-testid="snap-tool" disabled={!hasParts}
-          className={snapArm !== null ? 'is-active' : ''}
+          className={`rail-btn${snapArm !== null ? ' is-active' : ''}`}
           onClick={() => { setSnapArm(snapArm === null ? 'first' : null); setSnapError(null); }}
-          title="Click a face on the part to move, then the face it should sit against"
-        >Snap</button>
-        <span className="gizmo-sep" />
-        <button data-testid="save-view" disabled={!hasParts} onClick={saveView} title="Customers will open the configurator from this angle">
-          {viewSaved ? 'Saved ✓' : 'Save view'}
-        </button>
+          title="Snap — click a face on the part to move, then the face it should sit against"
+        ><SectionGlyph name="snap" /></button>
+        <button
+          data-testid="save-view" disabled={!hasParts} onClick={saveView}
+          className={`rail-btn${viewSaved ? ' is-active' : ''}`}
+          title={viewSaved ? 'View saved — customers open from this angle' : 'Save view — customers will open the configurator from this angle'}
+        ><SectionGlyph name="view" /></button>
       </div>
       {snapArm !== null && (
         <div className="snap-hint" data-testid="snap-hint">

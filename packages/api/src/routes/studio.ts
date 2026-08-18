@@ -269,6 +269,8 @@ export function studioRoutes(deps: Deps): Route[] {
             updatedAt: p.updated_at, hasModel: !!p.model_asset_id,
             hasThumb: !!p.thumb_asset_id, live: p.live_publication_id,
             shared: (p.share_count ?? 0) > 0,
+            sharedWith: (p.shared_with ?? []).map((u) => ({ email: u.email, name: u.name })),
+            shareCount: p.share_count ?? 0,
           })),
         };
       },

@@ -25,6 +25,9 @@ export interface ProjectSummary {
   live: string | null;
   /** Someone else has been given access to this project. */
   shared?: boolean;
+  /** The first few people it is shared with, for the card's avatar stack. */
+  sharedWith?: Array<{ email: string; name: string | null }>;
+  shareCount?: number;
 }
 
 export interface ProjectDetail {

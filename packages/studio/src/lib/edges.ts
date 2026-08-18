@@ -24,8 +24,8 @@ export interface EdgeSeg {
 
 export interface EdgeChain {
   id: string;
-  /** Ordered polyline in raw mesh space, lifted ~0.15 mm off the surface
-   * along the corner bisector so the display line never z-fights the faces. */
+  /** Ordered polyline in raw mesh space, exactly on the edge — the viewer
+   * centres a thin tube on it, whose visible quarter hugs the corner. */
   displayPoints: Float32Array;
   closed: boolean;
   lengthMm: number;
@@ -33,6 +33,9 @@ export interface EdgeChain {
   /** Length-weighted overall direction — ~zero for a closed ring. What
    * "select similar" compares to find the parallel brothers of an edge. */
   dir: V3;
+  /** Length-weighted midpoint — how an edge AMENDMENT refinds its edges
+   * after the mesh around them was rebuilt by an earlier amendment. */
+  centroid: V3;
 }
 
 export const sub3 = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -200,28 +203,24 @@ export function featureEdges(
 
     let lengthMm = 0;
     let run: V3 = [0, 0, 0];
+    let mid: V3 = [0, 0, 0];
     for (const s of segs) {
-      lengthMm += Math.hypot(...sub3(s.b, s.a));
+      const l = Math.hypot(...sub3(s.b, s.a));
+      lengthMm += l;
       run = add3(run, sub3(s.b, s.a));
+      mid = add3(mid, scale(add3(s.a, s.b), l / 2));
     }
     const dir = norm(run);
+    const centroid: V3 = lengthMm > 0 ? scale(mid, 1 / lengthMm) : segs[0].a;
 
-    // Display polyline: each path vertex lifted along the average corner
-    // bisector of its adjacent segments.
+    // Display polyline: the exact edge. The tube the viewer draws is a
+    // mesh, not a hairline, so there is nothing to z-fight — centring it
+    // on the true corner is what makes the highlight SIT on the edge.
     const pts = new Float32Array((path.length + (closed ? 1 : 0)) * 3);
-    for (let i = 0; i < path.length; i++) {
-      const near = segs.filter((_, j) => closed
-        ? j === i || j === (i - 1 + segs.length) % segs.length
-        : j === i || j === i - 1);
-      let h: V3 = [0, 0, 0];
-      for (const s of near) h = add3(h, add3(s.n1, s.n2));
-      const lift = scale(norm(h), 0.15);
-      const p = add3(verts[path[i]], lift);
-      pts.set(p, i * 3);
-    }
+    for (let i = 0; i < path.length; i++) pts.set(verts[path[i]], i * 3);
     if (closed) pts.set(pts.slice(0, 3), path.length * 3);
 
-    chains.push({ id: `e${chains.length}`, displayPoints: pts, closed, lengthMm, segs, dir });
+    chains.push({ id: `e${chains.length}`, displayPoints: pts, closed, lengthMm, segs, dir, centroid });
   }
 
   // Longest first: the edges someone most likely wants sit at the top of

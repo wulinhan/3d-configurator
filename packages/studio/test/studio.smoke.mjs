@@ -103,6 +103,15 @@ const check = (name, pass, got = '') => {
 };
 const near = (a, b, tol = 1e-3) => Math.abs(a - b) < tol;
 
+// The properties panel opens one section at a time from the viewport's icon
+// rail; this opens (or keeps open) the section a flow is about to drive.
+const rail = async (id) => {
+  const sel = `[data-testid="rail-${id}"]`;
+  if (!(await page.isVisible(sel))) return;
+  const active = await page.evaluate((s) => document.querySelector(s)?.classList.contains('is-active'), sel);
+  if (!active) { await page.click(sel); await page.waitForTimeout(220); }
+};
+
 // ── 1. viewport-first start + first import ──────────────────────────────────
 // The Studio opens straight into the 3D viewport — no dropzone gate. The
 // first file comes in through the same ＋ Add parts input as every later one.
@@ -172,6 +181,7 @@ const sizeOf = async (id) => ({
   h: Number(await page.inputValue('[data-testid="size-h"]')),
   d: Number(await page.inputValue('[data-testid="size-d"]')),
 });
+await rail('size');
 let size = await sizeOf('base');
 check('Base shows 40 × 10 × 20 mm (W×H×D after Z-up import)',
   near(size.w, 40) && near(size.h, 10) && near(size.d, 20), size);
@@ -194,6 +204,7 @@ m = await manifest();
 check('scale stored as multipliers', near(m.parts[0].placement.scale[0], 2) && near(m.parts[0].placement.scale[1], 3), m.parts[0].placement.scale);
 
 // The stepper triangles tweak without typing: one click = one step.
+await rail('rotation');
 await page.click('[data-testid="rot-x-up"]');
 await page.waitForTimeout(150);
 m = await manifest();
@@ -204,6 +215,7 @@ m = await manifest();
 check('…and step it back to zero', (m.parts[0].placement?.rotation?.[0] ?? 0) === 0, m.parts[0].placement?.rotation);
 
 // ── 5. invalid size is rejected inline, manifest untouched ─────────────────
+await rail('size');
 await page.fill('[data-testid="size-w"]', '-5');
 await page.press('[data-testid="size-w"]', 'Enter');
 await page.waitForTimeout(200);
@@ -214,6 +226,7 @@ check('and the value snaps back', near(size.w, 80), size.w);
 // ── 6. anchor the cap against the base ──────────────────────────────────────
 await page.click('.part-name:has-text("Cap")');
 await page.waitForTimeout(150);
+await rail('position');
 // Anchors hide behind a one-line summary chip per axis; expanding an axis
 // reveals the full-width dropdown and the min/centre/max icon triads.
 const pick = async (selectId, optionValue) => {
@@ -281,6 +294,7 @@ await shoot('2-anchored.png');
 {
   const vertsOfCap = () => page.evaluate(() =>
     window.__studioViewer?.meshOf?.('cap')?.geometry?.attributes?.position?.count ?? null);
+  await rail('edges');
   check('the Edges section offers style, size and a picker',
     await page.isVisible('[data-testid="edges-style"]')
     && await page.isVisible('[data-testid="edges-size"]')
@@ -377,11 +391,8 @@ await shoot('2-anchored.png');
       && g.translate.object === g.rotate.object && g.rotate.object === g.scale.object);
   });
   check('all three gizmo layers attach to the selected part', attached, '');
-  const pill = await page.evaluate(() => ({
-    pill: document.querySelector('.mode-pill')?.getBoundingClientRect().left ?? -1,
-    active: document.querySelector('.gizmo-bar button.is-active')?.getBoundingClientRect().left ?? -2,
-  }));
-  check('the mode pill slid under the active mode', Math.abs(pill.pill - pill.active) < 2, pill);
+  check('the armed tool wears the active style', await page.evaluate(
+    () => !!document.querySelector('.gizmo-bar button.is-active')), '');
   check('origin axes step aside while the gizmo shows its own',
     await page.evaluate(() => window.__studioAxes.visible === false), '');
   const before = await manifest();
@@ -517,7 +528,9 @@ await shoot('2-anchored.png');
   check('…and the origin axes return', await page.evaluate(() => window.__studioAxes.visible === true), '');
   await page.click('.part-name:has-text("Cap")');
   await page.waitForTimeout(700);
-  check('selecting a part slides the properties panel in', await page.evaluate(
+  check('selecting a part surfaces its icon rail', await page.isVisible('[data-testid="rail-size"]'), '');
+  await rail('size');
+  check('clicking a rail icon slides the properties panel in', await page.evaluate(
     () => document.querySelector('[data-testid="props-float"]')?.classList.contains('is-open') === true), '');
   const chrome = await page.evaluate(() => {
     const bar = document.querySelector('.gizmo-bar').getBoundingClientRect();
@@ -525,14 +538,13 @@ await shoot('2-anchored.png');
     const cube = document.querySelector('.viewcube').getBoundingClientRect();
     const stage = document.querySelector('.stage').getBoundingClientRect();
     return {
-      widthDiff: Math.abs(bar.width - panel.width),
-      rightDiff: Math.abs(bar.right - panel.right),
+      centredDiff: Math.abs((bar.left + bar.right) / 2 - (stage.left + stage.right) / 2),
       stacked: bar.bottom <= panel.top,
       cubeFromLeft: cube.left - stage.left,
     };
   });
-  check('tool row sits right above the properties panel, same width and edge',
-    chrome.widthDiff < 2 && chrome.rightDiff < 2 && chrome.stacked, chrome);
+  check('the icon rail sits centred at the top of the viewport, above the panel',
+    chrome.centredDiff < 60 && chrome.stacked, chrome);
   check('view cube lives in the top-left corner', chrome.cubeFromLeft < 120, chrome.cubeFromLeft);
   // No Orbit tab any more — Transform is a toggle, and the deselect a few
   // checks back already disarmed it on its own.
@@ -880,17 +892,18 @@ await page.click('[data-testid="publish-close"]');
 await page.waitForTimeout(200);
 check('the publish modal closes', await page.evaluate(() => !document.querySelector('.publish-modal')), '');
 
-// Export: its own topbar dialog (where Preview used to live) — it exports
-// exactly the ☑-TICKED parts, so tick one first; the dialog closes itself
-// after each save.
-check('with nothing ticked the Export button is inactive',
-  await page.evaluate(() => document.querySelector('[data-testid="export-open"]')?.disabled === true), '');
+// Export: always reachable from the topbar — the dialog itself carries the
+// part picker (the explorer's list with tick boxes), pre-ticked from the
+// explorer's ☑ set; the dialog closes itself after each save.
+check('the Export button is always active',
+  await page.evaluate(() => document.querySelector('[data-testid="export-open"]')?.disabled === false), '');
 await page.check('[data-testid="pick-base"]');
 await page.waitForTimeout(150);
 await page.click('[data-testid="export-open"]');
-check('the export dialog names what it exports',
-  /Base/.test(await page.textContent('[data-testid="export-parts"]') ?? ''),
-  await page.textContent('[data-testid="export-parts"]'));
+check('the dialog lists parts with tick boxes, pre-ticked from the explorer',
+  await page.evaluate(() =>
+    document.querySelector('[data-testid="export-tick-base"] input')?.checked === true
+    && document.querySelector('[data-testid="export-tick-cap"] input')?.checked === false), '');
 const [stlDl] = await Promise.all([
   page.waitForEvent('download'),
   page.click('[data-testid="export-download"]'),
@@ -921,6 +934,7 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
   await page.click('.tabs button:has-text("Parts")');
   await page.click('.part-name:has-text("Base")');
   await page.waitForTimeout(150);
+  await rail('size');
   await page.fill('[data-testid="size-w"]', '90');
   await page.press('[data-testid="size-w"]', 'Enter');
   await page.waitForTimeout(200);
@@ -941,6 +955,7 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
   // Move-to-origin from the properties panel; one undo brings it back.
   await page.click('.part-name:has-text("Cap")');
   await page.waitForTimeout(400);
+  await rail('position');
   await page.click('[data-testid="to-origin"]');
   await page.waitForTimeout(250);
   const capBox = await page.evaluate(() => window.__studioViewer.partBox('cap'));
@@ -1076,6 +1091,7 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
   // exclusivity all copied; the viewer rebuilds so the copies render.
   await page.click('.part-name:has-text("Body style")');
   await page.waitForTimeout(200);
+  await rail('position');
   check('the set header opens the variant editor',
     await page.isVisible('[data-testid="variant-editor-body-style"]'), '');
   check('the set editor transforms like a part — position, rotation, no set-management section',
@@ -1209,23 +1225,16 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
     { groups: m.groups, options: m.options.map((o) => o.id) });
   await shoot('5-structure.png');
 
-  // 11e². the explorer panel resizes and collapses at its divider
+  // 11e². the explorer is fixed-width; its divider only collapses/expands
   const panelWidth = () => page.evaluate(() => document.querySelector('.panel').getBoundingClientRect().width);
   {
-    const divider = await page.locator('[data-testid="panel-divider"]').boundingBox();
-    await page.mouse.move(divider.x + divider.width / 2, divider.y + divider.height / 2);
-    await page.mouse.down();
-    for (let i = 1; i <= 5; i++) await page.mouse.move(divider.x + i * 24, divider.y + divider.height / 2);
-    await page.mouse.up();
-    await page.waitForTimeout(250);
-    const widened = await panelWidth();
-    check('dragging the divider widens the explorer', widened > 420, widened);
+    check('the explorer opens at its fixed width', (await panelWidth()) > 380, await panelWidth());
     await page.click('[data-testid="panel-divider"]');
     await page.waitForTimeout(350);
     check('clicking the divider collapses it', (await panelWidth()) < 10, await panelWidth());
     await page.click('[data-testid="panel-divider"]');
     await page.waitForTimeout(350);
-    check('…and expands it again', (await panelWidth()) > 420, await panelWidth());
+    check('…and expands it again', (await panelWidth()) > 380, await panelWidth());
   }
 
   // 11f. the customer preview is the real embed
@@ -1300,6 +1309,7 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
 {
   await page.click('.part-name:has-text("Base")');
   await page.waitForTimeout(200);
+  await rail('repeat');
   check('part editor offers the pattern tool', await page.isVisible('[data-testid="repeat-add"]'), '');
   const copies = () => page.evaluate(() => {
     let n = 0;
@@ -1362,6 +1372,7 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
 {
   await page.click('.part-name:has-text("Base")');
   await page.waitForTimeout(200);
+  await rail('text');
   await page.click('[data-testid="place-text"]');
   check('placing text prompts for a face', await page.isVisible('[data-testid="text-pick-hint"]'), '');
 
@@ -1606,6 +1617,7 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
 {
   await page.click('.part-name:has-text("Base")');
   await page.waitForTimeout(200);
+  await rail('image');
   check('part editor offers image-zone placement', await page.isVisible('[data-testid="place-image"]'), '');
   await page.click('[data-testid="place-image"]');
   check('placing an image zone prompts for a face', await page.isVisible('[data-testid="text-pick-hint"]'), '');

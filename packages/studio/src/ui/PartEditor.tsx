@@ -20,12 +20,12 @@ import {
   addRepeat, setRepeat, removeRepeat,
   AXIS_NAMES, type Axis,
 } from '../lib/manifest-edit.ts';
-import type { Project, SetManifestOptions } from '../App.tsx';
+import type { Project, SetManifestOptions, EdgeOp } from '../App.tsx';
 import type { EdgeOpts } from '../lib/chamfer.ts';
 import type { EdgeChain } from '../lib/edges.ts';
 import { NumberField } from './fields.tsx';
 import { Select } from './controls.tsx';
-import { Section } from './section.tsx';
+import { Section, type SectionIcon } from './section.tsx';
 
 const AXIS_LABELS = ['W', 'H', 'D'] as const; // x, y, z in canonical space
 const EDGES: AnchorEdge[] = ['min', 'center', 'max'];
@@ -203,7 +203,7 @@ function AttachSection(props: {
   const off = attach?.offsetMm ?? [0, 0, 0];
 
   return (
-    <Section title="Attach to another body" icon="position" testId="section-attach">
+    <Section title="Attach to another body" icon="attach" testId="section-attach">
       {!attach ? (
         <>
           <p className="hint">
@@ -364,6 +364,8 @@ function EntryMemberSlots(props: {
   act: (fn: () => Manifest, opts?: SetManifestOptions) => void;
   onShapeText: (optionId: string | null) => void;
   shapingText: string | null;
+  /** 'text' | 'image' shows just that half; null shows both. */
+  only?: string | null;
 }) {
   const { manifest } = props.project;
   const inSet = (part: string) => props.partIds.includes(part);
@@ -371,9 +373,10 @@ function EntryMemberSlots(props: {
   const imageZones = manifest.options.filter((o): o is UploadOption => o.type === 'upload' && inSet(o.part));
   if (!textSlots.length && !imageZones.length) return null;
   const partName = (id: string) => manifest.parts.find((p) => p.id === id)?.label ?? id;
+  const show = (id: string) => !props.only || props.only === id;
   return (
     <>
-      {textSlots.length > 0 && (
+      {textSlots.length > 0 && show('text') && (
         <Section title="3D text" icon="text" testId="section-text">
           <p className="hint">
             Text slots on parts inside — surfaced here so the whole thing
@@ -391,7 +394,7 @@ function EntryMemberSlots(props: {
           ))}
         </Section>
       )}
-      {imageZones.length > 0 && (
+      {imageZones.length > 0 && show('image') && (
         <Section title="Image zone" icon="image" testId="section-image">
           <p className="hint">
             Image zones on parts inside. To add one, open its part and click
@@ -419,6 +422,7 @@ export function GroupEditor(props: {
   onRepeat: (entryId: string, opts: RepeatOpts) => void;
   onShapeText: (optionId: string | null) => void;
   shapingText: string | null;
+  only?: string | null;
 }) {
   const { manifest } = props.project;
   const group = manifest.groups?.find((g) => g.id === props.groupId);
@@ -432,12 +436,13 @@ export function GroupEditor(props: {
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
 
+  const show = (id: string) => !props.only || props.only === id;
   return (
     <div className="part-editor" data-testid={`group-editor-${group.id}`}>
       <h3>{group.label} <span className="tag">assembly</span></h3>
       <p className="hint">Rename by double-clicking its name in the explorer. Duplicate and split live there too.</p>
-      <EntrySizeSection entryId={group.id} project={props.project} act={act} />
-      <EntryPlaceSections
+      {show('size') && <EntrySizeSection entryId={group.id} project={props.project} act={act} />}
+      {show('position') && <EntryPlaceSections
         entryId={group.id} project={props.project} act={act}
         toOrigin={{
           testId: 'group-to-origin',
@@ -445,12 +450,13 @@ export function GroupEditor(props: {
           label: 'Bring assembly to origin',
           make: () => groupToOrigin(manifest, group.id, props.project.raw),
         }}
-      />
+      />}
       <EntryMemberSlots
         partIds={group.parts} project={props.project} onChange={props.onChange} act={act}
         onShapeText={props.onShapeText} shapingText={props.shapingText}
+        only={props.only}
       />
-      <RepeatSection entryId={group.id} what="assembly" onRepeat={props.onRepeat} />
+      {show('repeat') && <RepeatSection entryId={group.id} what="assembly" onRepeat={props.onRepeat} />}
       {error && <p className="error" role="alert">{error}</p>}
     </div>
   );
@@ -463,6 +469,7 @@ export function VariantEditor(props: {
   onRepeat: (entryId: string, opts: RepeatOpts) => void;
   onShapeText: (optionId: string | null) => void;
   shapingText: string | null;
+  only?: string | null;
 }) {
   const { manifest } = props.project;
   const option = manifest.options.find((o): o is ChoiceOption => o.id === props.optionId && o.type === 'choice');
@@ -477,12 +484,13 @@ export function VariantEditor(props: {
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
 
+  const show = (id: string) => !props.only || props.only === id;
   return (
     <div className="part-editor" data-testid={`variant-editor-${option.id}`}>
       <h3>{option.label} <span className="tag">variants</span></h3>
       <p className="hint">Rename by double-clicking its name in the explorer. Duplicate and dissolve live there too.</p>
-      <EntrySizeSection entryId={option.id} project={props.project} act={act} />
-      <EntryPlaceSections
+      {show('size') && <EntrySizeSection entryId={option.id} project={props.project} act={act} />}
+      {show('position') && <EntryPlaceSections
         entryId={option.id} project={props.project} act={act}
         toOrigin={{
           testId: 'variant-to-origin',
@@ -490,12 +498,13 @@ export function VariantEditor(props: {
           label: 'Bring set to origin',
           make: () => variantToOrigin(manifest, option.id, props.project.raw),
         }}
-      />
+      />}
       <EntryMemberSlots
         partIds={memberIds} project={props.project} onChange={props.onChange} act={act}
         onShapeText={props.onShapeText} shapingText={props.shapingText}
+        only={props.only}
       />
-      <RepeatSection entryId={option.id} what="set" onRepeat={props.onRepeat} />
+      {show('repeat') && <RepeatSection entryId={option.id} what="set" onRepeat={props.onRepeat} />}
       {error && <p className="error" role="alert">{error}</p>}
     </div>
   );
@@ -518,8 +527,10 @@ export function PartEditor(props: {
   onChamfer: (partId: string, opts: EdgeOpts) => Promise<void>;
   /** Put back the part's stashed pre-treatment geometry. */
   onRestoreEdges: (partId: string) => void;
-  /** Whether this part currently carries an edge treatment to restore. */
-  edgesEdited: boolean;
+  /** The part's edge amendments — every one revisitable. */
+  edgeOps: EdgeOp[];
+  /** Patch (style/size) or remove (null) one amendment; the list replays. */
+  onEditEdgeOp: (partId: string, opId: string, patch: Partial<Pick<EdgeOp, 'style' | 'sizeMm'>> | null) => void;
   /** Edge-pick state for THIS part (null while the tool is off). */
   edgeMode: { chains: EdgeChain[]; selected: string[] } | null;
   onEdgeModeStart: (partId: string) => void;
@@ -527,6 +538,8 @@ export function PartEditor(props: {
   onEdgeClear: () => void;
   /** Debounced live preview: opts to show one, null to clear it. */
   onPreviewEdges: (partId: string, opts: EdgeOpts | null) => void;
+  /** Show ONLY this section — the viewport rail opens one at a time. */
+  only?: string | null;
 }) {
   const { manifest, raw } = props.project;
   const part = manifest.parts.find((p) => p.id === props.partId);
@@ -572,11 +585,15 @@ export function PartEditor(props: {
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
 
+  // The viewport rail opens one section at a time; with no `only` the whole
+  // editor renders (the shape every test and muscle memory knows).
+  const show = (id: string) => !props.only || props.only === id;
+
   return (
     <div className="part-editor" data-testid={`editor-${part.id}`}>
       <h3>{part.label}</h3>
 
-      <Section
+      {show('size') && <Section
         title="Size" icon="size" testId="section-size"
         aside={(
           <label className="lock">
@@ -599,9 +616,9 @@ export function PartEditor(props: {
             />
           ))}
         </div>
-      </Section>
+      </Section>}
 
-      {!part.attach && (
+      {!part.attach && show('position') && (
         <Section title="Position" icon="position" testId="section-position">
           {UI_AXES.map(({ label, axis }) => (
             <AxisAnchorRow
@@ -634,9 +651,9 @@ export function PartEditor(props: {
           </div>
         </Section>
       )}
-      {hasOtherParts && <AttachSection part={part} manifest={manifest} act={act} />}
+      {hasOtherParts && show('attach') && <AttachSection part={part} manifest={manifest} act={act} />}
 
-      <Section title="Rotation" icon="rotation" testId="section-rotation">
+      {show('rotation') && <Section title="Rotation" icon="rotation" testId="section-rotation">
         <div className="field-row">
           {UI_AXES.map(({ label, axis }) => (
             <NumberField
@@ -650,17 +667,18 @@ export function PartEditor(props: {
             />
           ))}
         </div>
-      </Section>
+      </Section>}
 
-      <EdgesSection
-        partId={part.id} edited={props.edgesEdited}
+      {show('edges') && <EdgesSection
+        partId={part.id} ops={props.edgeOps}
         edgeMode={props.edgeMode}
         onStart={props.onEdgeModeStart} onEnd={props.onEdgeModeEnd} onClear={props.onEdgeClear}
         onPreview={props.onPreviewEdges}
         onChamfer={props.onChamfer} onRestore={props.onRestoreEdges}
-      />
+        onEditOp={props.onEditEdgeOp}
+      />}
 
-      {colourOption && palette && (
+      {colourOption && palette && show('colour') && (
         <Section title="Colour" icon="colour" testId="section-colour">
           <label className="field wide">
             <span className="field-label">Customers open with</span>
@@ -694,7 +712,7 @@ export function PartEditor(props: {
         </Section>
       )}
 
-      {variantOf ? (
+      {show('addon') && (variantOf ? (
         <Section title="Variant set" icon="variant" testId="section-variant">
           <p className="hint">
             This part is one of the “{variantOf.label}” choices — customers pick
@@ -730,8 +748,8 @@ export function PartEditor(props: {
             />
           )}
         </Section>
-      )}
-      <Section title="3D text" icon="text" testId="section-text">
+      ))}
+      {show('text') && <Section title="3D text" icon="text" testId="section-text">
         <p className="hint">
           Customers type; their words extrude from a flat face of this part.
           Place the sketch plane by clicking a face, then set the typeface,
@@ -751,8 +769,8 @@ export function PartEditor(props: {
             onClick={() => props.onPlaceText(part.id)}
           >＋ Place text on a face</button>
         </div>
-      </Section>
-      <Section title="Image zone" icon="image" testId="section-image">
+      </Section>}
+      {show('image') && <Section title="Image zone" icon="image" testId="section-image">
         <p className="hint">
           Customers upload an image; it is projected onto this part inside the
           zone — flat or curved, the surface takes it. Click a face to place
@@ -771,8 +789,8 @@ export function PartEditor(props: {
             onClick={() => props.onPlaceImage(part.id)}
           >＋ Place image zone on a face</button>
         </div>
-      </Section>
-      {!inGroup && !variantOf && (
+      </Section>}
+      {!inGroup && !variantOf && show('repeat') && (
         <PartRepeatSection part={part} manifest={manifest} act={act} />
       )}
       {error && <p className="error" role="alert">{error}</p>}
@@ -788,7 +806,7 @@ export function PartEditor(props: {
 // is stashed on first apply and "Restore" rewinds every treatment.
 function EdgesSection(props: {
   partId: string;
-  edited: boolean;
+  ops: EdgeOp[];
   edgeMode: { chains: EdgeChain[]; selected: string[] } | null;
   onStart: (partId: string) => void;
   onEnd: () => void;
@@ -796,6 +814,7 @@ function EdgesSection(props: {
   onPreview: (partId: string, opts: EdgeOpts | null) => void;
   onChamfer: (partId: string, opts: EdgeOpts) => Promise<void>;
   onRestore: (partId: string) => void;
+  onEditOp: (partId: string, opId: string, patch: Partial<Pick<EdgeOp, 'style' | 'sizeMm'>> | null) => void;
 }) {
   const [style, setStyle] = useState<EdgeOpts['style']>('chamfer');
   const [size, setSize] = useState(1);
@@ -868,14 +887,51 @@ function EdgesSection(props: {
               .finally(() => setBusy(false));
           }}
         >{busy ? 'Rebuilding…' : 'Apply edges'}</button>
-        {props.edited && (
+        {props.ops.length > 0 && (
           <button
             className="mini" data-testid="edges-restore"
-            title="Bring back the part's original sharp edges"
+            title="Remove every amendment — the part's original sharp edges return"
             onClick={() => props.onRestore(props.partId)}
           >Restore original</button>
         )}
       </div>
+      {props.ops.length > 0 && (
+        <>
+          <p className="slot-subhead">Applied to this part</p>
+          {props.ops.map((op, i) => (
+            <div key={op.id} className="text-slot edge-op" data-testid={`edge-op-${op.id}`}>
+              <div className="field-row">
+                <label className="field">
+                  <span className="field-label">Style</span>
+                  <Select
+                    ariaLabel="Amendment style" testId={`edge-op-style-${op.id}`} compact
+                    value={op.style}
+                    options={[{ value: 'chamfer', label: 'Chamfer' }, { value: 'round', label: 'Rounded' }]}
+                    onChange={(v) => props.onEditOp(props.partId, op.id, { style: v as EdgeOp['style'] })}
+                  />
+                </label>
+                <NumberField
+                  label="Size" value={op.sizeMm} suffix="mm" step={0.5}
+                  testId={`edge-op-size-${op.id}`}
+                  onCommit={(v) => props.onEditOp(props.partId, op.id, { sizeMm: v })}
+                />
+                <span className="hint edge-op-count">#{i + 1} · {op.count} edge{op.count === 1 ? '' : 's'}</span>
+              </div>
+              <div className="match-row">
+                <button
+                  className="mini danger" data-testid={`edge-op-remove-${op.id}`}
+                  title="Undo just this amendment — the rest replay without it"
+                  onClick={() => props.onEditOp(props.partId, op.id, null)}
+                >Remove</button>
+              </div>
+            </div>
+          ))}
+          <p className="hint">
+            Amendments replay from the original shape, so retuning one never
+            stacks on another. They stay editable while this project is open.
+          </p>
+        </>
+      )}
     </Section>
   );
 }
@@ -1503,4 +1559,44 @@ function AxisAnchorRow(props: {
       )}
     </div>
   );
+}
+
+
+/** Which rail icons a PART offers — mirrors exactly what the editor would
+ * render, so the rail never points at an empty panel. */
+export function partSections(project: Project, partId: string): Array<{ id: string; icon: SectionIcon; title: string }> {
+  const manifest = project.manifest;
+  const part = manifest.parts.find((p) => p.id === partId);
+  if (!part) return [];
+  const colourOption = manifest.options.find(
+    (o): o is ColourOption => o.type === 'colour' && o.source !== 'used' && o.parts.includes(part.id));
+  const hasPalette = !!manifest.palettes?.some((p) => p.id === colourOption?.palette);
+  const visibleOption = part.visibleWhen ? manifest.options.find((o) => o.id === part.visibleWhen!.option) : undefined;
+  const variantOf = visibleOption?.type === 'choice' && (visibleOption as ChoiceOption).role === 'variant';
+  const inGroup = manifest.groups?.some((g) => g.parts.includes(part.id)) ?? false;
+  const hasOtherParts = manifest.parts.length > 1;
+  const out: Array<{ id: string; icon: SectionIcon; title: string }> = [
+    { id: 'size', icon: 'size', title: 'Size' },
+  ];
+  if (!part.attach) out.push({ id: 'position', icon: 'position', title: 'Position' });
+  if (hasOtherParts) out.push({ id: 'attach', icon: 'attach', title: 'Attach to another body' });
+  out.push({ id: 'rotation', icon: 'rotation', title: 'Rotation' });
+  out.push({ id: 'edges', icon: 'edges', title: 'Edges' });
+  if (colourOption && hasPalette) out.push({ id: 'colour', icon: 'colour', title: 'Colour' });
+  out.push({ id: 'addon', icon: variantOf ? 'variant' : 'addon', title: variantOf ? 'Variant set' : 'Add-on' });
+  out.push({ id: 'text', icon: 'text', title: '3D text' });
+  out.push({ id: 'image', icon: 'image', title: 'Image zone' });
+  if (!inGroup && !variantOf) out.push({ id: 'repeat', icon: 'repeat', title: 'Repeat' });
+  return out;
+}
+
+/** Rail icons for an assembly / variant-set editor. */
+export function entrySections(): Array<{ id: string; icon: SectionIcon; title: string }> {
+  return [
+    { id: 'size', icon: 'size', title: 'Size' },
+    { id: 'position', icon: 'position', title: 'Position & rotation' },
+    { id: 'text', icon: 'text', title: '3D text' },
+    { id: 'image', icon: 'image', title: 'Image zone' },
+    { id: 'repeat', icon: 'repeat', title: 'Repeat' },
+  ];
 }

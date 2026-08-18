@@ -75,12 +75,19 @@ input, select { font: inherit; }
  * slides in beneath it — one column of UI on the stage's right edge. The
  * view cube keeps the top-left corner. */
 .gizmo-bar {
-  position: absolute; top: 12px; right: 14px; width: 358px;
-  display: flex; gap: 2px; padding: 3px;
-  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 2px; padding: 4px;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, .06);
   z-index: 5;
+  max-width: calc(100% - 24px);
 }
+.gizmo-bar .rail-btn {
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  padding: 0;
+}
+.gizmo-bar .rail-btn.is-active { background: #23272e; color: #fff; }
 .gizmo-bar button {
   border: none; background: none; border-radius: 7px;
   padding: 6px 4px; font-size: 12px; color: var(--ink2);
@@ -1116,17 +1123,49 @@ input, select { font: inherit; }
 .export-dialog { width: min(640px, 96vw); min-height: 400px; padding: 26px 28px; }
 .export-dialog .dialog-fields { gap: 14px; }
 
-/* Shared-project mark: a small person chip on the card's thumbnail. */
+/* Shared-project mark: a person chip stacked with collaborator initials,
+ * overlapping like every avatar row does. */
 .dash-thumb { position: relative; }
-.dash-shared {
+.dash-shared-stack {
   position: absolute;
   top: 8px; right: 8px;
-  width: 24px; height: 24px;
-  display: grid; place-items: center;
-  background: rgba(255, 255, 255, 0.92);
-  color: #3b4552;
-  border-radius: 999px;
-  box-shadow: 0 2px 8px rgba(15, 18, 24, 0.18);
+  display: flex; align-items: center;
+  z-index: 2;
 }
 .dash-card-icon { position: relative; }
-.dash-card-icon .dash-shared { top: -2px; right: -6px; }
+.dash-card-icon .dash-shared-stack { top: -4px; right: -8px; }
+.dash-shared {
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  background: rgba(255, 255, 255, 0.95);
+  color: #3b4552;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(15, 18, 24, 0.18);
+}
+.dash-shared-stack .dash-shared:not(:first-child) { margin-left: -10px; }
+.dash-shared-avatar {
+  background: #e8e2d6;
+  font-size: 12px; font-weight: 700; letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+/* Edge amendment cards */
+.edge-op-count { align-self: flex-end; padding-bottom: 8px; white-space: nowrap; }
+
+/* Export dialog part picker — the explorer's list, tick-box edition. */
+.export-parts {
+  max-height: 260px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.export-row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 6px; border-radius: 7px; cursor: pointer;
+  font-size: 13.5px;
+}
+.export-row:hover { background: var(--wash, #f6f4ef); }
+.export-row.is-member { margin-left: 22px; }
+.export-row.is-head { font-weight: 600; }
+.export-row .tag { font-weight: 500; }

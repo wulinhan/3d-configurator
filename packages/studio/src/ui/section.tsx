@@ -15,7 +15,8 @@ import { useState, type ReactNode } from 'react';
 
 export type SectionIcon =
   | 'size' | 'position' | 'rotation' | 'colour' | 'addon'
-  | 'text' | 'image' | 'repeat' | 'assembly' | 'variant' | 'finish' | 'edges';
+  | 'text' | 'image' | 'repeat' | 'assembly' | 'variant' | 'finish' | 'edges'
+  | 'attach' | 'transform' | 'snap' | 'view';
 
 const PATHS: Record<SectionIcon, ReactNode> = {
   // maximize: a frame with corner ticks — bounding box, i.e. size
@@ -42,7 +43,28 @@ const PATHS: Record<SectionIcon, ReactNode> = {
   finish: <><path d="M12 3l1.8 4.7L18.5 9.5 13.8 11.3 12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3Z" /><path d="M18 16l.9 2.1L21 19l-2.1.9L18 22l-.9-2.1L15 19l2.1-.9L18 16Z" /></>,
   // a square with one corner cut off — a chamfered edge
   edges: <><path d="M10 4h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8l6-6Z" /><path d="M10 4v6H4" /></>,
+  // two chain links — glued to another body
+  attach: <><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11 5" /><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L13 19" /></>,
+  // pointer with orbiting arrows — the move/rotate/scale gizmo
+  transform: <><path d="M12 3v4M12 17v4M3 12h4M17 12h4" /><rect x="9" y="9" width="6" height="6" rx="1.4" /><path d="M10 3l2-2 2 2M10 21l2 2 2-2M3 10l-2 2 2 2M21 10l2 2-2 2" transform="translate(0 0)" /></>,
+  // magnet — snap a face against a face
+  snap: <><path d="M5 4v6a7 7 0 0 0 14 0V4" /><path d="M5 4h4v5H5zM15 4h4v5h-4z" fill="currentColor" stroke="none" opacity=".35" /><path d="M5 4h4M15 4h4" /></>,
+  // camera — save the customer-facing view
+  view: <><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" /><circle cx="12" cy="13.5" r="3.4" /></>,
 };
+
+/** The section glyphs, reusable outside a Section header — the viewport's
+ * icon rail draws the same pictures so the two always agree. */
+export function SectionGlyph(props: { name: SectionIcon; size?: number }) {
+  return (
+    <svg
+      width={props.size ?? 16} height={props.size ?? 16} viewBox="0 0 24 24" aria-hidden="true"
+      fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+    >
+      {PATHS[props.name]}
+    </svg>
+  );
+}
 
 function Icon(props: { name: SectionIcon }) {
   return (

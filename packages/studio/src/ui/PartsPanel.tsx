@@ -454,7 +454,6 @@ export function PartsPanel(props: {
       }}
     >
       <div className="part-list-head">
-        <span className="hint">Parts</span>
         <span className="spacer" />
         <button
           className="mini ico-label" data-testid="add-model"
