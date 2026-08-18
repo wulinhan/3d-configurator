@@ -132,8 +132,11 @@ check('no Orbit tab — orbiting is the default, not a mode',
   !(await page.$('[data-testid="gizmo-off"]')), '');
 check('with nothing imported the viewport tools are disabled',
   await page.evaluate(() =>
-    document.querySelector('[data-testid="gizmo-transform"]')?.disabled === true
-    && document.querySelector('[data-testid="snap-tool"]')?.disabled === true), '');
+    document.querySelector('[data-testid="snap-tool"]')?.disabled === true
+    && document.querySelector('[data-testid="save-view"]')?.disabled === true), '');
+check('the property icons are on show but inactive until a selection',
+  await page.evaluate(() =>
+    document.querySelector('[data-testid="rail-size"]')?.disabled === true), '');
 await shoot('0-empty.png');
 
 await page.setInputFiles('[data-testid="add-model-input"]', {
@@ -382,8 +385,8 @@ await shoot('2-anchored.png');
 }
 
 // ── 6c. combined gizmo: a real pointer drag lands in the manifest ──────────
+// (No Transform button any more — SELECTING a part arms the gizmo.)
 {
-  await page.click('[data-testid="gizmo-transform"]');
   await page.waitForTimeout(300);
   const attached = await page.evaluate(() => {
     const g = window.__studioGizmo;
@@ -546,24 +549,10 @@ await shoot('2-anchored.png');
   check('the icon rail sits centred at the top of the viewport, above the panel',
     chrome.centredDiff < 60 && chrome.stacked, chrome);
   check('view cube lives in the top-left corner', chrome.cubeFromLeft < 120, chrome.cubeFromLeft);
-  // No Orbit tab any more — Transform is a toggle, and the deselect a few
-  // checks back already disarmed it on its own.
-  check('deselecting disarmed Transform (orbit is the default state)',
-    await page.evaluate(() => !document.querySelector('[data-testid="gizmo-transform"].is-active')), '');
-  await page.click('[data-testid="gizmo-transform"]');
-  await page.waitForTimeout(200);
-  check('Transform arms on click',
-    await page.evaluate(() => !!document.querySelector('[data-testid="gizmo-transform"].is-active')
-      && !!window.__studioGizmo.translate.object), '');
-  await page.click('[data-testid="gizmo-transform"]');
-  await page.waitForTimeout(200);
-  check('…and toggles back off on a second click',
-    await page.evaluate(() => !document.querySelector('[data-testid="gizmo-transform"].is-active')
-      && !window.__studioGizmo.translate.object), '');
-
-  // …and clicking empty space deselects, which disarms Transform by itself.
-  await page.click('[data-testid="gizmo-transform"]');
-  await page.waitForTimeout(150);
+  // No Transform button any more — selection itself arms the gizmo and
+  // deselection puts orbiting back.
+  check('the gizmo is armed for the selected part (no button needed)',
+    await page.evaluate(() => !!window.__studioGizmo.translate.object), '');
   const bareSpot = await page.evaluate(() => {
     const r = document.querySelector('.stage canvas').getBoundingClientRect();
     for (let fy = 0.15; fy < 0.95; fy += 0.1) {
@@ -578,8 +567,7 @@ await shoot('2-anchored.png');
   await page.mouse.click(bareSpot[0], bareSpot[1]);
   await page.waitForTimeout(600);
   check('clicking away from the part drops back to orbiting',
-    await page.evaluate(() => !document.querySelector('[data-testid="gizmo-transform"].is-active')
-      && !window.__studioGizmo.translate.object), '');
+    await page.evaluate(() => !window.__studioGizmo.translate.object), '');
 }
 
 // ── 6d. view cube: quick views by face and corner ──────────────────────────
@@ -1183,20 +1171,16 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
   check('the assembly header carries a delete ✕ of its own',
     await page.isVisible('[data-testid="delete-shell"]'), '');
 
-  // Opening the assembly's editor + Transform parks the FULL gizmo at the
-  // set's centre of mass — an assembly transforms like a part now.
+  // Opening the assembly's editor parks the FULL gizmo at the set's
+  // centre of mass by itself — an assembly transforms like a part now.
   await page.click('.part-name:has-text("Shell")');
-  await page.waitForTimeout(200);
-  await page.click('[data-testid="gizmo-transform"]');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(500);
   const setGizmo = await page.evaluate(() => ({
     translate: !!window.__studioGizmo.translate.object,
     rotate: !!window.__studioGizmo.rotate.object,
   }));
   check('the full gizmo parks at the assembly\'s centre of mass',
     setGizmo.translate && setGizmo.rotate, setGizmo);
-  await page.click('[data-testid="gizmo-transform"]');
-  await page.waitForTimeout(150);
   await page.click('[data-testid="eye-shell"]');
   await page.waitForTimeout(200);
   check('assembly eyeball hides every member',
@@ -1225,16 +1209,11 @@ await page.uncheck('[data-testid="pick-base"]'); // leave the tick-set clean
     { groups: m.groups, options: m.options.map((o) => o.id) });
   await shoot('5-structure.png');
 
-  // 11e². the explorer is fixed-width; its divider only collapses/expands
+  // 11e². the explorer is fixed-width; the old grab bar is gone entirely
   const panelWidth = () => page.evaluate(() => document.querySelector('.panel').getBoundingClientRect().width);
   {
-    check('the explorer opens at its fixed width', (await panelWidth()) > 380, await panelWidth());
-    await page.click('[data-testid="panel-divider"]');
-    await page.waitForTimeout(350);
-    check('clicking the divider collapses it', (await panelWidth()) < 10, await panelWidth());
-    await page.click('[data-testid="panel-divider"]');
-    await page.waitForTimeout(350);
-    check('…and expands it again', (await panelWidth()) > 380, await panelWidth());
+    check('the explorer sits at its fixed width', (await panelWidth()) > 380, await panelWidth());
+    check('no grab bar remains', !(await page.$('[data-testid="panel-divider"]')), '');
   }
 
   // 11f. the customer preview is the real embed

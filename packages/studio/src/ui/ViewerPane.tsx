@@ -62,7 +62,7 @@ export function ViewerPane(props: {
   previewGeometry: { partId: string; positions: Float32Array; indices: Uint32Array } | null;
   /** The icon rail: one square per property section of whatever is
    * selected. Clicking one slides that section's panel in from the right. */
-  railSections: Array<{ id: string; icon: SectionIcon; title: string }>;
+  railSections: Array<{ id: string; icon: SectionIcon; title: string; disabled?: boolean }>;
   railActive: string | null;
   onRailPick: (id: string | null) => void;
 }) {
@@ -74,6 +74,18 @@ export function ViewerPane(props: {
   const gizmoRef = useRef<Gizmo | null>(null);
   const axesRef = useRef<THREE.AxesHelper | null>(null);
   const [mode, setMode] = useState<GizmoMode>('off');
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  // The rail's own tooltip: one label under the bar that GLIDES to sit
+  // under whichever icon the pointer is on, the word crossfading as it
+  // moves — a native title can't animate, so the bar draws its own.
+  const [railTip, setRailTip] = useState<{ label: string; x: number } | null>(null);
+  const hoverTip = (e: { currentTarget: HTMLElement }, label: string) => {
+    const bar = e.currentTarget.parentElement?.getBoundingClientRect();
+    const btn = e.currentTarget.getBoundingClientRect();
+    if (!bar) return;
+    setRailTip({ label, x: btn.left + btn.width / 2 - bar.left });
+  };
   // No parts, no tools: with nothing to transform or snap, the bar is inert.
   const hasParts = props.project.manifest.parts.length > 0;
   const gridRef = useRef<THREE.GridHelper | null>(null);
@@ -238,6 +250,11 @@ export function ViewerPane(props: {
       viewer.apply(props.selections);
       fit();
       viewer.start();
+      // Selection is what arms the gizmo now, and a selection can already
+      // be standing when the viewer (re)mounts — but attach only bites
+      // once the meshes exist, i.e. here, after load.
+      gizmo.setMode(modeRef.current);
+      gizmo.attach(commitCtx.current.selectedPart);
       const b = viewer.layoutBounds();
       // An empty project has no geometry to measure — size the grid for a
       // hand-scale work area (~120mm) so the viewport opens looking like a
@@ -388,9 +405,14 @@ export function ViewerPane(props: {
   // Clicking away from a part IS the switch back to orbiting: with nothing
   // selected and no set editor open, Transform has no target, so it disarms
   // itself instead of lying in wait for the next selection.
+  // The gizmo has no button any more — SELECTION arms it: pick a part (or
+  // open a set's editor) and the move/rotate/scale handles are simply
+  // there; deselect and orbiting is back. Edge-pick mode parks it so the
+  // handles never sit over the edges being clicked.
   useEffect(() => {
-    if (!props.selectedPart && !props.editingEntity) setMode('off');
-  }, [props.selectedPart, props.editingEntity]);
+    if (props.edgeMode) { setMode('off'); return; }
+    setMode(props.selectedPart || props.editingEntity ? 'transform' : 'off');
+  }, [props.selectedPart, props.editingEntity, props.edgeMode]);
 
   // The origin axes and the gizmo's coloured axes say the same thing in the
   // same colours — both visible at once reads as flicker. While the gizmo is
@@ -729,32 +751,37 @@ export function ViewerPane(props: {
     <div className="stage" ref={stageRef}>
       <canvas ref={canvasRef} />
       <canvas ref={cubeRef} className="viewcube" width={92} height={92} data-testid="view-cube" />
-      <div className="gizmo-bar" role="toolbar" aria-label="Viewport tools">
+      <div
+        className="gizmo-bar" role="toolbar" aria-label="Viewport tools"
+        onPointerLeave={() => setRailTip(null)}
+      >
         {props.railSections.map((s) => (
           <button
-            key={s.id} data-testid={`rail-${s.id}`} title={s.title}
+            key={s.id} data-testid={`rail-${s.id}`} aria-label={s.title}
+            disabled={s.disabled}
             className={`rail-btn${props.railActive === s.id ? ' is-active' : ''}`}
+            onPointerEnter={(e) => hoverTip(e, s.title)}
             onClick={() => props.onRailPick(props.railActive === s.id ? null : s.id)}
-          ><SectionGlyph name={s.icon} /></button>
+          ><SectionGlyph name={s.icon} size={24} /></button>
         ))}
-        {props.railSections.length > 0 && <span className="gizmo-sep" />}
-        <button
-          data-testid="gizmo-transform" disabled={!hasParts}
-          className={`rail-btn${snapArm === null && mode === 'transform' ? ' is-active' : ''}`}
-          title="Transform — move, rotate and scale the selected part; click again (or click empty space) to go back to orbiting"
-          onClick={() => { setMode(mode === 'transform' ? 'off' : 'transform'); setSnapArm(null); }}
-        ><SectionGlyph name="transform" /></button>
         <button
           data-testid="snap-tool" disabled={!hasParts}
           className={`rail-btn${snapArm !== null ? ' is-active' : ''}`}
+          aria-label="Snap faces"
+          onPointerEnter={(e) => hoverTip(e, 'Snap faces')}
           onClick={() => { setSnapArm(snapArm === null ? 'first' : null); setSnapError(null); }}
-          title="Snap — click a face on the part to move, then the face it should sit against"
-        ><SectionGlyph name="snap" /></button>
+        ><SectionGlyph name="snap" size={24} /></button>
         <button
           data-testid="save-view" disabled={!hasParts} onClick={saveView}
           className={`rail-btn${viewSaved ? ' is-active' : ''}`}
-          title={viewSaved ? 'View saved — customers open from this angle' : 'Save view — customers will open the configurator from this angle'}
-        ><SectionGlyph name="view" /></button>
+          aria-label={viewSaved ? 'View saved' : 'Save view'}
+          onPointerEnter={(e) => hoverTip(e, viewSaved ? 'View saved ✓' : 'Save view')}
+        ><SectionGlyph name="view" size={24} /></button>
+        {railTip && (
+          <div className="rail-tip" style={{ left: railTip.x }} aria-hidden="true">
+            <span key={railTip.label} className="rail-tip-word">{railTip.label}</span>
+          </div>
+        )}
       </div>
       {snapArm !== null && (
         <div className="snap-hint" data-testid="snap-hint">

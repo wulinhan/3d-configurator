@@ -19,8 +19,8 @@ export type SectionIcon =
   | 'attach' | 'transform' | 'snap' | 'view';
 
 const PATHS: Record<SectionIcon, ReactNode> = {
-  // maximize: a frame with corner ticks — bounding box, i.e. size
-  size: <><path d="M4 8V4h4" /><path d="M16 4h4v4" /><path d="M20 16v4h-4" /><path d="M8 20H4v-4" /></>,
+  // a rectangle dragged out along a diagonal arrow — resize
+  size: <><rect x="3" y="11" width="10" height="10" rx="1.6" /><path d="M13 11 21 3" /><path d="M15.5 3H21v5.5" /></>,
   // move: four-way arrows
   position: <><path d="M12 3v18M3 12h18" /><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" /></>,
   // rotate-cw
@@ -49,8 +49,8 @@ const PATHS: Record<SectionIcon, ReactNode> = {
   transform: <><path d="M12 3v4M12 17v4M3 12h4M17 12h4" /><rect x="9" y="9" width="6" height="6" rx="1.4" /><path d="M10 3l2-2 2 2M10 21l2 2 2-2M3 10l-2 2 2 2M21 10l2 2-2 2" transform="translate(0 0)" /></>,
   // magnet — snap a face against a face
   snap: <><path d="M5 4v6a7 7 0 0 0 14 0V4" /><path d="M5 4h4v5H5zM15 4h4v5h-4z" fill="currentColor" stroke="none" opacity=".35" /><path d="M5 4h4M15 4h4" /></>,
-  // camera — save the customer-facing view
-  view: <><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" /><circle cx="12" cy="13.5" r="3.4" /></>,
+  // a cube inside viewfinder corner brackets — the saved perspective
+  view: <><path d="M3.5 8V5.5a2 2 0 0 1 2-2H8" /><path d="M16 3.5h2.5a2 2 0 0 1 2 2V8" /><path d="M20.5 16v2.5a2 2 0 0 1-2 2H16" /><path d="M8 20.5H5.5a2 2 0 0 1-2-2V16" /><path d="M12 7.2l4.2 2.4v4.8L12 16.8l-4.2-2.4V9.6L12 7.2Z" /><path d="M7.8 9.6 12 12l4.2-2.4M12 12v4.8" /></>,
 };
 
 /** The section glyphs, reusable outside a Section header — the viewport's

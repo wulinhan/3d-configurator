@@ -29,6 +29,7 @@ import {
 import { ViewerPane } from './ui/ViewerPane.tsx';
 import { PartsPanel } from './ui/PartsPanel.tsx';
 import { PartEditor, GroupEditor, VariantEditor, partSections, entrySections } from './ui/PartEditor.tsx';
+import type { SectionIcon } from './ui/section.tsx';
 import { PalettePanel } from './ui/PalettePanel.tsx';
 import { FinishPanel } from './ui/FinishPanel.tsx';
 import { PublishPanel } from './ui/PublishPanel.tsx';
@@ -192,7 +193,6 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
   const [placing, setPlacing] = useState<{ kind: 'text' | 'image'; partId: string } | null>(null);
   // The text slot whose baseline curve is being shaped in the viewport.
   const [shapingText, setShapingText] = useState<string | null>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
   // Which choice each pick-one option shows while authoring — the merchant's
   // temporary pick, never written to the manifest.
   const [variantPreview, setVariantPreview] = useState<Record<string, string>>({});
@@ -922,9 +922,8 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     setProject({ ...old, manifest, raw, modelUrl });
   }, []);
 
-  // The explorer is FIXED-width — wide enough for every header icon —
-  // and the divider pill only collapses/expands it. Drag-to-resize kept
-  // eating clicks and cutting off the show/hide buttons at narrow widths.
+  // The explorer is FIXED-width — wide enough for every header icon. The
+  // old grab bar is gone with the resizing it used to drive.
 
   // The browser test reads and drives the app through this handle; it costs
   // nothing in production and makes "did the feature actually work" checkable.
@@ -1011,7 +1010,23 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
     if (!project || tab !== 'Parts') return [];
     if (editingVariant || editingGroup) return entrySections();
     if (selectedPart) return partSections(project, selectedPart);
-    return [];
+    // Nothing selected: the rail still shows the property icons — greyed,
+    // teaching what lives here — while Snap and Save view stay usable.
+    // An empty project has no part to derive them from, so a canonical
+    // set stands in.
+    const derived = partSections(project, project.manifest.parts[0]?.id ?? '');
+    const canonical: Array<{ id: string; icon: SectionIcon; title: string }> = [
+      { id: 'size', icon: 'size', title: 'Size' },
+      { id: 'position', icon: 'position', title: 'Position' },
+      { id: 'attach', icon: 'attach', title: 'Attach to another body' },
+      { id: 'rotation', icon: 'rotation', title: 'Rotation' },
+      { id: 'edges', icon: 'edges', title: 'Edges' },
+      { id: 'addon', icon: 'addon', title: 'Add-on' },
+      { id: 'text', icon: 'text', title: '3D text' },
+      { id: 'image', icon: 'image', title: 'Image zone' },
+      { id: 'repeat', icon: 'repeat', title: 'Repeat' },
+    ];
+    return (derived.length ? derived : canonical).map((s) => ({ ...s, disabled: true }));
   }, [project, tab, editingVariant, editingGroup, selectedPart]);
 
   const floatContent = project && tab === 'Parts' && openSection
@@ -1124,7 +1139,7 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
       </header>
 
       <div className="workspace">
-        <aside className="panel" style={{ width: panelOpen ? PANEL_WIDTH : 0 }} aria-hidden={!panelOpen}>
+        <aside className="panel" style={{ width: PANEL_WIDTH }}>
           <nav className="tabs" role="tablist">
             {TABS.map((t, i) => {
               // tabs wear the journey's numbers; a tick once their step is met
@@ -1167,14 +1182,6 @@ function Editor(props: { cloudProjectId: string | null; signedIn: boolean }) {
             <SetupGuide steps={guide} collapsed={guideCollapsed} onToggle={toggleGuide} onGo={goToStep} />
           )}
         </aside>
-
-        <div
-          className="panel-divider" data-testid="panel-divider" role="separator"
-          aria-label={panelOpen ? 'Collapse the explorer' : 'Expand the explorer'}
-          onClick={() => setPanelOpen((o) => !o)}
-        >
-          <span className="divider-pill" data-testid="panel-toggle">{panelOpen ? '◂' : '▸'}</span>
-        </div>
 
         <div className="stage-wrap">
           <ViewerPane
