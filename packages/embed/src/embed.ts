@@ -117,7 +117,7 @@ export async function mount(opts: MountOptions) {
 
   opts.root.classList.add('cfg');
   opts.root.style.setProperty('--cfg-accent', brand.accent ?? '#1A1A1A');
-  opts.root.style.setProperty('--cfg-surface', brand.surface ?? '#F8F6F1');
+  opts.root.style.setProperty('--cfg-surface', brand.surface ?? '#FFFFFF');
   opts.root.style.setProperty('--cfg-ink', brand.ink ?? '#333333');
   opts.root.style.setProperty('--cfg-radius', `${brand.radius ?? 8}px`);
   if (brand.fontFamily) opts.root.style.setProperty('--cfg-font', brand.fontFamily);

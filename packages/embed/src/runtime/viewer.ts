@@ -389,7 +389,7 @@ export class Viewer {
     // The clear colour bypasses tone mapping, so the background is unchanged.
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = DEFAULT_EXPOSURE;
-    this.renderer.setClearColor(new THREE.Color(cam.background ?? '#F8F6F1'));
+    this.renderer.setClearColor(new THREE.Color(cam.background ?? '#FFFFFF'));
 
     // Near at 1 mm, not 0.1: a 50 000:1 far/near ratio starves the depth
     // buffer and coplanar-ish lines (origin axes over the grid, part edges

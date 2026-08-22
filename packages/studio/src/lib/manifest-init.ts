@@ -116,7 +116,7 @@ export function initManifest(rawParts: ImportedPart[], opts: InitOptions): Manif
       target: [0, centreY, 0],
       minDistance: span * 0.5,
       maxDistance: span * 6,
-      background: '#F8F6F1',
+      background: '#FFFFFF',
     },
     pricing: { currency: opts.currency ?? 'SGD' },
   };

@@ -7,12 +7,12 @@
 
 .cfg {
   --cfg-accent: #1a1a1a;
-  --cfg-surface: #f8f6f1;
+  --cfg-surface: #FFFFFF;
   --cfg-ink: #333;
   --cfg-radius: 8px;
   --cfg-font: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --cfg-line: #e8e6e1;
-  --cfg-muted: #9c9480;
+  --cfg-line: #E7E7E7;
+  --cfg-muted: #949494;
 
   /* Viewport on top, part list + controls beneath, summary pills at the
    * bottom — the same shape as a product page, whatever the host's width. */
@@ -90,7 +90,7 @@
   font: inherit; font-size: 13px; cursor: pointer;
   transition: border-color .15s, background .15s;
 }
-.cfg-tab:hover { border-color: #c5c2bb; }
+.cfg-tab:hover { border-color: #C4C4C4; }
 .cfg-tab.is-active { border-color: var(--cfg-accent); background: var(--cfg-surface); font-weight: 600; }
 .cfg-tick { margin-left: auto; font-size: 12px; }
 
@@ -116,7 +116,7 @@
   box-shadow: none;
   transition: box-shadow .15s, border-color .15s;
 }
-.cfg-swatch:hover { border-color: #c5c2bb; }
+.cfg-swatch:hover { border-color: #C4C4C4; }
 /* "Same as the part" — no colour of its own, so it reads as a slash. */
 .cfg-swatch-match {
   background:
@@ -136,7 +136,7 @@
   background: #fff; color: inherit;
   font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
 }
-.cfg-custom-btn:hover { border-color: #c5c2bb; background: #fafaf8; }
+.cfg-custom-btn:hover { border-color: #C4C4C4; background: #FAFAFA; }
 .cfg-custom-btn.is-open { border-color: var(--cfg-accent); background: var(--cfg-surface); }
 .cfg-custom-price { font-size: 10px; font-weight: 700; letter-spacing: .4px; color: var(--cfg-muted); }
 
@@ -167,7 +167,7 @@
   background: #fff; color: inherit;
   font: inherit; font-size: 12px; cursor: pointer; text-align: left;
 }
-.cfg-choice:hover { border-color: #c5c2bb; }
+.cfg-choice:hover { border-color: #C4C4C4; }
 .cfg-choice.is-selected { border-color: var(--cfg-accent); background: var(--cfg-surface); }
 .cfg-choice-price { font-size: 11px; font-weight: 700; color: var(--cfg-muted); }
 
